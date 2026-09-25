@@ -33,7 +33,7 @@ const (
 	// workspaceContainerName is the container serving the files an agent reads
 	// and writes and the commands it runs. The agent executes nothing itself
 	// and reaches this process over the Pod's loopback interface
-	// (gagent@9b0e399:internal/workspace/server/serve.go:36-42).
+	// (sherlock@9b0e399:internal/workspace/server/serve.go:36-42).
 	workspaceContainerName = "workspace"
 
 	credentialsVolumeName       = "credentials"
@@ -44,74 +44,74 @@ const (
 
 	// credentialsMountPath holds the copy the agent reads. credentialsSecretMountPath
 	// holds the projection the kubelet writes, and only the init container mounts it.
-	credentialsMountPath       = "/run/gagent/credentials"
-	credentialsSecretMountPath = "/etc/gagent/credentials"
-	stateMountPath             = "/var/lib/gagent"
+	credentialsMountPath       = "/run/sherlock/credentials"
+	credentialsSecretMountPath = "/etc/sherlock/credentials"
+	stateMountPath             = "/var/lib/sherlock"
 
 	// toolsMountPath is where the tool tree is mounted and what the agent is
 	// pointed at. It sits outside the state volume's path, which the agent
 	// writes and this tree is not part of.
-	toolsMountPath = "/opt/gagent/tools"
+	toolsMountPath = "/opt/sherlock/tools"
 
-	// toolsDirVariable names the environment variable gagent reads the directory
+	// toolsDirVariable names the environment variable sherlock reads the directory
 	// it loads its tools from. The name is that project's, because this operator
 	// is writing that project's setting.
-	toolsDirVariable = "GAGENT_TOOLS_DIR"
+	toolsDirVariable = "SHERLOCK_TOOLS_DIR"
 
 	// configMountPath is the configuration directory the agent is given, and the
 	// one the file below is found under. It is absolute and this operator's for
-	// the reason toolsMountPath is: gagent's other two roads to a config file are
+	// the reason toolsMountPath is: sherlock's other two roads to a config file are
 	// a path relative to a working directory the agent's image declares and a
 	// flag this operator does not write, so the directory it resolves against
 	// would otherwise be one this operator did not choose
-	// (gagent@fc5fca4:internal/config/config.go:371-395).
-	configMountPath = "/run/gagent/config"
+	// (sherlock@fc5fca4:internal/config/config.go:371-395).
+	configMountPath = "/run/sherlock/config"
 
 	// configHomeVariable is the variable os.UserConfigDir reads that directory
-	// from. It is not one of gagent's settings and reaches no viper: gagent's own
-	// resolution is prefixed GAGENT_ (gagent@fc5fca4:internal/config/config.go:276-277),
+	// from. It is not one of sherlock's settings and reaches no viper: sherlock's own
+	// resolution is prefixed SHERLOCK_ (sherlock@fc5fca4:internal/config/config.go:276-277),
 	// and this one is read by the standard library on the way to the file.
 	configHomeVariable = "XDG_CONFIG_HOME"
 
 	// configContentVariable carries the file's whole text to the init container
 	// that writes it. It is set on that container and on no other, so nothing the
-	// agent spawns inherits a pin set — which is the custody gagent refuses the
-	// environment road to keep (gagent@fc5fca4:internal/config/config.go:216-234).
+	// agent spawns inherits a pin set — which is the custody sherlock refuses the
+	// environment road to keep (sherlock@fc5fca4:internal/config/config.go:216-234).
 	configContentVariable = "AGENT_CONFIG_CONTENT"
 
 	// configFileMask leaves the file readable by its owner and nobody else.
-	// gagent refuses a config file carrying any group or other bit
-	// (gagent@fc5fca4:internal/config/owner_only.go), so an agent handed one it
+	// sherlock refuses a config file carrying any group or other bit
+	// (sherlock@fc5fca4:internal/config/owner_only.go), so an agent handed one it
 	// refuses does not start. A mask rather than a mode set afterwards, so the
 	// file is never briefly readable by anyone else.
 	configFileMask = "077"
 
-	// The four settings below are gagent's, under the GAGENT_ prefix and the
+	// The four settings below are sherlock's, under the SHERLOCK_ prefix and the
 	// dash-to-underscore mapping every one of its settings resolves through
-	// (gagent@9b0e399:internal/config/config.go:276-277). listenAddressVariable
+	// (sherlock@9b0e399:internal/config/config.go:276-277). listenAddressVariable
 	// and workspaceAddressVariable are the two ends of one link: the workspace's
 	// own addr and the agent's workspace-addr.
-	listenAddressVariable    = "GAGENT_ADDR"
-	workspaceAddressVariable = "GAGENT_WORKSPACE_ADDR"
-	workspaceDirVariable     = "GAGENT_WORKSPACE"
-	execUserVariable         = "GAGENT_EXEC_UID"
+	listenAddressVariable    = "SHERLOCK_ADDR"
+	workspaceAddressVariable = "SHERLOCK_WORKSPACE_ADDR"
+	workspaceDirVariable     = "SHERLOCK_WORKSPACE"
+	execUserVariable         = "SHERLOCK_EXEC_UID"
 
 	// workspaceAddress is where the workspace listens and where the agent dials.
-	// Both images default to it (gagent@9b0e399:internal/config/config.go:34),
+	// Both images default to it (sherlock@9b0e399:internal/config/config.go:34),
 	// and it is written to both containers rather than left to them: two
 	// defaults agreeing is not the same as one number this operator chose, and
 	// nothing here would notice either image moving its own. It is loopback,
-	// which is the only bind gagent's unauthenticated listener accepts.
+	// which is the only bind sherlock's unauthenticated listener accepts.
 	workspaceAddress = "127.0.0.1:8081"
 
 	// workspaceDirPath is the subtree of the state volume the workspace serves,
 	// and the only part of it the workspace touches. It is absolute and this
-	// operator's for the reason toolsMountPath is, and for a second: gagent's
+	// operator's for the reason toolsMountPath is, and for a second: sherlock's
 	// default is relative, the published workspace image declares no working
 	// directory, and the /data it therefore resolves against is root-owned at
 	// 0755 — which the user this Pod names cannot create in, so the workspace
 	// would exit at startup
-	// (gagent@9b0e399:internal/workspace/files/files.go:56).
+	// (sherlock@9b0e399:internal/workspace/files/files.go:56).
 	workspaceDirPath = stateMountPath + "/workspace"
 
 	// credentialsFileMode keeps the projected credential files readable by the
@@ -163,17 +163,17 @@ func copyCredentialsCommand() []string {
 		credentialsSecretMountPath, credentialsCopyMode, credentialsMountPath)}
 }
 
-// configDirIn and configFileIn are where gagent looks for a config file under
+// configDirIn and configFileIn are where sherlock looks for a config file under
 // the configuration directory dir. Both segments are that project's rather than
-// this operator's to choose (gagent@fc5fca4:internal/config/config.go:187
+// this operator's to choose (sherlock@fc5fca4:internal/config/config.go:187
 // and :382-395); the directory they hang off is the part this operator names.
-func configDirIn(dir string) string { return dir + "/gagent" }
+func configDirIn(dir string) string { return dir + "/sherlock" }
 
 func configFileIn(dir string) string { return configDirIn(dir) + "/config.yaml" }
 
 // agentConfig is the file an agent resolves its settings from, holding what this
 // operator has been taught to declare and nothing else. The field names are
-// gagent's setting names, because this operator is writing that project's file.
+// sherlock's setting names, because this operator is writing that project's file.
 //
 // A second key family joins it as a second field here: the file is the whole of
 // what an agent is configured with, so nothing about its shape is the pins'.
@@ -321,11 +321,11 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 
 	container := containerNamed(&statefulSet.Spec.Template.Spec.Containers, agentContainerName)
 	container.Image = agent.Spec.Image
-	// gagent requires a consumer of its images to pull always, because the
+	// sherlock requires a consumer of its images to pull always, because the
 	// repositories holding its bring-up builds are emptied when a release path
 	// publishes: the default IfNotPresent turns a reference that stopped
 	// resolving into a per-node stale cache
-	// (gagent@04ed05a:docs/architecture/adr/0020-immutable-image-repositories.md).
+	// (sherlock@04ed05a:docs/architecture/adr/0020-immutable-image-repositories.md).
 	container.ImagePullPolicy = corev1.PullAlways
 	container.Resources = agent.Spec.Resources
 	container.SecurityContext = containerSecurityContext()
@@ -458,7 +458,7 @@ func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet) {
 
 	workspace := containerNamed(containers, workspaceContainerName)
 	workspace.Image = r.WorkspaceImage
-	// Pulled at every start on the ground the agent's image is: it is gagent's
+	// Pulled at every start on the ground the agent's image is: it is sherlock's
 	// image and that project requires a consumer to pull always.
 	workspace.ImagePullPolicy = corev1.PullAlways
 	workspace.SecurityContext = containerSecurityContext()
@@ -468,10 +468,10 @@ func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet) {
 	workspace.Env = []corev1.EnvVar{
 		{Name: listenAddressVariable, Value: workspaceAddress},
 		{Name: workspaceDirVariable, Value: workspaceDirPath},
-		// gagent runs an exec child under the workspace's own account only
+		// sherlock runs an exec child under the workspace's own account only
 		// where this number is the uid that account already has, and refuses
 		// every isolated exec otherwise
-		// (gagent@9b0e399:internal/workspace/shell/process_linux.go:131). The
+		// (sherlock@9b0e399:internal/workspace/shell/process_linux.go:131). The
 		// Pod names that uid, so this operator is the only party that can tell
 		// the workspace what it is.
 		{Name: execUserVariable, Value: strconv.Itoa(agentRunAsUser)},

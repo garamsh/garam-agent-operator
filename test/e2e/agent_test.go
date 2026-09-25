@@ -18,7 +18,7 @@ import (
 const (
 	// agentTestNamespace holds the Agent under test and everything it produces,
 	// so that removing it removes all of them.
-	agentTestNamespace = "gagent-e2e"
+	agentTestNamespace = "sherlock-e2e"
 
 	agentUnderTest    = "e2e-agent"
 	agentPod          = agentUnderTest + "-0"
@@ -33,7 +33,7 @@ const (
 
 	// unstartableImage names a host no registry can come to serve: .invalid is
 	// reserved for that (RFC 2606 section 2).
-	unstartableImage = "gagent.invalid/agent:v0"
+	unstartableImage = "sherlock.invalid/agent:v0"
 
 	// credentialsToken is what the specs look for: in the mounted file, and
 	// nowhere in the container's environment.
@@ -41,8 +41,8 @@ const (
 
 	// credentialsMountPath is where the agent reads the copy the init container
 	// made, not where the kubelet projects the Secret.
-	credentialsMountPath = "/run/gagent/credentials"
-	stateMountPath       = "/var/lib/gagent"
+	credentialsMountPath = "/run/sherlock/credentials"
+	stateMountPath       = "/var/lib/sherlock"
 )
 
 // keyfileRule is the rule garam's reader applies to a key file, transcribed from

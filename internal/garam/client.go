@@ -302,7 +302,7 @@ type claimPayload struct {
 
 // toolPinPrefix is the one value-key family this operator reads. The suffix is
 // a tool's name and the string beside it is that tool's pin. The name is
-// gagent's own setting name, because this operator has to write that setting
+// sherlock's own setting name, because this operator has to write that setting
 // anyway.
 const toolPinPrefix = "tools.pins."
 

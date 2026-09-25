@@ -28,7 +28,7 @@ func answerRenewal(t *testing.T, commonName string) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"grn":            "grn:garam:default:operator:gagent",
+			"grn":            "grn:garam:default:operator:sherlock",
 			"certificatePem": string(certificatePEM),
 			"privateKeyPem":  string(keyPEM),
 			"issuerPem":      "issuer",
@@ -106,7 +106,7 @@ func TestRenewIdentityRefusesAnAnswerCarryingNoKey(t *testing.T) {
 	g := NewWithT(t)
 	client := newRenewalClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"grn":"grn:garam:default:operator:gagent","certificatePem":"a"}`))
+		_, _ = w.Write([]byte(`{"grn":"grn:garam:default:operator:sherlock","certificatePem":"a"}`))
 	})
 
 	_, err := client.RenewIdentity(context.Background())

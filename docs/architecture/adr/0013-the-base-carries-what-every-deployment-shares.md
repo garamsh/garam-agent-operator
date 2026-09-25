@@ -18,7 +18,7 @@ The obvious repair is to check all seven in, and it is wrong, because the seven 
 
 So the question is not whether to record the configuration but who owns each value, and the answer has to be a test rather than a list, because the next flag has to be assignable without reopening this.
 
-Where the environment's three go is the second question. `config/overlays/<environment>/` in this repository was the alternative considered. `garamsh/gitops` reconciles this cluster and its ADR 0003 already decides the shape — an `Application` under `apps/`, per-cluster values under `clusters/<cluster>/`, a non-Helm resource included through Kustomize (`gitops@8971dd5:docs/architecture/adr/0003-cluster-aware-app-of-apps-with-per-cluster-overlays.md`) — and at `gitops@8971dd5` it held no path named `gagent` or `gagent-bringup`.
+Where the environment's three go is the second question. `config/overlays/<environment>/` in this repository was the alternative considered. `garamsh/gitops` reconciles this cluster and its ADR 0003 already decides the shape — an `Application` under `apps/`, per-cluster values under `clusters/<cluster>/`, a non-Helm resource included through Kustomize (`gitops@8971dd5:docs/architecture/adr/0003-cluster-aware-app-of-apps-with-per-cluster-overlays.md`) — and at `gitops@8971dd5` it held no path named `sherlock` or `sherlock-bringup`.
 
 ## Decision
 

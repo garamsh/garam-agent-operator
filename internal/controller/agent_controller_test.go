@@ -41,7 +41,7 @@ func newAgent(name string) *agentv1alpha1.Agent {
 			Namespace: agentNamespace,
 		},
 		Spec: agentv1alpha1.AgentSpec{
-			Image:                 "example.com/gagent:v0.1.0",
+			Image:                 "example.com/sherlock:v0.1.0",
 			CredentialsSecretName: credentialsSecretName(name),
 			StorageSize:           resource.MustParse("1Gi"),
 			Resources: corev1.ResourceRequirements{
@@ -176,7 +176,7 @@ var _ = Describe("Agent", func() {
 		By("reading the Agent back")
 		readBack := &agentv1alpha1.Agent{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(accepted), readBack)).To(Succeed())
-		Expect(readBack.Spec.Image).To(Equal("example.com/gagent:v0.1.0"))
+		Expect(readBack.Spec.Image).To(Equal("example.com/sherlock:v0.1.0"))
 		Expect(readBack.Spec.CredentialsSecretName).To(Equal(credentialsSecretName("stores-its-spec")))
 		Expect(readBack.Spec.StorageSize.String()).To(Equal("1Gi"))
 

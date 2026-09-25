@@ -39,7 +39,7 @@ const enrollmentPath = "/enrollment"
 // enrolledOperator is the identity garam's answer names. A token names the
 // operator it was minted for and the request names none, so this is the answer's
 // to say and never the request's.
-const enrolledOperator = "grn:garam:default:operator:gagent"
+const enrolledOperator = "grn:garam:default:operator:sherlock"
 
 // answerEnrollment answers an enrollment the way garam does: it reads the public
 // key and the signature out of the request and nothing else, signs a certificate
