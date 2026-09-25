@@ -29,7 +29,7 @@ import (
 	. "github.com/onsi/gomega"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/garamsh/gagent-operator/internal/garam"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
 // enrollmentPath is the route an operator obtains its first certificate on

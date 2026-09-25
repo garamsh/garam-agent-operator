@@ -7,9 +7,9 @@ Append-only: once merged, the body below is not rewritten. A fact later found wr
 
 ## Context
 
-Measured on 2026-08-31, with AWS and `admin@garam-dev` both reachable and read-only. The manager's Deployment ran `486152169996.dkr.ecr.ap-northeast-2.amazonaws.com/garam/gagent-operator-dev:da07a03e1d20@sha256:9764729168e2…` — repository, tag and digest together. The repository held nine image records, which are three pushes of an image index with a `linux/amd64` manifest and a build attestation under each. The three tags were `7792ebe660db`, `f02d007c937e` and `da07a03e1d20`, and each is the abbreviated hash of a commit on this repository's history: `7792ebe` (#70), `f02d007` (#83) and `da07a03` (#86). The digest the Deployment carried was the index's, not the platform manifest's.
+Measured on 2026-08-31, with AWS and `admin@garam-dev` both reachable and read-only. The manager's Deployment ran `486152169996.dkr.ecr.ap-northeast-2.amazonaws.com/garam/garam-agent-operator-dev:da07a03e1d20@sha256:9764729168e2…` — repository, tag and digest together. The repository held nine image records, which are three pushes of an image index with a `linux/amd64` manifest and a build attestation under each. The three tags were `7792ebe660db`, `f02d007c937e` and `da07a03e1d20`, and each is the abbreviated hash of a commit on this repository's history: `7792ebe` (#70), `f02d007` (#83) and `da07a03` (#86). The digest the Deployment carried was the index's, not the platform manifest's.
 
-None of it was written down here. No workflow logs into a registry; the `Makefile` carries the kubebuilder scaffold's `docker-build`, `docker-push` and `docker-buildx` at `IMG ?= controller:latest` with nothing resolving that default; and `grep -rniE 'ecr|gagent-operator-dev|registry' docs/ README.md` returned no hit about publishing. The only written record was another project's, and it names this repository only to exclude it: `gagent@04ed05a:docs/architecture/adr/0020-immutable-image-repositories.md` says `garam/gagent-operator-dev` "shares the namespace and is the `gagent-operator` project's, not this one's."
+None of it was written down here. No workflow logs into a registry; the `Makefile` carries the kubebuilder scaffold's `docker-build`, `docker-push` and `docker-buildx` at `IMG ?= controller:latest` with nothing resolving that default; and `grep -rniE 'ecr|garam-agent-operator-dev|registry' docs/ README.md` returned no hit about publishing. The only written record was another project's, and it names this repository only to exclude it: `gagent@04ed05a:docs/architecture/adr/0020-immutable-image-repositories.md` says `garam/garam-agent-operator-dev` "shares the namespace and is the `garam-agent-operator` project's, not this one's."
 
 So the tag scheme, the reference form, and the publish path are all conventions this project runs in production and never agreed. Whoever pushes next has nothing to conform to, and #101 made the operator a consumer that pulls at every start.
 
@@ -22,7 +22,7 @@ The repository's settings were read on the same day and were `IMMUTABLE` with sc
 
 ## Decision
 
-**`garam/gagent-operator-dev` is created immutable and is never made mutable; a tag in it is the abbreviated commit hash of the commit built and never moves; and a deployment references the image by digest, carrying the tag beside it.**
+**`garam/garam-agent-operator-dev` is created immutable and is never made mutable; a tag in it is the abbreviated commit hash of the commit built and never moves; and a deployment references the image by digest, carrying the tag beside it.**
 
 ### The digest is the reference
 

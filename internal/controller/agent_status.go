@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	agentv1alpha1 "github.com/garamsh/gagent-operator/api/v1alpha1"
+	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 )
 
 // setSynced records on the Agent what this reconcile observed of the workload

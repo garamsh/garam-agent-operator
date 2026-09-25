@@ -24,11 +24,11 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	agentv1alpha1 "github.com/garamsh/gagent-operator/api/v1alpha1"
-	"github.com/garamsh/gagent-operator/internal/controller"
-	"github.com/garamsh/gagent-operator/internal/garam"
-	"github.com/garamsh/gagent-operator/internal/garam/constructor"
-	"github.com/garamsh/gagent-operator/internal/garam/credentialstore"
+	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/controller"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
+	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
+	"github.com/garamsh/garam-agent-operator/internal/garam/credentialstore"
 	// +kubebuilder:scaffold:imports
 )
 

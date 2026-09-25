@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	"github.com/garamsh/gagent-operator/internal/garam"
-	"github.com/garamsh/gagent-operator/internal/garam/credentialstore"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
+	"github.com/garamsh/garam-agent-operator/internal/garam/credentialstore"
 )
 
 // patchedSecret is one patch the store sent, as the API server would receive
@@ -51,7 +51,7 @@ func newClientRecordingPatches(t *testing.T, recorded *patchedSecret) client.Cli
 func TestReplaceCredentialWritesBothKeysInOnePatch(t *testing.T) {
 	g := NewWithT(t)
 	recorded := &patchedSecret{}
-	secret := types.NamespacedName{Namespace: "gagent-operator-system", Name: "garam-credential"}
+	secret := types.NamespacedName{Namespace: "garam-agent-operator-system", Name: "garam-credential"}
 
 	store := credentialstore.NewSecret(
 		newClientRecordingPatches(t, recorded), secret, "certificate.pem", "key.pem")
@@ -102,7 +102,7 @@ func TestReplaceCredentialReportsWhatTheAPIRefused(t *testing.T) {
 	}).Build()
 
 	store := credentialstore.NewSecret(refusing,
-		types.NamespacedName{Namespace: "gagent-operator-system", Name: "garam-credential"},
+		types.NamespacedName{Namespace: "garam-agent-operator-system", Name: "garam-credential"},
 		"certificate.pem", "key.pem")
 	err := store.ReplaceCredential(context.Background(), garam.Credential{
 		CertificatePEM: []byte("a certificate"),

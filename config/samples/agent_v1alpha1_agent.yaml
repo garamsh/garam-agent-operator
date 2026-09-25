@@ -2,7 +2,7 @@ apiVersion: agent.garam.sh/v1alpha1
 kind: Agent
 metadata:
   labels:
-    app.kubernetes.io/name: gagent-operator
+    app.kubernetes.io/name: garam-agent-operator
     app.kubernetes.io/managed-by: kustomize
   name: agent-sample
 spec:

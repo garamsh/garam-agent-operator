@@ -10,7 +10,7 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	"github.com/garamsh/gagent-operator/internal/garam"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
 // renewalPath is the route an operator replaces its own certificate on

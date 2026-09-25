@@ -8,7 +8,7 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	"github.com/garamsh/gagent-operator/internal/garam"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
 // answerNoDefinitions is what a listener with nothing to say answers a read.

@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
 
-	agentv1alpha1 "github.com/garamsh/gagent-operator/api/v1alpha1"
+	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 )
 
 // testPinnedTool is the tool the specs declare a pin for. It is gagent's one

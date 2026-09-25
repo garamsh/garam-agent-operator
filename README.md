@@ -1,4 +1,4 @@
-# gagent-operator
+# garam-agent-operator
 
 A Kubernetes operator that runs `gagent` agent workloads in a cluster from a custom resource.
 
@@ -51,8 +51,8 @@ make run       # run the manager locally
 Deployed into the cluster instead:
 
 ```sh
-make docker-build docker-push IMG=<registry>/gagent-operator:<tag>
-make deploy IMG=<registry>/gagent-operator:<tag>
+make docker-build docker-push IMG=<registry>/garam-agent-operator:<tag>
+make deploy IMG=<registry>/garam-agent-operator:<tag>
 ```
 
 `make build-installer IMG=<image>` writes a single applyable YAML to `dist/`. No image has been published yet, so `IMG` has no default worth using.

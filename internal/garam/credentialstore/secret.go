@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/garamsh/gagent-operator/internal/garam"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
 // Secret replaces the credential in the Secret the manager's Pod mounts it

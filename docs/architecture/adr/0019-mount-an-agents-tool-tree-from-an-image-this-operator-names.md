@@ -7,7 +7,7 @@ Append-only: once merged, the body below is not rewritten. A fact later found wr
 
 ## Context
 
-Two agents this operator constructed run the correct image and neither starts. Measured on `admin@garam-dev` in `ns/gagent-operator-system` and recorded on issue #123: `agent-95450af4dabb6d5b-0` and `agent-ca7fa497ab68f187-0`, 32 and 35 restarts, both exiting 1 on `tool registry: tools directory "./tools" does not exist`. The agent container carries no `command` and no `args` and mounts a credentials volume, a state volume and the API-access projection — no tool tree of any kind.
+Two agents this operator constructed run the correct image and neither starts. Measured on `admin@garam-dev` in `ns/garam-agent-operator-system` and recorded on issue #123: `agent-95450af4dabb6d5b-0` and `agent-ca7fa497ab68f187-0`, 32 and 35 restarts, both exiting 1 on `tool registry: tools directory "./tools" does not exist`. The agent container carries no `command` and no `args` and mounts a credentials volume, a state volume and the API-access projection — no tool tree of any kind.
 
 **The tree is this operator's to supply, and that is settled by the image's own build rather than only by a division this repository drew.** `gagent@b61451e:build/agent.Dockerfile:20-24` describes the tool client as the one that reads *the operator's* tool manifests, so the published agent image ships no tree by design; issue #123 records pulling that image's 14 layers and listing every path — 1479 of them, 0 matching `tool`. There is no packaging oversight to fix one repository over.
 

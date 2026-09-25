@@ -16,13 +16,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	agentv1alpha1 "github.com/garamsh/gagent-operator/api/v1alpha1"
-	"github.com/garamsh/gagent-operator/internal/garam"
-	"github.com/garamsh/gagent-operator/internal/garam/constructor"
+	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
+	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
 )
 
 const (
-	namespace   = "gagent-operator-system"
+	namespace   = "garam-agent-operator-system"
 	image       = "registry.example/gagent:1.2.3"
 	storageSize = "3Gi"
 

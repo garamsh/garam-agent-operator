@@ -11,12 +11,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/garamsh/gagent-operator/test/utils"
+	"github.com/garamsh/garam-agent-operator/test/utils"
 )
 
 var (
 	// managerImage is the manager image to be built and loaded for testing.
-	managerImage = "example.com/gagent-operator:v0.0.1"
+	managerImage = "example.com/garam-agent-operator:v0.0.1"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 )
@@ -51,7 +51,7 @@ func TestE2E(t *testing.T) {
 	if err := utils.CheckKindContext(); err != nil {
 		t.Fatalf("refusing to run against a cluster this run does not own: %v", err)
 	}
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting gagent-operator e2e test suite\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Starting garam-agent-operator e2e test suite\n")
 	RunSpecs(t, "e2e suite")
 }
 
