@@ -21,7 +21,7 @@ import (
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 )
 
-// testPinnedTool is the tool the specs declare a pin for. It is gagent's one
+// testPinnedTool is the tool the specs declare a pin for. It is sherlock's one
 // required tool, so a declaration leaving it out is an agent that cannot start
 // whatever else the set names.
 const testPinnedTool = "message_send"
@@ -101,14 +101,14 @@ var _ = Describe("Agent workload", func() {
 		created := statefulSetFor(name).ResourceVersion
 
 		edited := readAgent(name)
-		edited.Spec.Image = "example.com/gagent:v0.2.0"
+		edited.Spec.Image = "example.com/sherlock:v0.2.0"
 		Expect(k8sClient.Update(ctx, edited)).To(Succeed())
 
 		_, err = reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 
 		workload := statefulSetFor(name)
-		Expect(workload.Spec.Template.Spec.Containers[0].Image).To(Equal("example.com/gagent:v0.2.0"))
+		Expect(workload.Spec.Template.Spec.Containers[0].Image).To(Equal("example.com/sherlock:v0.2.0"))
 		Expect(workload.ResourceVersion).NotTo(Equal(created))
 	})
 
@@ -387,7 +387,7 @@ var _ = Describe("Agent workload", func() {
 		Expect(workspace.SecurityContext.RunAsUser).To(BeNil())
 		Expect(pod.SecurityContext.RunAsUser).NotTo(BeNil())
 
-		By("stating that same user as the account exec children run under, which gagent refuses to guess")
+		By("stating that same user as the account exec children run under, which sherlock refuses to guess")
 		Expect(environmentOf(workspace)[execUserVariable]).
 			To(Equal(strconv.FormatInt(*pod.SecurityContext.RunAsUser, 10)))
 	})
@@ -459,7 +459,7 @@ var _ = Describe("Agent workload", func() {
 		Expect(admitted.Spec.Containers).To(HaveLen(2))
 		Expect(k8sClient.Create(ctx, admitted)).To(Succeed())
 
-		By("creating the same Pod with the capability gagent needs only on the root path, which it refuses")
+		By("creating the same Pod with the capability sherlock needs only on the root path, which it refuses")
 		refused := podOf(statefulSetFor(name), namespace)
 		refused.Name += "-privileged"
 		at := slices.IndexFunc(refused.Spec.Containers, func(container corev1.Container) bool {
@@ -488,7 +488,7 @@ var _ = Describe("Agent workload", func() {
 		Expect(written.EmptyDir).NotTo(BeNil())
 		Expect(written.EmptyDir.Medium).To(BeEmpty())
 
-		By("writing it before the agent starts, at a mode gagent does not refuse")
+		By("writing it before the agent starts, at a mode sherlock does not refuse")
 		config := initContainerOf(pod, configContainerName)
 		Expect(config.Image).To(Equal(testCopyImage))
 		Expect(config.ImagePullPolicy).To(Equal(corev1.PullAlways))
@@ -528,7 +528,7 @@ var _ = Describe("Agent workload", func() {
 		output, err := run.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), string(output))
 
-		By("leaving a file gagent's owner-only rule accepts")
+		By("leaving a file sherlock's owner-only rule accepts")
 		info, err := os.Stat(configFileIn(dir))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))

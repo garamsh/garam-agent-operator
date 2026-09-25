@@ -1,6 +1,6 @@
 # garam-agent-operator
 
-A Kubernetes operator that runs `gagent` agent workloads in a cluster from a custom resource.
+A Kubernetes operator that runs `sherlock` agent workloads in a cluster from a custom resource.
 
 ## Contents
 - What it does

@@ -23,12 +23,12 @@ import (
 
 const (
 	namespace   = "garam-agent-operator-system"
-	image       = "registry.example/gagent:1.2.3"
+	image       = "registry.example/sherlock:1.2.3"
 	storageSize = "3Gi"
 
 	// laterImage is what this operator is configured with after a corrected
 	// --agent-image, and differs from image in the tag alone.
-	laterImage = "registry.example/gagent:4.5.6"
+	laterImage = "registry.example/sherlock:4.5.6"
 
 	sampleAgent = garam.GRN("grn:acme:default:agent:9f2ac1b40d8e7a35")
 	otherAgent  = garam.GRN("grn:acme:default:agent:0a1b2c3d4e5f6071")

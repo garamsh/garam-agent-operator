@@ -22,7 +22,7 @@ var (
 )
 
 // agentImage is what the Agent under test runs, and is not the agent's own,
-// because no gagent image exists to run. What the suite needs of it is an
+// because no sherlock image exists to run. What the suite needs of it is an
 // entrypoint that stays up without being given a command — the operator sets
 // none — a shell that can read the mounted credentials, and a uid that is not
 // root. The last one is not a detail: an image that keeps root reads a

@@ -13,7 +13,7 @@ Append-only: once merged, the body below is not rewritten. A fact later found wr
 
 **Both recovery routes are then closed, and they close each other.** A renewal authenticates with the certificate it is renewing, so an expired one is refused. An enrollment runs only where no certificate can be read, and one can be read. An operator whose certificate lapses before it is renewed recovers by no route this project publishes.
 
-Measured on `admin@garam-dev` on 2026-09-05 and recorded in issue #140, against `dev` at `2285768`: the mounted certificate was `grn:garam:default:operator:gagent-dev` with `notAfter Sep 4 09:56:52 2026`, expired the day before. The operator restarted at 09:42:40, logged "Enrolling nothing: this operator holds a certificate already" at 09:43:09, and its next line was a renewal refused `401 unauthenticated: no machine identity`. A token placed in the Secret would have been read by nothing.
+Measured on `admin@garam-dev` on 2026-09-05 and recorded in issue #140, against `dev` at `2285768`: the mounted certificate was `grn:garam:default:operator:sherlock-dev` with `notAfter Sep 4 09:56:52 2026`, expired the day before. The operator restarted at 09:42:40, logged "Enrolling nothing: this operator holds a certificate already" at 09:43:09, and its next line was a renewal refused `401 unauthenticated: no machine identity`. A token placed in the Secret would have been read by nothing.
 
 **This is not what ADR 0021 decided.** That decision made a *refused* token recoverable without a restart. This ends before any token is read, so a replacement token reaches the same guard and stops at it.
 

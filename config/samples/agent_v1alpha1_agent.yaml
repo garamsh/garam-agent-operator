@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: agent-sample
 spec:
-  image: example.com/gagent:v0.1.0
+  image: example.com/sherlock:v0.1.0
   credentialsSecretName: agent-sample-credentials
   storageSize: 1Gi
   resources:

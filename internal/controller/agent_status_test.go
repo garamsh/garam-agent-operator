@@ -176,7 +176,7 @@ var _ = Describe("Agent status", func() {
 		reported := first.Generation
 
 		By("editing the spec, which leaves the status behind the generation")
-		first.Spec.Image = "example.com/gagent:v0.2.0"
+		first.Spec.Image = "example.com/sherlock:v0.2.0"
 		Expect(k8sClient.Update(ctx, first)).To(Succeed())
 
 		edited := readAgent(name)
