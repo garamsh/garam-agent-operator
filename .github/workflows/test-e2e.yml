@@ -1,8 +1,11 @@
 name: E2E Tests
 
+# No `pull_request` trigger: this suite runs where a change lands. `make test-e2e`
+# builds and owns the cluster it uses, so an author runs it before pushing and CI runs
+# it on the merge nobody runs by hand (ADR 0015).
 on:
   push:
-  pull_request:
+    branches: [dev, main]
 
 permissions: {}
 
@@ -13,6 +16,10 @@ jobs:
     name: Run on Ubuntu
     runs-on: ubuntu-latest
     steps:
+      # Dependabot moves the action pins below, rewriting the version comment with
+      # the SHA (`.github/dependabot.yml`) — but only while the two already agree,
+      # and only while the version is the last word on the line. `make verify-pins`
+      # fails when either stops holding.
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -23,16 +30,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install the latest version of kind
-        run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-
-      - name: Verify kind installation
-        run: kind version
-
-      - name: Running Test e2e
-        run: |
-          go mod tidy
-          make test-e2e
+      # `make test-e2e` installs kind itself, at the version the Makefile pins, so
+      # this job holds no kind version of its own. helm/kind-action would put that
+      # version and the cluster back here, where a contributor's command cannot
+      # reach either.
+      - name: Run the e2e tests
+        run: make test-e2e

@@ -9,6 +9,10 @@ resources:
 - role_binding.yaml
 - leader_election_role.yaml
 - leader_election_role_binding.yaml
+- garam_credential_role.yaml
+- garam_credential_role_binding.yaml
+- garam_construction_role.yaml
+- garam_construction_role_binding.yaml
 # The following RBAC configurations are used to protect
 # the metrics endpoint with authn/authz. These configurations
 # ensure that only authorized users and service accounts
@@ -18,3 +22,11 @@ resources:
 - metrics_auth_role.yaml
 - metrics_auth_role_binding.yaml
 - metrics_reader_role.yaml
+# For each CRD, "Admin", "Editor" and "Viewer" roles are scaffolded by
+# default, aiding admins in cluster management. Those roles are
+# not used by the garam-agent-operator itself. You can comment the following lines
+# if you do not want those helpers be installed with your Project.
+- agent_admin_role.yaml
+- agent_editor_role.yaml
+- agent_viewer_role.yaml
+

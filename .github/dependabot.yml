@@ -1,0 +1,19 @@
+# GitHub reads this file from the default branch, so a change here takes effect once that
+# branch holds it. `target-branch` sets both the branch whose manifests are read and the
+# branch pull requests are opened against.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+  - package-ecosystem: docker
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore

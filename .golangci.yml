@@ -1,6 +1,11 @@
 version: "2"
 run:
   allow-parallel-runners: true
+  # The linter analyses what a build with these tags would compile, so without
+  # them every file behind `//go:build e2e` is invisible to `make lint` — which
+  # reports `0 issues.` either way.
+  build-tags:
+    - e2e
 linters:
   default: none
   enable:

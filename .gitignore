@@ -5,20 +5,43 @@ Thumbs.db
 # Editors
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
 # Secrets
 .env
 .env.*
 !.env.example
+*.kubeconfig
 
 # Logs
 *.log
 
-# Common build outputs and dependencies (extend per stack during bootstrap)
-node_modules/
+# Go build outputs and test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Tool binaries and envtest assets downloaded by the Makefile into $(LOCALBIN)
+bin/*
+
+# Output of `make build-installer`, and the image overlay `make deploy` builds from
 dist/
-build/
-__pycache__/
-*.pyc
-.venv/
-target/
+
+# Cross-platform build stage written by `make docker-buildx`
+Dockerfile.cross
+
+# Kubernetes generated files — skip generated files, except for vendored ones
+!vendor/**/zz_generated.*

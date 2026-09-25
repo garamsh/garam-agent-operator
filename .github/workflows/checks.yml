@@ -1,0 +1,48 @@
+name: Checks
+
+# A task branch push is not a trigger; its pull request covers those commits, and
+# `push` covers the squash merge no pull-request run saw. The base filter keeps the
+# `dev` -> `main` promotion pull request off a commit its `push` to `dev` already ran
+# (ADR 0015).
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev]
+
+permissions: {}
+
+jobs:
+  checks:
+    permissions:
+      contents: read
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      # Dependabot moves the action pins below, rewriting the version comment with
+      # the SHA (`.github/dependabot.yml`) — but only while the two already agree,
+      # and only while the version is the last word on the line. `make verify-pins`
+      # fails when either stops holding.
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run the check set
+        run: make ci
+
+      # `git diff --exit-code` would miss a newly generated file, because an
+      # untracked path is not a diff. The first `kubebuilder create api` writes
+      # new manifests under config/crd/bases, so the check has to read status.
+      - name: Verify generated and formatted output is committed
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Working tree is dirty after 'make ci' — generated or formatted output is not committed:"
+            git status --porcelain
+            exit 1
+          fi
