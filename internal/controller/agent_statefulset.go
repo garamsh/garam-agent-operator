@@ -219,13 +219,14 @@ func writeConfigCommand(dir string) []string {
 // reconcileStatefulSet brings the StatefulSet an Agent describes into being, or
 // brings an existing one back to what the Agent's spec says, and returns it as
 // the cluster now holds it.
-func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agentv1alpha1.Agent) (*appsv1.StatefulSet, error) {
+func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agentv1alpha1.Agent,
+	descriptor agentTypeDescriptor) (*appsv1.StatefulSet, error) {
 	statefulSet := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: agent.Namespace},
 	}
 
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, statefulSet, func() error {
-		return r.applyAgent(agent, statefulSet)
+		return r.applyAgent(agent, statefulSet, descriptor)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create or update statefulset: %w", err)
@@ -258,8 +259,15 @@ func claimedStorageSize(statefulSet *appsv1.StatefulSet) resource.Quantity {
 // at creation only. What the workload carries that no Agent names — the image
 // the credential's init container runs, the image an agent's tools are mounted
 // from, and the image its workspace runs — is read off the reconciler, which is
-// where this operator's own configuration reaches the workload.
-func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet) error {
+// where this operator's own configuration reaches the workload. descriptor
+// carries the per-type environment-variable prefix and config directory name
+// this controller uses to build the workload. Today's descriptor is sherlock,
+// and its env prefix and config dir are the literals the workload carries;
+// per-type literal generation lands alongside the first non-sherlock
+// descriptor.
+func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
+	descriptor agentTypeDescriptor) error {
+	_ = descriptor // unused today; wired through so per-type literals land without a signature change
 	if statefulSet.CreationTimestamp.IsZero() {
 		labels := workloadLabels(agent)
 		statefulSet.Labels = labels

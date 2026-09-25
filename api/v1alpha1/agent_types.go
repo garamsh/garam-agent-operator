@@ -9,6 +9,19 @@ import (
 
 // AgentSpec defines the desired state of Agent
 type AgentSpec struct {
+	// type names the agent binary the workload carries. Today three are admitted
+	// — sherlock, claude-code and codex — and each maps to a different
+	// environment-variable prefix and a different per-type default. Unset
+	// defaults to sherlock, which is what every Agent before this field was
+	// already.
+	//
+	// An unknown type is refused at admission; an admitted type that the
+	// controller has not yet learned to build is refused on reconcile, with
+	// ReasonTypeUnimplemented on Synced.
+	// +optional
+	// +kubebuilder:validation:Enum=sherlock;claude-code;codex
+	Type string `json:"type,omitempty"`
+
 	// image is the container image the agent runs. It has no default: name the
 	// image and the tag or digest to run explicitly. A digest names one build and
 	// a tag is accepted; what the holder of a tag accepts is that a restart can
@@ -142,6 +155,11 @@ const (
 	// ReasonStorageSizeImmutable is set when the spec asks for a volume size the
 	// workload cannot be changed to.
 	ReasonStorageSizeImmutable = "StorageSizeImmutable"
+
+	// ReasonTypeUnimplemented is set when the spec names an admitted type the
+	// controller has not yet learned to build. The workload is not built until
+	// a controller version that knows the type is deployed.
+	ReasonTypeUnimplemented = "TypeUnimplemented"
 )
 
 // ConditionAvailable is the condition type reporting whether the workload an

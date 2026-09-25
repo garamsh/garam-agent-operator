@@ -69,4 +69,6 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0021-present-any-one-enrollment-token-once-and-wait-for-another.md` | Present any one enrollment token once and wait for another, and end the enrollment on a certificate rather than on an attempt | superseded by ADR-0022 |
 | `adr/0022-end-the-enrollment-on-a-certificate-that-has-not-expired.md` | End the enrollment on a certificate that has not expired, rather than on one this operator can read | accepted |
 | `adr/0023-run-an-agents-workspace-as-a-second-container-this-operator-names.md` | Run an agent's workspace as a second container this operator names, and give it the user the Pod already names | accepted |
+| `adr/0024-write-an-agents-config-file-from-an-init-container-into-a-directory-this-operator-names.md` | Render a declared tool set into the Pod through an init container that writes a config file into a directory this operator names | accepted |
+| `adr/0025-generalize-the-agent-kind-by-agent-type.md` | Generalize the `Agent` kind by `spec.type`, with a closed enum and a per-type dispatch table in the controller | accepted |
 | `adr/0024-write-an-agents-config-file-from-an-init-container-into-a-directory-this-operator-names.md` | Write an agent's config file from an init container, into a configuration directory this operator names | accepted |

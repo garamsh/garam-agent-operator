@@ -81,6 +81,22 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 // holds, so it costs no second read and is reported on a spec this controller
 // cannot act on as readily as on one it can.
 func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1alpha1.Agent) error {
+	descriptor, ok := resolveAgentType(agent.Spec.Type)
+	if !ok {
+		// The kubebuilder validation refused an unknown type at admission, so
+		// this branch is reached only when the type is admitted but the
+		// controller has not yet learned to build it. The workload is not built
+		// until a controller version that knows the type is deployed; the Agent
+		// is left to say so on Synced rather than failing the reconcile.
+		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonTypeUnimplemented,
+			fmt.Sprintf("Agent type %q is admitted but not yet implemented by this controller version; the workload will not be built until one is",
+				effectiveType(agent.Spec.Type)))
+		setAvailable(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonWorkloadNotObserved,
+			"The workload was not reconciled, so its readiness was not observed. The Synced condition says why")
+
+		return nil
+	}
+
 	credentials := client.ObjectKey{Namespace: agent.Namespace, Name: agent.Spec.CredentialsSecretName}
 	if err := r.credentialsExist(ctx, credentials); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -99,7 +115,7 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		return fmt.Errorf("get credentials secret: %w", err)
 	}
 
-	statefulSet, err := r.reconcileStatefulSet(ctx, agent)
+	statefulSet, err := r.reconcileStatefulSet(ctx, agent, descriptor)
 	if err != nil {
 		return err
 	}
@@ -116,6 +132,17 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 	setAvailableFromWorkload(agent, statefulSet)
 
 	return nil
+}
+
+// effectiveType is the type the controller will build against, with the
+// default substituted for the unset case. Used in messages so a reader sees
+// what the controller saw rather than the literal empty string.
+func effectiveType(specType string) string {
+	if specType == "" {
+		return agentTypeDefault
+	}
+
+	return specType
 }
 
 // credentialsExist reads the metadata of the Secret an Agent names, and nothing
