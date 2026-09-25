@@ -177,6 +177,22 @@ spec:
                     minProperties: 1
                     type: object
                 type: object
+              type:
+                description: |-
+                  type names the agent binary the workload carries. Today three are admitted
+                  — sherlock, claude-code and codex — and each maps to a different
+                  environment-variable prefix and a different per-type default. Unset
+                  defaults to sherlock, which is what every Agent before this field was
+                  already.
+
+                  An unknown type is refused at admission; an admitted type that the
+                  controller has not yet learned to build is refused on reconcile, with
+                  ReasonTypeUnimplemented on Synced.
+                enum:
+                - sherlock
+                - claude-code
+                - codex
+                type: string
             required:
             - credentialsSecretName
             - image
