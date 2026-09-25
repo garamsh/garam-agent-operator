@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	agentv1alpha1 "github.com/garamsh/gagent-operator/api/v1alpha1"
+	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 )
 
 // reportedGRN is what the poller reports on an Agent this operator constructed.

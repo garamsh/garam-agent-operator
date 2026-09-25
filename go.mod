@@ -1,4 +1,4 @@
-module github.com/garamsh/gagent-operator
+module github.com/garamsh/garam-agent-operator
 
 go 1.26.0
 

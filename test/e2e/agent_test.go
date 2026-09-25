@@ -11,8 +11,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	agentv1alpha1 "github.com/garamsh/gagent-operator/api/v1alpha1"
-	"github.com/garamsh/gagent-operator/test/utils"
+	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/test/utils"
 )
 
 const (

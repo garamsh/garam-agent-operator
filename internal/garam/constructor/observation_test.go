@@ -10,9 +10,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	agentv1alpha1 "github.com/garamsh/gagent-operator/api/v1alpha1"
-	"github.com/garamsh/gagent-operator/internal/garam"
-	"github.com/garamsh/gagent-operator/internal/garam/constructor"
+	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
+	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
 )
 
 // setAvailable puts the condition the reconciler writes on the Agent

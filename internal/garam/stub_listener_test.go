@@ -23,7 +23,7 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	"github.com/garamsh/gagent-operator/internal/garam"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
 // stubListener stands in for garam's machine listener: it terminates TLS with a

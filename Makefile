@@ -77,7 +77,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # - KUBECTL_KUBERC=true
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
-KIND_CLUSTER ?= gagent-operator-test-e2e
+KIND_CLUSTER ?= garam-agent-operator-test-e2e
 
 # The kubeconfig this run owns, and the destination of every command the suite
 # makes: `go test` below carries it, and kubectl, kustomize and the sub-makes
@@ -265,10 +265,10 @@ PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name gagent-operator-builder
-	$(CONTAINER_TOOL) buildx use gagent-operator-builder
+	- $(CONTAINER_TOOL) buildx create --name garam-agent-operator-builder
+	$(CONTAINER_TOOL) buildx use garam-agent-operator-builder
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm gagent-operator-builder
+	- $(CONTAINER_TOOL) buildx rm garam-agent-operator-builder
 	rm Dockerfile.cross
 
 # `kustomize edit set image` writes to the kustomization it runs in, and
