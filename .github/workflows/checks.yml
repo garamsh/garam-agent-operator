@@ -1,14 +1,12 @@
 name: Checks
 
-# A task branch push is not a trigger; its pull request covers those commits, and
-# `push` covers the squash merge no pull-request run saw. The base filter keeps the
-# `dev` -> `main` promotion pull request off a commit its `push` to `dev` already ran
-# (ADR 0015).
+# Runs only on the `dev` -> `main` promotion pull request: work lands on `dev`
+# unchecked by CI, and its author's local `make ci` is the gate there. No `push`
+# trigger, because the promotion merges without squashing and that merge is the tree
+# this run already checked (ADR 0028).
 on:
-  push:
-    branches: [dev, main]
   pull_request:
-    branches: [dev]
+    branches: [main]
 
 permissions: {}
 
