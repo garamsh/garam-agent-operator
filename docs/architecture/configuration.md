@@ -48,6 +48,8 @@ That the image and the storage size come from the operator's own configuration r
 
 That the tool tree is not one of those values is [ADR 0027](adr/0027-an-agents-tools-arrive-in-its-own-image-and-this-operator-mounts-no-tool-tree.md), which supersedes [ADR 0019](adr/0019-mount-an-agents-tool-tree-from-an-image-this-operator-names.md) and removes `--agent-tools-image`. The agent's image carries its tools, so which tools a cluster's agents run is decided by the build `--agent-image` names, and no second flag is needed.
 
+That none of these images is per agent type is [ADR 0029](adr/0029-route-every-agent-specific-name-in-the-pod-through-its-types-descriptor.md). `--agent-copy-image` asks nothing of the agent, so it serves every type. `--agent-image` and `--agent-workspace-image` name `sherlock`'s images because `sherlock` is the only type this operator builds. Whether they become per type is decided by the issue that implements a second type.
+
 That the image an agent's workspace runs is a third is [ADR 0023](adr/0023-run-an-agents-workspace-as-a-second-container-this-operator-names.md), on the same test and with one difference worth reading: the image it names exists. Read from ECR on 2026-09-06, `garam/sherlock-workspace:0.1.0` resolves to `sha256:ce3256dcd5ac46ceaa9d5e445da69998728b123f86bca92b4001185cfa0e6a7e`, which is an OCI image manifest and not an index — so the rule above applies in its second form, and the architecture an overlay setting it pins is `linux/amd64`.
 
 ## Open questions

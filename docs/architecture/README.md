@@ -70,8 +70,9 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0022-end-the-enrollment-on-a-certificate-that-has-not-expired.md` | End the enrollment on a certificate that has not expired, rather than on one this operator can read | accepted |
 | `adr/0023-run-an-agents-workspace-as-a-second-container-this-operator-names.md` | Run an agent's workspace as a second container this operator names, and give it the user the Pod already names | accepted |
 | `adr/0024-write-an-agents-config-file-from-an-init-container-into-a-directory-this-operator-names.md` | Render a declared tool set into the Pod through an init container that writes a config file into a directory this operator names | accepted |
-| `adr/0025-generalize-the-agent-kind-by-agent-type.md` | Generalize the `Agent` kind by `spec.type`, with a closed enum and a per-type dispatch table in the controller | accepted |
+| `adr/0025-generalize-the-agent-kind-by-agent-type.md` | Generalize the `Agent` kind by `spec.type`, with a closed enum and a per-type dispatch table in the controller | accepted; descriptor fields extended by ADR-0029 |
 | `adr/0026-single-ecr-repository-dev-tag-by-role.md` | Publish one image to one ECR repository, with a `dev-<hash>` tag on bring-up builds and the commit-hash tag carrying the identifier | accepted |
 | `adr/0027-an-agents-tools-arrive-in-its-own-image-and-this-operator-mounts-no-tool-tree.md` | An agent's tools arrive in its own image, and this operator mounts no tool tree | accepted |
 | `adr/0028-run-the-checks-and-the-e2e-suite-on-the-promotion-to-main-and-nothing-on-dev.md` | Run the checks and the e2e suite on the promotion to `main`, and nothing on `dev` | accepted |
+| `adr/0029-route-every-agent-specific-name-in-the-pod-through-its-types-descriptor.md` | Route every agent-specific name in the Pod through its type's descriptor, and keep the operator's images out of it | accepted |
 | `adr/0024-write-an-agents-config-file-from-an-init-container-into-a-directory-this-operator-names.md` | Write an agent's config file from an init container, into a configuration directory this operator names | accepted |

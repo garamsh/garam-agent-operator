@@ -1,34 +1,138 @@
 package controller
 
-// agentTypeDescriptor carries everything the controller reads to build a Pod
-// for one agent type. The controller looks up the descriptor by Agent.Spec.Type
-// once per reconcile and dispatches the rest of the build through it.
-//
-// One descriptor per supported type. A type admitted by the API but absent
-// from the map is refused on reconcile with ReasonTypeUnimplemented; adding a
-// new type is a code change, not a configuration one.
-type agentTypeDescriptor struct {
-	// envPrefix is the prefix every environment variable this controller writes
-	// carries, except those whose names are the agent project's own and travel
-	// unchanged (XDG_CONFIG_HOME, AGENT_CONFIG_CONTENT). The naming convention
-	// matches what viper's SetEnvPrefix reads on the agent's side.
-	envPrefix string
+import (
+	"fmt"
+	"reflect"
 
-	// configDirName is the segment the agent resolves its config file under,
-	// the part that hangs off the mount path this operator names. The segment
-	// is the agent project's, not this operator's: sherlock resolves
-	// os.UserConfigDir/<dir>/config.yaml, claude-code resolves
-	// ~/.claude-code/config.yaml, and so on. An agent whose resolution differs
-	// is one this descriptor has to be re-examined for.
-	configDirName string
+	"sigs.k8s.io/yaml"
+
+	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+)
+
+// agentTypeDescriptor carries every name the Pod builder writes that belongs to
+// one agent binary: the paths its containers mount, the variables they read, and
+// the config file it resolves. The controller looks the descriptor up by
+// Agent.Spec.Type once per reconcile and builds the workload through it.
+//
+// Every field is required. A type whose descriptor leaves any field unset is
+// refused on reconcile with ReasonTypeUnimplemented, so a half-filled entry
+// refuses the workload rather than building it with a missing name.
+type agentTypeDescriptor struct {
+	// credentialsMountPath is where the agent reads the copy of its credential.
+	credentialsMountPath string
+
+	// credentialsSecretMountPath is where the kubelet projects the credential's
+	// Secret, and only the init container that copies it mounts it.
+	credentialsSecretMountPath string
+
+	// stateMountPath is where the agent's state volume is mounted, in the agent
+	// container and in its workspace.
+	stateMountPath string
+
+	// configMountPath is the configuration directory the agent is given and the
+	// one its config file is found under.
+	configMountPath string
+
+	// configHomeVariable is the variable the agent reads configMountPath from.
+	configHomeVariable string
+
+	// configFile is the config file's path relative to configMountPath.
+	configFile string
+
+	// renderConfig is the text of the config file an Agent's spec becomes, in
+	// the agent's own setting names.
+	renderConfig func(agentv1alpha1.AgentSpec) (string, error)
+
+	// workspaceAddress is where the workspace listens and the agent dials.
+	workspaceAddress string
+
+	// listenAddressVariable is the workspace's own listen address;
+	// workspaceAddressVariable is the agent's address for the workspace. They
+	// are the two ends of one link.
+	listenAddressVariable    string
+	workspaceAddressVariable string
+
+	// workspaceDirVariable names the directory the workspace serves.
+	workspaceDirVariable string
+
+	// execUserVariable names the uid the workspace runs exec children under.
+	execUserVariable string
 }
 
 // agentTypeSherlock is the descriptor for type=sherlock (and the unset default).
-// Its env prefix and config dir name follow sherlock's published names on the
-// agent project's dev branch.
+// Every name in it is either sherlock's or chosen by this operator for sherlock;
+// sherlock's deployment contract is
+// sherlock@8218189:docs/architecture/deployment.md.
 var agentTypeSherlock = agentTypeDescriptor{
-	envPrefix:     "SHERLOCK_",
-	configDirName: "sherlock",
+	credentialsMountPath:       "/run/sherlock/credentials",
+	credentialsSecretMountPath: "/etc/sherlock/credentials",
+	stateMountPath:             "/var/lib/sherlock",
+
+	// Absolute and this operator's: sherlock's other two roads to a config file
+	// are a path relative to a working directory the agent's image declares and a
+	// flag this operator does not write, so the directory it resolves against
+	// would otherwise be one this operator did not choose
+	// (sherlock@fc5fca4:internal/config/config.go:371-395).
+	configMountPath: "/run/sherlock/config",
+
+	// Read by os.UserConfigDir on the way to the file rather than by sherlock's
+	// settings, which resolve under SHERLOCK_
+	// (sherlock@fc5fca4:internal/config/config.go:276-277).
+	configHomeVariable: "XDG_CONFIG_HOME",
+
+	// os.UserConfigDir()/sherlock/config.yaml is sherlock's own layout
+	// (sherlock@8218189:docs/architecture/deployment.md:84).
+	configFile:   "sherlock/config.yaml",
+	renderConfig: renderSherlockConfig,
+
+	// Both images default to it (sherlock@9b0e399:internal/config/config.go:34),
+	// and it is written to both containers rather than left to them: two
+	// defaults agreeing is not the same as one number this operator chose. It is
+	// loopback, which is the only bind sherlock's unauthenticated listener
+	// accepts (sherlock@8218189:docs/architecture/deployment.md:45-53).
+	workspaceAddress: "127.0.0.1:8081",
+
+	// sherlock's settings addr, workspace-addr, workspace and exec-uid, under the
+	// SHERLOCK_ prefix and the dash-to-underscore mapping every one of its
+	// settings resolves through (sherlock@8218189:docs/architecture/deployment.md:44-47,65,82).
+	listenAddressVariable:    "SHERLOCK_ADDR",
+	workspaceAddressVariable: "SHERLOCK_WORKSPACE_ADDR",
+	workspaceDirVariable:     "SHERLOCK_WORKSPACE",
+	// sherlock runs an exec child under the workspace's own account only where
+	// this number is the uid that account already has, and refuses every
+	// isolated exec otherwise
+	// (sherlock@9b0e399:internal/workspace/shell/process_linux.go:131).
+	execUserVariable: "SHERLOCK_EXEC_UID",
+}
+
+// sherlockConfig is sherlock's config file, holding what this operator has been
+// taught to declare and nothing else. The field names are sherlock's setting
+// names. A second key family joins it as a second field here: the file is the
+// whole of what an agent is configured with, so nothing about its shape is the
+// pins'.
+type sherlockConfig struct {
+	Tools sherlockConfigTools `json:"tools"`
+}
+
+type sherlockConfigTools struct {
+	Pins map[string]string `json:"pins"`
+}
+
+// renderSherlockConfig is the text of the config file an Agent's declaration
+// becomes for sherlock.
+//
+// It is marshalled rather than assembled: a pin is a string this operator does
+// not read and cannot constrain, and the one place a foreign string can change
+// what a file means is where somebody wrote the file's syntax by hand. Map keys
+// marshal in sorted order, so one declaration renders one text and an unchanged
+// Agent leaves the workload unchanged.
+func renderSherlockConfig(spec agentv1alpha1.AgentSpec) (string, error) {
+	file, err := yaml.Marshal(sherlockConfig{Tools: sherlockConfigTools{Pins: spec.Tools.Pins}})
+	if err != nil {
+		return "", fmt.Errorf("render the config file of the agent: %w", err)
+	}
+
+	return string(file), nil
 }
 
 // agentTypeClaudeCode is the descriptor for type=claude-code. Admitted by the
@@ -41,10 +145,7 @@ var agentTypeClaudeCode = agentTypeDescriptor{}
 var agentTypeCodex = agentTypeDescriptor{}
 
 // agentTypes is the closed set the API admits. The order does not matter;
-// lookups are by exact key. A descriptor with zero fields is treated as
-// unimplemented and refuses the reconcile, so a half-filled entry is a
-// guarantee that the controller will refuse the workload rather than build it
-// wrong.
+// lookups are by exact key.
 var agentTypes = map[string]agentTypeDescriptor{
 	"sherlock":    agentTypeSherlock,
 	"claude-code": agentTypeClaudeCode,
@@ -71,5 +172,22 @@ func resolveAgentType(specType string) (agentTypeDescriptor, bool) {
 		return agentTypeDescriptor{}, false
 	}
 
-	return descriptor, descriptor != agentTypeDescriptor{}
+	return descriptor, descriptor.implemented()
 }
+
+// implemented reports whether every field of the descriptor is set. It reads the
+// fields by reflection so that a field added to the descriptor is required of
+// every type without a second list to keep in step with the struct.
+func (d agentTypeDescriptor) implemented() bool {
+	for _, field := range reflect.ValueOf(d).Fields() {
+		if field.IsZero() {
+			return false
+		}
+	}
+
+	return true
+}
+
+// configFileIn is where the agent looks for its config file under the
+// configuration directory dir.
+func (d agentTypeDescriptor) configFileIn(dir string) string { return dir + "/" + d.configFile }

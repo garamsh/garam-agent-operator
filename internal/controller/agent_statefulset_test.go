@@ -72,7 +72,7 @@ var _ = Describe("Agent workload", func() {
 		Expect(claim.Spec.Resources.Requests.Storage().String()).To(Equal("1Gi"))
 		Expect(container.VolumeMounts).To(ContainElement(corev1.VolumeMount{
 			Name:      claim.Name,
-			MountPath: stateMountPath,
+			MountPath: agentTypeSherlock.stateMountPath,
 		}))
 	})
 
@@ -189,11 +189,11 @@ var _ = Describe("Agent workload", func() {
 		Expect(credentials.Image).To(Equal(testCopyImage))
 		script := strings.Join(credentials.Command, " ")
 		Expect(script).To(ContainSubstring("install -m 0600"))
-		Expect(script).To(ContainSubstring(credentialsSecretMountPath + "/*"))
-		Expect(script).To(ContainSubstring(credentialsMountPath + "/"))
+		Expect(script).To(ContainSubstring(agentTypeSherlock.credentialsSecretMountPath + "/*"))
+		Expect(script).To(ContainSubstring(agentTypeSherlock.credentialsMountPath + "/"))
 		Expect(credentials.VolumeMounts).To(ConsistOf(
-			corev1.VolumeMount{Name: credentialsSecretVolumeName, MountPath: credentialsSecretMountPath, ReadOnly: true},
-			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: credentialsMountPath},
+			corev1.VolumeMount{Name: credentialsSecretVolumeName, MountPath: agentTypeSherlock.credentialsSecretMountPath, ReadOnly: true},
+			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: agentTypeSherlock.credentialsMountPath},
 		))
 
 		By("letting neither container name a user of its own, which would leave the copy owned by somebody else")
@@ -203,8 +203,8 @@ var _ = Describe("Agent workload", func() {
 
 		By("giving the agent the copy and not the projection")
 		Expect(pod.Containers[0].VolumeMounts).To(ConsistOf(
-			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: credentialsMountPath},
-			corev1.VolumeMount{Name: stateVolumeName, MountPath: stateMountPath},
+			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: agentTypeSherlock.credentialsMountPath},
+			corev1.VolumeMount{Name: stateVolumeName, MountPath: agentTypeSherlock.stateMountPath},
 		))
 	})
 
@@ -317,13 +317,13 @@ var _ = Describe("Agent workload", func() {
 
 		By("telling the workspace where to listen and the agent the same place to dial")
 		listen := environmentOf(workspace)
-		Expect(listen[listenAddressVariable]).To(Equal(workspaceAddress))
-		Expect(environmentOf(pod.Containers[0])[workspaceAddressVariable]).To(Equal(listen[listenAddressVariable]))
+		Expect(listen[agentTypeSherlock.listenAddressVariable]).To(Equal(agentTypeSherlock.workspaceAddress))
+		Expect(environmentOf(pod.Containers[0])[agentTypeSherlock.workspaceAddressVariable]).To(Equal(listen[agentTypeSherlock.listenAddressVariable]))
 
 		By("giving it a directory on the volume the agent's state is claimed on, which it can create in")
 		Expect(workspace.VolumeMounts).To(ConsistOf(
-			corev1.VolumeMount{Name: stateVolumeName, MountPath: stateMountPath}))
-		Expect(listen[workspaceDirVariable]).To(HavePrefix(stateMountPath + "/"))
+			corev1.VolumeMount{Name: stateVolumeName, MountPath: agentTypeSherlock.stateMountPath}))
+		Expect(listen[agentTypeSherlock.workspaceDirVariable]).To(HavePrefix(agentTypeSherlock.stateMountPath + "/"))
 
 		By("leaving what its image runs alone, and mounting it no credential it does not read")
 		Expect(workspace.Command).To(BeEmpty())
@@ -347,7 +347,7 @@ var _ = Describe("Agent workload", func() {
 		Expect(pod.SecurityContext.RunAsUser).NotTo(BeNil())
 
 		By("stating that same user as the account exec children run under, which sherlock refuses to guess")
-		Expect(environmentOf(workspace)[execUserVariable]).
+		Expect(environmentOf(workspace)[agentTypeSherlock.execUserVariable]).
 			To(Equal(strconv.FormatInt(*pod.SecurityContext.RunAsUser, 10)))
 	})
 
@@ -453,9 +453,9 @@ var _ = Describe("Agent workload", func() {
 		Expect(config.ImagePullPolicy).To(Equal(corev1.PullAlways))
 		script := strings.Join(config.Command, " ")
 		Expect(script).To(ContainSubstring("umask 077"))
-		Expect(script).To(ContainSubstring(configFileIn(configMountPath)))
+		Expect(script).To(ContainSubstring(agentTypeSherlock.configFileIn(agentTypeSherlock.configMountPath)))
 		Expect(config.VolumeMounts).To(ConsistOf(
-			corev1.VolumeMount{Name: configVolumeName, MountPath: configMountPath}))
+			corev1.VolumeMount{Name: configVolumeName, MountPath: agentTypeSherlock.configMountPath}))
 
 		By("carrying the file's text to that container and to nothing the agent spawns")
 		Expect(environmentOf(config)).To(HaveKeyWithValue(configContentVariable,
@@ -465,8 +465,8 @@ var _ = Describe("Agent workload", func() {
 
 		By("giving the agent the file read-only and the directory it resolves one from")
 		Expect(agentContainer.VolumeMounts).To(ContainElement(corev1.VolumeMount{
-			Name: configVolumeName, MountPath: configMountPath, ReadOnly: true}))
-		Expect(environmentOf(agentContainer)).To(HaveKeyWithValue(configHomeVariable, configMountPath))
+			Name: configVolumeName, MountPath: agentTypeSherlock.configMountPath, ReadOnly: true}))
+		Expect(environmentOf(agentContainer)).To(HaveKeyWithValue(agentTypeSherlock.configHomeVariable, agentTypeSherlock.configMountPath))
 	})
 
 	It("writes a config file only its owner can read, out of text no pin can turn into a command", func() {
@@ -477,10 +477,10 @@ var _ = Describe("Agent workload", func() {
 			testSecondTool: `sha256:bb" ; touch escaped ; echo "`,
 			testPinnedTool: testToolPin,
 		}
-		file, err := renderAgentConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}})
+		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}})
 		Expect(err).NotTo(HaveOccurred())
 
-		command := writeConfigCommand(dir)
+		command := writeConfigCommand(dir, agentTypeSherlock)
 		run := exec.Command(command[0], command[1:]...)
 		run.Dir = dir
 		run.Env = append(os.Environ(), configContentVariable+"="+file)
@@ -488,14 +488,14 @@ var _ = Describe("Agent workload", func() {
 		Expect(err).NotTo(HaveOccurred(), string(output))
 
 		By("leaving a file sherlock's owner-only rule accepts")
-		info, err := os.Stat(configFileIn(dir))
+		info, err := os.Stat(agentTypeSherlock.configFileIn(dir))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
 
 		By("landing every pin in it exactly as it was declared")
-		content, err := os.ReadFile(configFileIn(dir))
+		content, err := os.ReadFile(agentTypeSherlock.configFileIn(dir))
 		Expect(err).NotTo(HaveOccurred())
-		written := agentConfig{}
+		written := sherlockConfig{}
 		Expect(yaml.Unmarshal(content, &written)).To(Succeed())
 		Expect(written.Tools.Pins).To(Equal(pins))
 	})
@@ -507,7 +507,7 @@ var _ = Describe("Agent workload", func() {
 		// and every pass would rewrite the StatefulSet.
 		pins := map[string]string{"web_fetch": "sha256:cc", testPinnedTool: testToolPin, testSecondTool: testSecondPin}
 
-		file, err := renderAgentConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}})
+		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}})
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(file).To(Equal("tools:\n  pins:\n" +
@@ -560,7 +560,7 @@ var _ = Describe("Agent workload", func() {
 		pod := statefulSetFor(name).Spec.Template.Spec
 		Expect(pod.InitContainers).To(HaveLen(1))
 		Expect(pod.InitContainers[0].Name).To(Equal(credentialsContainerName))
-		Expect(environmentOf(containerOf(pod, agentContainerName))).NotTo(HaveKey(configHomeVariable))
+		Expect(environmentOf(containerOf(pod, agentContainerName))).NotTo(HaveKey(agentTypeSherlock.configHomeVariable))
 	})
 
 	It("builds a Pod carrying a declared tool set that a namespace enforcing PodSecurity restricted admits", func() {
@@ -697,7 +697,7 @@ func withoutWorkspace(pod corev1.PodSpec) corev1.PodSpec {
 	})
 	for i := range stripped.Containers {
 		stripped.Containers[i].Env = slices.DeleteFunc(stripped.Containers[i].Env,
-			func(variable corev1.EnvVar) bool { return variable.Name == workspaceAddressVariable })
+			func(variable corev1.EnvVar) bool { return variable.Name == agentTypeSherlock.workspaceAddressVariable })
 		// A slice emptied is not a slice absent, and it is the absent one the
 		// Pod built without a workspace carries.
 		if len(stripped.Containers[i].Env) == 0 {
@@ -725,7 +725,7 @@ func withoutToolPins(pod corev1.PodSpec) corev1.PodSpec {
 		stripped.Containers[i].VolumeMounts = slices.DeleteFunc(stripped.Containers[i].VolumeMounts,
 			func(mount corev1.VolumeMount) bool { return mount.Name == configVolumeName })
 		stripped.Containers[i].Env = slices.DeleteFunc(stripped.Containers[i].Env,
-			func(variable corev1.EnvVar) bool { return variable.Name == configHomeVariable })
+			func(variable corev1.EnvVar) bool { return variable.Name == agentTypeSherlock.configHomeVariable })
 		// A slice emptied is not a slice absent, and it is the absent one the
 		// Pod built without a declared tool set carries.
 		if len(stripped.Containers[i].Env) == 0 {

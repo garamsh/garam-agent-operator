@@ -4,6 +4,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -61,6 +63,41 @@ var _ = Describe("Agent status", func() {
 		Expect(synced.ObservedGeneration).To(Equal(agent.Generation))
 
 		Expect(availableCondition(name).ObservedGeneration).To(Equal(agent.Generation))
+	})
+
+	It("refuses an admitted type this controller cannot build, and builds nothing for it", func() {
+		for _, specType := range unimplementedAgentTypes {
+			name := "refuses-" + specType
+			// The Secret exists, so the refusal is the type's and not the
+			// credential's.
+			createSecret(credentialsSecretName(name))
+			agent := newAgent(name)
+			agent.Spec.Type = specType
+			createAgent(agent)
+
+			_, err := reconcileAgent(name)
+			Expect(err).NotTo(HaveOccurred())
+
+			refused := syncedCondition(name)
+			Expect(refused.Status).To(Equal(metav1.ConditionFalse))
+			Expect(refused.Reason).To(Equal(agentv1alpha1.ReasonTypeUnimplemented))
+			Expect(refused.Message).To(ContainSubstring(specType))
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx,
+				types.NamespacedName{Name: name, Namespace: agentNamespace}, &appsv1.StatefulSet{}))).To(BeTrue())
+		}
+
+		By("building the same Agent as type sherlock, the control")
+		name := "builds-sherlock"
+		createSecret(credentialsSecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Type = "sherlock"
+		createAgent(agent)
+
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(syncedCondition(name).Reason).To(Equal(agentv1alpha1.ReasonWorkloadReconciled))
+		Expect(k8sClient.Get(ctx,
+			types.NamespacedName{Name: name, Namespace: agentNamespace}, &appsv1.StatefulSet{})).To(Succeed())
 	})
 
 	It("reports a credentials Secret that does not exist, and stops reporting it once it does", func() {

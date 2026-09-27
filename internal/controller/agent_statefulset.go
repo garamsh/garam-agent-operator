@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"path"
 	"slices"
 	"strconv"
 
@@ -13,7 +14,6 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/yaml"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 )
@@ -32,8 +32,8 @@ const (
 
 	// workspaceContainerName is the container serving the files an agent reads
 	// and writes and the commands it runs. The agent executes nothing itself
-	// and reaches this process over the Pod's loopback interface
-	// (sherlock@9b0e399:internal/workspace/server/serve.go:36-42).
+	// and reaches this process over the Pod's loopback interface, at the address
+	// the agent type's descriptor names.
 	workspaceContainerName = "workspace"
 
 	credentialsVolumeName       = "credentials"
@@ -41,67 +41,28 @@ const (
 	stateVolumeName             = "state"
 	configVolumeName            = "config"
 
-	// credentialsMountPath holds the copy the agent reads. credentialsSecretMountPath
-	// holds the projection the kubelet writes, and only the init container mounts it.
-	credentialsMountPath       = "/run/sherlock/credentials"
-	credentialsSecretMountPath = "/etc/sherlock/credentials"
-	stateMountPath             = "/var/lib/sherlock"
-
-	// configMountPath is the configuration directory the agent is given, and the
-	// one the file below is found under. It is absolute and this operator's:
-	// sherlock's other two roads to a config file are a path relative to a
-	// working directory the agent's image declares and a flag this operator does
-	// not write, so the directory it resolves against would otherwise be one
-	// this operator did not choose
-	// (sherlock@fc5fca4:internal/config/config.go:371-395).
-	configMountPath = "/run/sherlock/config"
-
-	// configHomeVariable is the variable os.UserConfigDir reads that directory
-	// from. It is not one of sherlock's settings and reaches no viper: sherlock's own
-	// resolution is prefixed SHERLOCK_ (sherlock@fc5fca4:internal/config/config.go:276-277),
-	// and this one is read by the standard library on the way to the file.
-	configHomeVariable = "XDG_CONFIG_HOME"
-
 	// configContentVariable carries the file's whole text to the init container
-	// that writes it. It is set on that container and on no other, so nothing the
-	// agent spawns inherits a pin set — which is the custody sherlock refuses the
-	// environment road to keep (sherlock@fc5fca4:internal/config/config.go:216-234).
+	// that writes it. It is this operator's name, set on that container and on no
+	// other, so nothing the agent spawns inherits a pin set — which is the custody
+	// the sherlock descriptor's agent refuses the environment road to keep
+	// (sherlock@fc5fca4:internal/config/config.go:216-234).
 	configContentVariable = "AGENT_CONFIG_CONTENT"
 
-	// configFileMask leaves the file readable by its owner and nobody else.
-	// sherlock refuses a config file carrying any group or other bit
-	// (sherlock@fc5fca4:internal/config/owner_only.go), so an agent handed one it
-	// refuses does not start. A mask rather than a mode set afterwards, so the
-	// file is never briefly readable by anyone else.
+	// configFileMask leaves the file readable by its owner and nobody else. The
+	// sherlock descriptor's agent refuses a config file carrying any group or
+	// other bit (sherlock@8218189:docs/architecture/deployment.md:78), so an
+	// agent handed one it refuses does not start. A mask rather than a mode set
+	// afterwards, so the file is never briefly readable by anyone else.
 	configFileMask = "077"
 
-	// The four settings below are sherlock's, under the SHERLOCK_ prefix and the
-	// dash-to-underscore mapping every one of its settings resolves through
-	// (sherlock@9b0e399:internal/config/config.go:276-277). listenAddressVariable
-	// and workspaceAddressVariable are the two ends of one link: the workspace's
-	// own addr and the agent's workspace-addr.
-	listenAddressVariable    = "SHERLOCK_ADDR"
-	workspaceAddressVariable = "SHERLOCK_WORKSPACE_ADDR"
-	workspaceDirVariable     = "SHERLOCK_WORKSPACE"
-	execUserVariable         = "SHERLOCK_EXEC_UID"
-
-	// workspaceAddress is where the workspace listens and where the agent dials.
-	// Both images default to it (sherlock@9b0e399:internal/config/config.go:34),
-	// and it is written to both containers rather than left to them: two
-	// defaults agreeing is not the same as one number this operator chose, and
-	// nothing here would notice either image moving its own. It is loopback,
-	// which is the only bind sherlock's unauthenticated listener accepts.
-	workspaceAddress = "127.0.0.1:8081"
-
-	// workspaceDirPath is the subtree of the state volume the workspace serves,
-	// and the only part of it the workspace touches. It is absolute and this
-	// operator's for the reason configMountPath is, and for a second: sherlock's
-	// default is relative, the published workspace image declares no working
-	// directory, and the /data it therefore resolves against is root-owned at
-	// 0755 — which the user this Pod names cannot create in, so the workspace
-	// would exit at startup
+	// workspaceDirName is the subtree of the state volume the workspace serves,
+	// and the only part of it the workspace touches. The path is absolute and
+	// this operator's: the sherlock descriptor's workspace defaults to a relative
+	// one, its published image declares no working directory, and the /data it
+	// therefore resolves against is root-owned at 0755 — which the user this Pod
+	// names cannot create in, so the workspace would exit at startup
 	// (sherlock@9b0e399:internal/workspace/files/files.go:56).
-	workspaceDirPath = stateMountPath + "/workspace"
+	workspaceDirName = "workspace"
 
 	// credentialsFileMode keeps the projected credential files readable by the
 	// group the Pod carries and by nothing else. A Secret volume's files are
@@ -146,63 +107,27 @@ func containerSecurityContext() *corev1.SecurityContext {
 // the agent reads, at a mode only its owner can reach. The glob skips the
 // kubelet's dot-prefixed bookkeeping entries and names no key, so a Secret whose
 // keys change does not change the workload.
-func copyCredentialsCommand() []string {
+func copyCredentialsCommand(descriptor agentTypeDescriptor) []string {
 	return []string{"/bin/sh", "-ec", fmt.Sprintf(
 		"for f in %s/*; do install -m %s \"$f\" %s/; done",
-		credentialsSecretMountPath, credentialsCopyMode, credentialsMountPath)}
+		descriptor.credentialsSecretMountPath, credentialsCopyMode, descriptor.credentialsMountPath)}
 }
 
-// configDirIn and configFileIn are where sherlock looks for a config file under
-// the configuration directory dir. Both segments are that project's rather than
-// this operator's to choose (sherlock@fc5fca4:internal/config/config.go:187
-// and :382-395); the directory they hang off is the part this operator names.
-func configDirIn(dir string) string { return dir + "/sherlock" }
-
-func configFileIn(dir string) string { return configDirIn(dir) + "/config.yaml" }
-
-// agentConfig is the file an agent resolves its settings from, holding what this
-// operator has been taught to declare and nothing else. The field names are
-// sherlock's setting names, because this operator is writing that project's file.
-//
-// A second key family joins it as a second field here: the file is the whole of
-// what an agent is configured with, so nothing about its shape is the pins'.
-type agentConfig struct {
-	Tools agentConfigTools `json:"tools"`
-}
-
-type agentConfigTools struct {
-	Pins map[string]string `json:"pins"`
-}
-
-// renderAgentConfig is the text of the config file an Agent's declaration
-// becomes.
-//
-// It is marshalled rather than assembled: a pin is a string this operator does
-// not read and cannot constrain, and the one place a foreign string can change
-// what a file means is where somebody wrote the file's syntax by hand. Map keys
-// marshal in sorted order, so one declaration renders one text and an unchanged
-// Agent leaves the workload unchanged.
-func renderAgentConfig(spec agentv1alpha1.AgentSpec) (string, error) {
-	file, err := yaml.Marshal(agentConfig{Tools: agentConfigTools{Pins: spec.Tools.Pins}})
-	if err != nil {
-		return "", fmt.Errorf("render the config file of the agent: %w", err)
-	}
-
-	return string(file), nil
-}
-
-// writeConfigCommand writes the agent's config file into dir before the agent
-// starts, at a mode only the user that reads it can reach.
+// writeConfigCommand writes the agent's config file into dir, at the path the
+// descriptor names under it, before the agent starts and at a mode only the
+// user that reads it can reach.
 //
 // The text travels in the environment and is never part of the command. A pin
 // reaches this operator from a console field it does not read, and a value
 // interpolated into a command is one that can stop being a value — which is the
 // ground ci.md §Security baseline states for a pipeline's inputs, met here at an
 // init container's.
-func writeConfigCommand(dir string) []string {
+func writeConfigCommand(dir string, descriptor agentTypeDescriptor) []string {
+	file := descriptor.configFileIn(dir)
+
 	return []string{"/bin/sh", "-ec", fmt.Sprintf(
 		"umask %s && mkdir -p %s && printf '%%s' \"$%s\" > %s",
-		configFileMask, configDirIn(dir), configContentVariable, configFileIn(dir))}
+		configFileMask, path.Dir(file), configContentVariable, file)}
 }
 
 // reconcileStatefulSet brings the StatefulSet an Agent describes into being, or
@@ -248,15 +173,10 @@ func claimedStorageSize(statefulSet *appsv1.StatefulSet) resource.Quantity {
 // at creation only. What the workload carries that no Agent names — the image
 // the credential's init container runs and the image its workspace runs — is
 // read off the reconciler, which is where this operator's own configuration
-// reaches the workload. descriptor
-// carries the per-type environment-variable prefix and config directory name
-// this controller uses to build the workload. Today's descriptor is sherlock,
-// and its env prefix and config dir are the literals the workload carries;
-// per-type literal generation lands alongside the first non-sherlock
-// descriptor.
+// reaches the workload. Every path and variable name that belongs to the agent
+// binary is read off descriptor.
 func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
 	descriptor agentTypeDescriptor) error {
-	_ = descriptor // unused today; wired through so per-type literals land without a signature change
 	if statefulSet.CreationTimestamp.IsZero() {
 		labels := workloadLabels(agent)
 		statefulSet.Labels = labels
@@ -309,20 +229,20 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	// nothing here requires its tag to name one build, so a node's cache would
 	// leave two agents copying a credential with different tools under one name.
 	credentials.ImagePullPolicy = corev1.PullAlways
-	credentials.Command = copyCredentialsCommand()
+	credentials.Command = copyCredentialsCommand(descriptor)
 	credentials.SecurityContext = containerSecurityContext()
 	credentials.VolumeMounts = []corev1.VolumeMount{
-		{Name: credentialsSecretVolumeName, MountPath: credentialsSecretMountPath, ReadOnly: true},
-		{Name: credentialsVolumeName, MountPath: credentialsMountPath},
+		{Name: credentialsSecretVolumeName, MountPath: descriptor.credentialsSecretMountPath, ReadOnly: true},
+		{Name: credentialsVolumeName, MountPath: descriptor.credentialsMountPath},
 	}
 
 	container := containerNamed(&statefulSet.Spec.Template.Spec.Containers, agentContainerName)
 	container.Image = agent.Spec.Image
-	// sherlock requires a consumer of its images to pull always, because the
-	// repositories holding its bring-up builds are emptied when a release path
-	// publishes: the default IfNotPresent turns a reference that stopped
-	// resolving into a per-node stale cache
-	// (sherlock@04ed05a:docs/architecture/adr/0020-immutable-image-repositories.md).
+	// Always, for every type: the sherlock descriptor's agent requires a consumer
+	// of its images to pull always, because an image a reference names can be
+	// deleted from the repository holding it and the default IfNotPresent turns a
+	// reference that stopped resolving into a per-node stale cache
+	// (sherlock@8218189:docs/architecture/deployment.md:252).
 	container.ImagePullPolicy = corev1.PullAlways
 	container.Resources = agent.Spec.Resources
 	container.SecurityContext = containerSecurityContext()
@@ -330,8 +250,8 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	// owning the file, and garam's contract expects whatever refreshes a copy to
 	// do so in the Pod that reads it.
 	container.VolumeMounts = []corev1.VolumeMount{
-		{Name: credentialsVolumeName, MountPath: credentialsMountPath},
-		{Name: stateVolumeName, MountPath: stateMountPath},
+		{Name: credentialsVolumeName, MountPath: descriptor.credentialsMountPath},
+		{Name: stateVolumeName, MountPath: descriptor.stateMountPath},
 	}
 	// Written on every pass, so that an operator that stops naming an image
 	// stops pointing the agent at what the Pod no longer carries.
@@ -343,16 +263,16 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	// startup.
 	if r.WorkspaceImage != "" {
 		container.Env = append(container.Env,
-			corev1.EnvVar{Name: workspaceAddressVariable, Value: workspaceAddress})
+			corev1.EnvVar{Name: descriptor.workspaceAddressVariable, Value: descriptor.workspaceAddress})
 	}
 
-	if err := r.applyToolPins(agent, statefulSet, container); err != nil {
+	if err := r.applyToolPins(agent, statefulSet, container, descriptor); err != nil {
 		return err
 	}
 
 	// Last, because appending to the container slice can move it and leave
 	// every pointer taken out of it above stale.
-	r.applyWorkspace(statefulSet)
+	r.applyWorkspace(statefulSet, descriptor)
 
 	return controllerutil.SetControllerReference(agent, statefulSet, r.Scheme)
 }
@@ -374,7 +294,7 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 // credential ADR 0010 delivers: that volume answers a rule about key material,
 // and a pin set is public. The mode is not.
 func (r *AgentReconciler) applyToolPins(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
-	container *corev1.Container) error {
+	container *corev1.Container, descriptor agentTypeDescriptor) error {
 	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
 	if len(agent.Spec.Tools.Pins) == 0 {
 		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
@@ -384,7 +304,7 @@ func (r *AgentReconciler) applyToolPins(agent *agentv1alpha1.Agent, statefulSet 
 		return nil
 	}
 
-	file, err := renderAgentConfig(agent.Spec)
+	file, err := descriptor.renderConfig(agent.Spec)
 	if err != nil {
 		return err
 	}
@@ -401,16 +321,16 @@ func (r *AgentReconciler) applyToolPins(agent *agentv1alpha1.Agent, statefulSet 
 	// Always, on the ground the credential's init container already carries: the
 	// image is the deployer's and nothing here requires its tag to name one build.
 	config.ImagePullPolicy = corev1.PullAlways
-	config.Command = writeConfigCommand(configMountPath)
+	config.Command = writeConfigCommand(descriptor.configMountPath, descriptor)
 	config.Env = []corev1.EnvVar{{Name: configContentVariable, Value: file}}
 	config.SecurityContext = containerSecurityContext()
-	config.VolumeMounts = []corev1.VolumeMount{{Name: configVolumeName, MountPath: configMountPath}}
+	config.VolumeMounts = []corev1.VolumeMount{{Name: configVolumeName, MountPath: descriptor.configMountPath}}
 
 	// Read-only, because the agent reads this file and writes nothing back to it.
 	container.VolumeMounts = append(container.VolumeMounts,
-		corev1.VolumeMount{Name: configVolumeName, MountPath: configMountPath, ReadOnly: true})
+		corev1.VolumeMount{Name: configVolumeName, MountPath: descriptor.configMountPath, ReadOnly: true})
 	container.Env = append(container.Env,
-		corev1.EnvVar{Name: configHomeVariable, Value: configMountPath})
+		corev1.EnvVar{Name: descriptor.configHomeVariable, Value: descriptor.configMountPath})
 
 	return nil
 }
@@ -420,7 +340,7 @@ func (r *AgentReconciler) applyToolPins(agent *agentv1alpha1.Agent, statefulSet 
 // that an operator that stops naming one builds the workload it built before
 // one could be named. It is a function of its own because it adds a
 // container, which is the thing every pointer into the slice depends on.
-func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet) {
+func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet, descriptor agentTypeDescriptor) {
 	containers := &statefulSet.Spec.Template.Spec.Containers
 	if r.WorkspaceImage == "" {
 		*containers = slices.DeleteFunc(*containers, func(container corev1.Container) bool {
@@ -432,29 +352,24 @@ func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet) {
 
 	workspace := containerNamed(containers, workspaceContainerName)
 	workspace.Image = r.WorkspaceImage
-	// Pulled at every start on the ground the agent's image is: it is sherlock's
-	// image and that project requires a consumer to pull always.
+	// Pulled at every start on the ground the agent's image is.
 	workspace.ImagePullPolicy = corev1.PullAlways
 	workspace.SecurityContext = containerSecurityContext()
 	// The image's own entrypoint already serves the workspace, so every setting
 	// reaches it through the environment and this operator writes no command.
 	workspace.Env = []corev1.EnvVar{
-		{Name: listenAddressVariable, Value: workspaceAddress},
-		{Name: workspaceDirVariable, Value: workspaceDirPath},
-		// sherlock runs an exec child under the workspace's own account only
-		// where this number is the uid that account already has, and refuses
-		// every isolated exec otherwise
-		// (sherlock@9b0e399:internal/workspace/shell/process_linux.go:131). The
-		// Pod names that uid, so this operator is the only party that can tell
-		// the workspace what it is.
-		{Name: execUserVariable, Value: strconv.Itoa(agentRunAsUser)},
+		{Name: descriptor.listenAddressVariable, Value: descriptor.workspaceAddress},
+		{Name: descriptor.workspaceDirVariable, Value: descriptor.stateMountPath + "/" + workspaceDirName},
+		// The Pod names this uid, so this operator is the only party that can
+		// tell the workspace what it is.
+		{Name: descriptor.execUserVariable, Value: strconv.Itoa(agentRunAsUser)},
 	}
 	// The agent's container holds this volume too, so the two processes are
-	// kept to disjoint subtrees of it: workspaceDirPath is the workspace's, and
-	// nothing but these constants keeps them apart. The credential's copy is not
+	// kept to disjoint subtrees of it: workspaceDirName is the workspace's, and
+	// nothing but these names keeps them apart. The credential's copy is not
 	// mounted here — the workspace reads no credential, and every container
 	// mounting it is one more that can.
-	workspace.VolumeMounts = []corev1.VolumeMount{{Name: stateVolumeName, MountPath: stateMountPath}}
+	workspace.VolumeMounts = []corev1.VolumeMount{{Name: stateVolumeName, MountPath: descriptor.stateMountPath}}
 }
 
 // containerNamed returns the container called name out of containers, appending
