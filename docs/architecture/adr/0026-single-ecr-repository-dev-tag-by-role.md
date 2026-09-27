@@ -90,3 +90,13 @@ are deleted alongside the repository.
 - The `release-` prefix. A release publish today carries only the
   commit-hash tag; if a release-specific prefix lands, this ADR is
   amended or a successor is appended.
+
+## Errata
+
+### 2026-09-27 — the removed bring-up repository was `garam/gagent-operator-dev`
+
+Context names the repository that carried bring-up builds `garam/garam-agent-operator-dev`, Context's second bullet uses that name for a bring-up deployment, and Decision says `garam/garam-agent-operator-dev` was emptied and removed. No repository of that name existed. The bring-up repository was `garam/gagent-operator-dev`, which Context's third bullet already names, and the removal run on 2026-09-25 targeted it and `garam/gagent-operator`.
+
+`aws ecr describe-repositories --region ap-northeast-2`, read on 2026-09-27, lists `garam/garam-agent-operator` and no `garam/garam-agent-operator-dev`.
+
+The decision stands: one repository, `garam/garam-agent-operator`, with the two tags this ADR's table gives. Only the name of what it replaced was wrong.
