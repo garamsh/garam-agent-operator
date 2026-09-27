@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -114,19 +116,31 @@ func TestRenewIdentityRefusesAnAnswerCarryingNoKey(t *testing.T) {
 	g.Expect(err).To(HaveOccurred())
 }
 
-// recordingStore stands in for the Secret the credential lives in.
+// recordingStore stands in for the Secret the credential lives in. It keeps
+// every write and never blocks, so a caller that stores more than once is
+// counted by the assertion rather than stalled behind it.
 type recordingStore struct {
-	written chan garam.Credential
+	mu      sync.Mutex
+	written []garam.Credential
 	err     error
 }
 
 func newRecordingStore(err error) *recordingStore {
-	return &recordingStore{written: make(chan garam.Credential, 1), err: err}
+	return &recordingStore{err: err}
 }
 
 func (s *recordingStore) ReplaceCredential(_ context.Context, credential garam.Credential) error {
-	s.written <- credential
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.written = append(s.written, credential)
 	return s.err
+}
+
+// credentials answers every credential written so far, oldest first.
+func (s *recordingStore) credentials() []garam.Credential {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.written)
 }
 
 // runOnce runs one pass of a Renewer and stops it. The interval is longer than
@@ -151,9 +165,9 @@ func TestRenewerStoresTheCredentialGaramIssued(t *testing.T) {
 	store := newRecordingStore(nil)
 
 	renewer := garam.NewRenewer(client, store, time.Hour)
-	runOnce(t, renewer, func() bool { return len(store.written) == 1 })
+	runOnce(t, renewer, func() bool { return len(store.credentials()) == 1 })
 
-	g.Expect(string((<-store.written).CertificatePEM)).To(ContainSubstring("BEGIN CERTIFICATE"))
+	g.Expect(string(store.credentials()[0].CertificatePEM)).To(ContainSubstring("BEGIN CERTIFICATE"))
 }
 
 // TestRenewerStoresNothingWhenGaramRefusesTheRenewalAsTooEarly is the case that
@@ -171,7 +185,7 @@ func TestRenewerStoresNothingWhenGaramRefusesTheRenewalAsTooEarly(t *testing.T) 
 	runOnce(t, renewer, func() bool { return len(stub.requests()) == 1 })
 
 	g.Expect(stub.requests()[0].path).To(Equal(renewalPath))
-	g.Expect(store.written).To(BeEmpty())
+	g.Expect(store.credentials()).To(BeEmpty())
 }
 
 // fileStore writes a credential to the files the handshake reads, which is what
