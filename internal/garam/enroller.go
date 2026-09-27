@@ -188,6 +188,7 @@ func (e *Enroller) enroll(ctx context.Context, token string) bool {
 	e.spent = append(e.spent, tokenDigest(token))
 
 	enrolled, err := e.client.Enroll(ctx, token, request)
+	countRefusal(runnableEnroller, err)
 	switch {
 	case errors.Is(err, ErrTokenNotUsable):
 		log.Error(err, "Cannot enroll this operator. Spent, expired and never-minted are one answer "+

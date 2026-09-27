@@ -74,7 +74,7 @@ func (c *Client) ClaimDefinition(ctx context.Context, agent GRN) (Assignment, er
 
 	var refused *refusal
 	if errors.As(err, &refused) && refused.status == http.StatusConflict {
-		return Assignment{}, fmt.Errorf("claim %s: %w", agent, ErrClaimConflict)
+		return Assignment{}, fmt.Errorf("claim %s: %w: %w", agent, ErrClaimConflict, refused)
 	}
 	if err != nil {
 		return Assignment{}, fmt.Errorf("claim %s: %w", agent, err)
@@ -95,7 +95,7 @@ func (c *Client) IssueAgentCertificate(ctx context.Context, agent GRN) (AgentCre
 
 	var refused *refusal
 	if errors.As(err, &refused) && refused.status == http.StatusForbidden {
-		return AgentCredential{}, fmt.Errorf("issue a certificate for %s: %w", agent, ErrAgentNotHeld)
+		return AgentCredential{}, fmt.Errorf("issue a certificate for %s: %w: %w", agent, ErrAgentNotHeld, refused)
 	}
 	if err != nil {
 		return AgentCredential{}, fmt.Errorf("issue a certificate for %s: %w", agent, err)
@@ -127,9 +127,9 @@ func (c *Client) ReportProvisioningState(ctx context.Context, agent GRN, epoch i
 	if errors.As(err, &refused) {
 		switch {
 		case refused.kind == kindFailedPrecondition:
-			return fmt.Errorf("report %s at epoch %d: %w", agent, epoch, ErrReportStale)
+			return fmt.Errorf("report %s at epoch %d: %w: %w", agent, epoch, ErrReportStale, refused)
 		case refused.status == http.StatusForbidden:
-			return fmt.Errorf("report %s at epoch %d: %w", agent, epoch, ErrAgentNotHeld)
+			return fmt.Errorf("report %s at epoch %d: %w: %w", agent, epoch, ErrAgentNotHeld, refused)
 		}
 	}
 	if err != nil {
@@ -166,9 +166,9 @@ func (c *Client) RenewIdentity(ctx context.Context) (Credential, error) {
 	if errors.As(err, &refused) {
 		switch refused.kind {
 		case kindFailedPrecondition:
-			return Credential{}, fmt.Errorf("renew the certificate this operator authenticates with: %w", ErrRenewalTooEarly)
+			return Credential{}, fmt.Errorf("renew the certificate this operator authenticates with: %w: %w", ErrRenewalTooEarly, refused)
 		case kindAlreadyExists:
-			return Credential{}, fmt.Errorf("renew the certificate this operator authenticates with: %w", ErrCredentialSuperseded)
+			return Credential{}, fmt.Errorf("renew the certificate this operator authenticates with: %w: %w", ErrCredentialSuperseded, refused)
 		}
 	}
 	if err != nil {
@@ -201,7 +201,7 @@ func (c *Client) Enroll(ctx context.Context, token string, request CertificateRe
 
 	var refused *refusal
 	if errors.As(err, &refused) && refused.status == http.StatusUnauthorized {
-		return EnrolledCertificate{}, fmt.Errorf("enroll this operator: %w", ErrTokenNotUsable)
+		return EnrolledCertificate{}, fmt.Errorf("enroll this operator: %w: %w", ErrTokenNotUsable, refused)
 	}
 	if err != nil {
 		return EnrolledCertificate{}, fmt.Errorf("enroll this operator: %w", err)
@@ -255,6 +255,9 @@ func (c *Client) send(ctx context.Context, method, path string, body, out any) e
 
 // refusal is a status garam answered instead of the resource asked for, with
 // the error kind and message it carries where it carries them.
+//
+// A sentinel a method maps a refusal to wraps the refusal beside it, so that
+// what counts refusals reads the status through every error a method answers.
 type refusal struct {
 	status  int
 	kind    string

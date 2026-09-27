@@ -47,6 +47,7 @@ func (p *Poller) poll(ctx context.Context) {
 	log := logf.FromContext(ctx).WithName("garam")
 
 	definitions, err := p.client.ListDefinitions(ctx)
+	countRefusal(runnablePoller, err)
 	if err != nil {
 		log.Error(err, "Failed to read the definitions garam holds for this operator")
 		return
@@ -101,6 +102,7 @@ func (p *Poller) claim(ctx context.Context, agent GRN) (Assignment, bool) {
 	log := logf.FromContext(ctx).WithName("garam")
 
 	assignment, err := p.client.ClaimDefinition(ctx, agent)
+	countRefusal(runnablePoller, err)
 	switch {
 	case errors.Is(err, ErrClaimConflict):
 		// Terminal rather than retryable: a definition is claimed once, so
@@ -145,6 +147,7 @@ func (p *Poller) construct(ctx context.Context, definition Definition, epoch int
 	}
 
 	credential, err := p.client.IssueAgentCertificate(ctx, agent)
+	countRefusal(runnablePoller, err)
 	switch {
 	case errors.Is(err, ErrAgentNotHeld):
 		// garam answers the same for an agent held by another operator and for

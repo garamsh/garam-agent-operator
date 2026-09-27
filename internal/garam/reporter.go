@@ -85,6 +85,7 @@ func (r *Reporter) send(ctx context.Context, observation Observation, state Prov
 	log := logf.FromContext(ctx).WithName("garam")
 
 	err := r.client.ReportProvisioningState(ctx, observation.Agent, observation.Epoch, state)
+	countRefusal(runnableReporter, err)
 	switch {
 	case errors.Is(err, ErrReportStale):
 		// The agent was assigned again since this operator constructed it. No
