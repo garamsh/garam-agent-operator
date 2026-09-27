@@ -416,8 +416,8 @@ func TestEnrollerStoresTheCertificateBesideTheKeyItGenerated(t *testing.T) {
 	stopped := startEnroller(t, context.Background(), newEnroller(t, stub, store, "a-token", t.TempDir()))
 
 	g.Eventually(stopped, time.Second*10).Should(BeClosed())
-	g.Expect(store.written).To(HaveLen(1))
-	stored := <-store.written
+	g.Expect(store.credentials()).To(HaveLen(1))
+	stored := store.credentials()[0]
 	_, err := tls.X509KeyPair(stored.CertificatePEM, stored.KeyPEM)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(stub.requests()).To(HaveLen(1))
@@ -447,7 +447,7 @@ func TestEnrollerSpendsATokenOnAnExpiredCertificateAndNothingOnALiveOne(t *testi
 	g.Eventually(stopped, time.Second*10).Should(BeClosed())
 	g.Expect(stub.requests()).To(HaveLen(1))
 	g.Expect(stub.requests()[0].path).To(Equal(enrollmentPath))
-	g.Expect(store.written).To(HaveLen(1))
+	g.Expect(store.credentials()).To(HaveLen(1))
 
 	// The control: the same certificate an hour from expiring rather than an
 	// hour past it.
@@ -460,7 +460,7 @@ func TestEnrollerSpendsATokenOnAnExpiredCertificateAndNothingOnALiveOne(t *testi
 
 	g.Eventually(liveStopped, time.Second*10).Should(BeClosed())
 	g.Expect(live.requests()).To(BeEmpty())
-	g.Expect(liveStore.written).To(BeEmpty())
+	g.Expect(liveStore.credentials()).To(BeEmpty())
 }
 
 // TestEnrollerWaitsWhereThereIsNoTokenToSpend is what makes a deployment that
@@ -483,7 +483,7 @@ func TestEnrollerWaitsWhereThereIsNoTokenToSpend(t *testing.T) {
 
 			g.Consistently(stopped, time.Millisecond*200).ShouldNot(BeClosed())
 			g.Expect(stub.requests()).To(BeEmpty())
-			g.Expect(store.written).To(BeEmpty())
+			g.Expect(store.credentials()).To(BeEmpty())
 		})
 	}
 }
@@ -507,7 +507,7 @@ func TestEnrollerPresentsARefusedTokenOnce(t *testing.T) {
 	// Longer than the interval the token file is read on, so the refused token
 	// is read again before this is asserted.
 	g.Consistently(stub.requests, 10*tokenInterval).Should(HaveLen(1))
-	g.Expect(store.written).To(BeEmpty())
+	g.Expect(store.credentials()).To(BeEmpty())
 }
 
 // newEnrollmentStubRefusing starts a listener answering enrollments as
@@ -574,7 +574,7 @@ func TestEnrollerPresentsAReplacementTokenAndNeverTheOneItSpent(t *testing.T) {
 	g.Eventually(stopped, time.Second*15).Should(BeClosed())
 	g.Expect(stub.requests()).To(HaveLen(2))
 	g.Expect(stub.requests()[1].body).To(ContainSubstring(`"token":"a-replacement-token"`))
-	g.Expect(store.written).To(HaveLen(1))
+	g.Expect(store.credentials()).To(HaveLen(1))
 }
 
 // TestEnrollerAsksForNothingElseWhereTheStoreRefusesTheAnswer is the loss no
@@ -595,7 +595,7 @@ func TestEnrollerAsksForNothingElseWhereTheStoreRefusesTheAnswer(t *testing.T) {
 	// read again before this is asserted.
 	g.Consistently(stub.requests, 10*tokenInterval).Should(HaveLen(1))
 	g.Expect(stopped).NotTo(BeClosed())
-	g.Expect(store.written).To(HaveLen(1))
+	g.Expect(store.credentials()).To(HaveLen(1))
 }
 
 // recordedLog collects what an Enroller logged, so that a line it emits and
@@ -657,7 +657,7 @@ func TestEnrollerNamesAServerRootTheAnswerAndTheTrustFileDoNotShare(t *testing.T
 	g.Expect(named).To(HaveLen(1))
 	g.Expect(named[0]).To(ContainSubstring(fingerprintOf(t, elsewhere)))
 	g.Expect(named[0]).To(ContainSubstring(fingerprintOf(t, readFile(t, stub.trustFile))))
-	g.Expect(store.written).To(HaveLen(1))
+	g.Expect(store.credentials()).To(HaveLen(1))
 
 	// The control: the same answer carrying the root that verified the call.
 	shared := newEnrollmentStub(t)
@@ -668,5 +668,5 @@ func TestEnrollerNamesAServerRootTheAnswerAndTheTrustFileDoNotShare(t *testing.T
 
 	g.Eventually(sharedStopped, time.Second*10).Should(BeClosed())
 	g.Expect(sharedLog.logged("not one this operator verifies garam by")).To(BeEmpty())
-	g.Expect(sharedStore.written).To(HaveLen(1))
+	g.Expect(sharedStore.credentials()).To(HaveLen(1))
 }
