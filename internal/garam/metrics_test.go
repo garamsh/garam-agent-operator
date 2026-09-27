@@ -174,9 +174,10 @@ func newHandshakeRefusingListener(t *testing.T) (address, trustFile string) {
 // authority that signed it and every check this operator could make locally
 // still passed.
 //
-// The control is a handshake failed on this side: the same poller reaching a
-// listener it does not verify. That is not garam refusing anything, so what the
-// first half counts is garam's alert and not any handshake that failed.
+// The controls are two failures garam did not make: the same poller reaching a
+// listener it does not verify, which fails the handshake on this side, and one
+// reaching nothing at all, which fails the dial. What the first half counts is
+// garam's alert, and not any handshake that failed or any connection that did.
 func TestPollerCountsARefusalAtTheHandshake(t *testing.T) {
 	g := NewWithT(t)
 	before := refusals(t, "poller", "handshake")
@@ -199,7 +200,19 @@ func TestPollerCountsARefusalAtTheHandshake(t *testing.T) {
 	_, err = notTrusting.ListDefinitions(context.Background())
 	g.Expect(err).To(MatchError(ContainSubstring("certificate signed by unknown authority")))
 
-	run(t, garam.NewPoller(notTrusting, newRecordingConstructor(), metricInterval))
+	stop = run(t, garam.NewPoller(notTrusting, newRecordingConstructor(), metricInterval))
+
+	g.Consistently(func() float64 { return refusals(t, "poller", "handshake") }, 10*metricInterval).
+		Should(Equal(before))
+	stop()
+
+	closed := httptest.NewServer(http.HandlerFunc(answerNoDefinitions))
+	closed.Close()
+	unreachable := garam.NewClient(closed.Listener.Addr().String(), tlsConfig)
+	_, err = unreachable.ListDefinitions(context.Background())
+	g.Expect(err).To(MatchError(ContainSubstring("connection refused")))
+
+	run(t, garam.NewPoller(unreachable, newRecordingConstructor(), metricInterval))
 
 	g.Consistently(func() float64 { return refusals(t, "poller", "handshake") }, 10*metricInterval).
 		Should(Equal(before))
