@@ -1,11 +1,12 @@
 name: E2E Tests
 
-# No `pull_request` trigger: this suite runs where a change lands. `make test-e2e`
-# builds and owns the cluster it uses, so an author runs it before pushing and CI runs
-# it on the merge nobody runs by hand (ADR 0015).
+# Runs only on the `dev` -> `main` promotion pull request, beside `Checks`. An author
+# runs `make test-e2e` before a change reaches `dev`; CI runs it once per promotion
+# rather than once per merge. No `push` trigger, for the reason `checks.yml` gives
+# (ADR 0028).
 on:
-  push:
-    branches: [dev, main]
+  pull_request:
+    branches: [main]
 
 permissions: {}
 

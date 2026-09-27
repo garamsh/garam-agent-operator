@@ -1,6 +1,6 @@
 # ADR 0015: Run the e2e suite where a change lands and not on every pull request, and advance `main` only by a human promotion
 
-> Status: accepted
+> Status: accepted; trigger decisions superseded by ADR-0028
 > Date: 2026-09-01
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
