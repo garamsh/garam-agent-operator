@@ -42,6 +42,10 @@ var (
 // credential is looked for, and where the agents it constructs are built.
 const podNamespaceVariable = "POD_NAMESPACE"
 
+// garamEnrollmentTokenInterval is how often this operator looks for the token it
+// enrolls with, which a person places.
+const garamEnrollmentTokenInterval = 10 * time.Second
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -330,7 +334,8 @@ func main() {
 					os.Exit(1)
 				}
 				enroller := garam.NewEnroller(garam.NewClient(garamAddress, enrollmentTLS), store,
-					garamEnrollmentTokenFile, garamCertificateFile, garamKeyFile, garamTrustFile)
+					garamEnrollmentTokenFile, garamCertificateFile, garamKeyFile, garamTrustFile,
+					garamEnrollmentTokenInterval)
 				if err := mgr.Add(enroller); err != nil {
 					setupLog.Error(err, "Failed to add the garam enroller", "file", garamEnrollmentTokenFile)
 					os.Exit(1)

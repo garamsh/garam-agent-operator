@@ -36,6 +36,10 @@ import (
 // (garam@b16a896:api/machine.yaml:147).
 const enrollmentPath = "/enrollment"
 
+// tokenInterval is short enough that a test sees the token file read several
+// times.
+const tokenInterval = 20 * time.Millisecond
+
 // enrolledOperator is the identity garam's answer names. A token names the
 // operator it was minted for and the request names none, so this is the answer's
 // to say and never the request's.
@@ -397,7 +401,7 @@ func newEnroller(t *testing.T, stub *stubListener, store garam.CredentialStore, 
 		tokenFile = writeFile(t, dir, "enrollment-token", []byte(token))
 	}
 	return garam.NewEnroller(garam.NewClient(stub.address(), tlsConfig), store, tokenFile,
-		dir+"/certificate.pem", dir+"/key.pem", stub.trustFile)
+		dir+"/certificate.pem", dir+"/key.pem", stub.trustFile, tokenInterval)
 }
 
 // TestEnrollerStoresTheCertificateBesideTheKeyItGenerated is the whole of what
@@ -502,7 +506,7 @@ func TestEnrollerPresentsARefusedTokenOnce(t *testing.T) {
 	g.Eventually(stub.requests, time.Second*10).Should(HaveLen(1))
 	// Longer than the interval the token file is read on, so the refused token
 	// is read again before this is asserted.
-	g.Consistently(stub.requests, time.Second*12).Should(HaveLen(1))
+	g.Consistently(stub.requests, 10*tokenInterval).Should(HaveLen(1))
 	g.Expect(store.written).To(BeEmpty())
 }
 
@@ -560,7 +564,7 @@ func TestEnrollerPresentsAReplacementTokenAndNeverTheOneItSpent(t *testing.T) {
 	g.Eventually(stub.requests, time.Second*10).Should(HaveLen(1))
 	// Longer than the interval the token file is read on, so the refused token
 	// is read again while it is still the only token there.
-	g.Consistently(stub.requests, time.Second*12).Should(HaveLen(1))
+	g.Consistently(stub.requests, 10*tokenInterval).Should(HaveLen(1))
 	g.Expect(stopped).NotTo(BeClosed())
 
 	// The control: a token this operator has not presented, reaching it through
@@ -589,7 +593,7 @@ func TestEnrollerAsksForNothingElseWhereTheStoreRefusesTheAnswer(t *testing.T) {
 	g.Eventually(stub.requests, time.Second*10).Should(HaveLen(1))
 	// Longer than the interval the token file is read on, so the spent token is
 	// read again before this is asserted.
-	g.Consistently(stub.requests, time.Second*12).Should(HaveLen(1))
+	g.Consistently(stub.requests, 10*tokenInterval).Should(HaveLen(1))
 	g.Expect(stopped).NotTo(BeClosed())
 	g.Expect(store.written).To(HaveLen(1))
 }

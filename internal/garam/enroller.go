@@ -16,11 +16,6 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// tokenInterval is how often an Enroller looks for the token it spends. An
-// operator is deployed before it is registered, so the token is placed while
-// this is already running and what this waits on is a person.
-const tokenInterval = 10 * time.Second
-
 // EnrollmentTLS returns the TLS configuration an enrollment is called over:
 // garam is verified against trustFile, and no client certificate is presented
 // because an operator enrolling holds none — this is the one route on that
@@ -85,15 +80,21 @@ type Enroller struct {
 	// what the garam server root in the answer is compared against. Nothing
 	// here writes it.
 	trustFile string
+
+	interval time.Duration
 }
 
-// NewEnroller returns an Enroller spending the token in tokenFile and writing
-// what garam answers through store.
+// NewEnroller returns an Enroller spending the token in tokenFile, looked for
+// every interval, and writing what garam answers through store.
 //
 // client reaches garam presenting no certificate, which is what [EnrollmentTLS]
 // answers with: an operator whose certificate still authenticates does not
 // enroll, and one whose certificate has expired holds nothing garam would take.
-func NewEnroller(client *Client, store CredentialStore, tokenFile, certificateFile, keyFile, trustFile string) *Enroller {
+//
+// An operator is deployed before it is registered, so the token is placed while
+// this is already running, and what interval waits on is a person.
+func NewEnroller(client *Client, store CredentialStore, tokenFile, certificateFile, keyFile, trustFile string,
+	interval time.Duration) *Enroller {
 	return &Enroller{
 		client:          client,
 		store:           store,
@@ -101,6 +102,7 @@ func NewEnroller(client *Client, store CredentialStore, tokenFile, certificateFi
 		certificateFile: certificateFile,
 		keyFile:         keyFile,
 		trustFile:       trustFile,
+		interval:        interval,
 	}
 }
 
@@ -114,7 +116,7 @@ func (e *Enroller) Start(ctx context.Context) error {
 	}
 	logf.FromContext(ctx).WithName("garam").Info(
 		"Enrolling this operator when a token is placed", "file", e.tokenFile)
-	_ = wait.PollUntilContextCancel(ctx, tokenInterval, false, func(ctx context.Context) (bool, error) {
+	_ = wait.PollUntilContextCancel(ctx, e.interval, false, func(ctx context.Context) (bool, error) {
 		return e.attempt(ctx), nil
 	})
 	return nil
