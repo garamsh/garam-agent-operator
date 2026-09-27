@@ -248,95 +248,54 @@ var _ = Describe("Agent workload", func() {
 		Expect(pod.Containers[0].ImagePullPolicy).To(Equal(corev1.PullAlways))
 	})
 
-	It("mounts the tool tree this operator names read-only, and points the agent at it", func() {
-		name := "carries-a-tool-tree"
+	It("builds a Pod carrying no tool tree, because the agent's image carries its own tools", func() {
+		name := "carries-no-tool-tree"
 		createSecret(credentialsSecretName(name))
-		createAgent(newAgent(name))
+		// Every part this operator can build is present, so no container the
+		// Pod could carry escapes the check below.
+		agent := newAgent(name)
+		agent.Spec.Tools.Pins = map[string]string{testPinnedTool: testToolPin}
+		createAgent(agent)
 
-		_, err := reconcileAgentWithTools(name)
+		_, err := reconcileAgentWithWorkspace(name)
 		Expect(err).NotTo(HaveOccurred())
 
 		pod := statefulSetFor(name).Spec.Template.Spec
-
-		By("carrying the image itself as a volume, so nothing copies the tree and no shell is asked of it")
-		tools := volumeNamed(pod, toolsVolumeName)
-		Expect(tools.Image).NotTo(BeNil())
-		Expect(tools.Image.Reference).To(Equal(testToolsImage))
-		Expect(tools.Image.PullPolicy).To(Equal(corev1.PullAlways))
-
-		By("giving it to the agent read-only, and to no other container of the Pod")
-		Expect(pod.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
-			Name:      toolsVolumeName,
-			MountPath: toolsMountPath,
-			ReadOnly:  true,
-		}))
-		Expect(pod.InitContainers[0].VolumeMounts).NotTo(ContainElement(HaveField("Name", toolsVolumeName)))
-
-		By("pointing the agent at that path in its environment, leaving what its image runs alone")
-		Expect(pod.Containers[0].Env).To(ConsistOf(corev1.EnvVar{Name: toolsDirVariable, Value: toolsMountPath}))
-		Expect(pod.Containers[0].Command).To(BeEmpty())
-		Expect(pod.Containers[0].Args).To(BeEmpty())
+		Expect(pod.Containers).To(HaveLen(2))
+		Expect(pod.InitContainers).To(HaveLen(2))
+		Expect(toolTreeIn(pod)).To(BeEmpty())
 	})
 
-	It("builds the Pod it built before a tool tree existed where this operator names no tools image", func() {
-		shared := "shared-credentials"
-		createSecret(shared)
-
-		By("reconciling an Agent while this operator names a tools image")
-		named := "tools-image-named"
-		withTools := newAgent(named)
-		withTools.Spec.CredentialsSecretName = shared
-		createAgent(withTools)
-		_, err := reconcileAgentWithTools(named)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("reconciling an Agent identical to it while this operator names none")
-		unnamed := "tools-image-unset"
-		withoutTools := newAgent(unnamed)
-		withoutTools.Spec.CredentialsSecretName = shared
-		createAgent(withoutTools)
-		_, err = reconcileAgent(unnamed)
-		Expect(err).NotTo(HaveOccurred())
-
-		unset := statefulSetFor(unnamed).Spec.Template.Spec
-
-		By("carrying no volume, no mount and no environment variable for a tree it was given none of")
-		Expect(unset.Volumes).NotTo(ContainElement(HaveField("Name", toolsVolumeName)))
-		Expect(unset.Containers[0].VolumeMounts).NotTo(ContainElement(HaveField("Name", toolsVolumeName)))
-		Expect(unset.Containers[0].Env).To(BeEmpty())
-
-		set := statefulSetFor(named).Spec.Template.Spec
-
-		By("differing from the Pod built with one, which is what leaves the comparison below something to isolate")
-		Expect(set).NotTo(Equal(unset))
-
-		By("differing from it in those three places and in nothing else")
-		Expect(withoutToolTree(set)).To(Equal(unset))
-	})
-
-	It("builds a Pod carrying the tool tree that a namespace enforcing PodSecurity restricted admits", func() {
-		name := "tools-satisfy-restricted"
+	It("takes the tool tree back out of a workload an operator naming a tools image built", func() {
+		name := "drops-its-tool-tree"
 		createSecret(credentialsSecretName(name))
 		createAgent(newAgent(name))
 
-		_, err := reconcileAgentWithTools(name)
+		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
-		namespace := restrictedNamespace("psa-" + name)
 
-		By("creating the Pod the StatefulSet describes, which carries the image volume and which is admitted")
-		admitted := podOf(statefulSetFor(name), namespace)
-		Expect(volumeNamed(admitted.Spec, toolsVolumeName).Image).NotTo(BeNil())
-		Expect(k8sClient.Create(ctx, admitted)).To(Succeed())
-
-		By("creating the same Pod carrying a volume type the standard names, which it refuses")
-		refused := podOf(statefulSetFor(name), namespace)
-		refused.Name += "-host-path"
-		refused.Spec.Volumes = append(refused.Spec.Volumes, corev1.Volume{
-			Name:         "host",
-			VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/"}},
+		By("writing onto the StatefulSet the volume, mount and variable that operator wrote")
+		workload := statefulSetFor(name)
+		pod := &workload.Spec.Template.Spec
+		pod.Volumes = append(pod.Volumes, corev1.Volume{
+			Name: retiredToolsVolume,
+			VolumeSource: corev1.VolumeSource{
+				Image: &corev1.ImageVolumeSource{Reference: "example.com/tools:v0.1.0", PullPolicy: corev1.PullAlways},
+			},
 		})
-		Expect(k8sClient.Create(ctx, refused)).
-			To(MatchError(ContainSubstring(`violates PodSecurity "restricted:latest"`)))
+		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts,
+			corev1.VolumeMount{Name: retiredToolsVolume, MountPath: "/opt/sherlock/tools", ReadOnly: true})
+		pod.Containers[0].Env = append(pod.Containers[0].Env,
+			corev1.EnvVar{Name: retiredToolsDirVariable, Value: "/opt/sherlock/tools"})
+		Expect(k8sClient.Update(ctx, workload)).To(Succeed())
+
+		By("finding all three on it, which is what leaves the check below something to find")
+		Expect(toolTreeIn(statefulSetFor(name).Spec.Template.Spec)).To(HaveLen(3))
+
+		By("reconciling, which leaves none of them")
+		_, err = reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(toolTreeIn(statefulSetFor(name).Spec.Template.Spec)).To(BeEmpty())
 	})
 
 	It("builds the workspace this operator names, and points both ends of the link at one address", func() {
@@ -478,7 +437,7 @@ var _ = Describe("Agent workload", func() {
 		agent.Spec.Tools.Pins = map[string]string{testPinnedTool: testToolPin, testSecondTool: testSecondPin}
 		createAgent(agent)
 
-		_, err := reconcileAgentWithTools(name)
+		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 
 		pod := statefulSetFor(name).Spec.Template.Spec
@@ -562,7 +521,7 @@ var _ = Describe("Agent workload", func() {
 		createSecret(credentialsSecretName(name))
 		createAgent(newAgent(name))
 
-		_, err := reconcileAgentWithTools(name)
+		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 		withoutPins := statefulSetFor(name).Spec.Template.Spec
 
@@ -570,7 +529,7 @@ var _ = Describe("Agent workload", func() {
 		edited.Spec.Tools.Pins = map[string]string{testPinnedTool: testToolPin}
 		Expect(k8sClient.Update(ctx, edited)).To(Succeed())
 
-		_, err = reconcileAgentWithTools(name)
+		_, err = reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 		withPins := statefulSetFor(name).Spec.Template.Spec
 
@@ -587,7 +546,7 @@ var _ = Describe("Agent workload", func() {
 		agent.Spec.Tools.Pins = map[string]string{testPinnedTool: testToolPin}
 		createAgent(agent)
 
-		_, err := reconcileAgentWithTools(name)
+		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(statefulSetFor(name).Spec.Template.Spec.InitContainers).To(HaveLen(2))
 
@@ -595,7 +554,7 @@ var _ = Describe("Agent workload", func() {
 		edited.Spec.Tools = agentv1alpha1.ToolSet{}
 		Expect(k8sClient.Update(ctx, edited)).To(Succeed())
 
-		_, err = reconcileAgentWithTools(name)
+		_, err = reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 
 		pod := statefulSetFor(name).Spec.Template.Spec
@@ -611,7 +570,7 @@ var _ = Describe("Agent workload", func() {
 		agent.Spec.Tools.Pins = map[string]string{testPinnedTool: testToolPin}
 		createAgent(agent)
 
-		_, err := reconcileAgentWithTools(name)
+		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 
 		pod := podOf(statefulSetFor(name), restrictedNamespace("admits-the-config"))
@@ -777,26 +736,34 @@ func withoutToolPins(pod corev1.PodSpec) corev1.PodSpec {
 	return stripped
 }
 
-// withoutToolTree returns the Pod spec with the tool tree's volume, its mount
-// and the variable pointing at it removed. What is left is what this operator
-// builds where it names no tools image, so the two being equal is what says the
-// unset flag adds nothing anywhere else.
-func withoutToolTree(pod corev1.PodSpec) corev1.PodSpec {
-	stripped := *pod.DeepCopy()
-	stripped.Volumes = slices.DeleteFunc(stripped.Volumes, func(volume corev1.Volume) bool {
-		return volume.Name == toolsVolumeName
-	})
-	for i := range stripped.Containers {
-		stripped.Containers[i].VolumeMounts = slices.DeleteFunc(stripped.Containers[i].VolumeMounts,
-			func(mount corev1.VolumeMount) bool { return mount.Name == toolsVolumeName })
-		stripped.Containers[i].Env = slices.DeleteFunc(stripped.Containers[i].Env,
-			func(variable corev1.EnvVar) bool { return variable.Name == toolsDirVariable })
-		// A slice emptied is not a slice absent, and it is the absent one the
-		// Pod built without a tool tree carries.
-		if len(stripped.Containers[i].Env) == 0 {
-			stripped.Containers[i].Env = nil
+// retiredToolsVolume and retiredToolsDirVariable are the volume and the
+// variable an operator naming a tools image put on an agent's Pod (ADR 0019).
+// The agent's image carries its tools now (ADR 0027), so no Pod carries either.
+const (
+	retiredToolsVolume      = "tools"
+	retiredToolsDirVariable = "SHERLOCK_TOOLS_DIR"
+)
+
+// toolTreeIn lists every trace of a mounted tool tree in the Pod spec: the
+// volume, a mount of it in any container, and the variable pointing at it in
+// any container.
+func toolTreeIn(pod corev1.PodSpec) []string {
+	var found []string
+	for _, volume := range pod.Volumes {
+		if volume.Name == retiredToolsVolume {
+			found = append(found, "volume "+volume.Name)
+		}
+	}
+	for _, container := range slices.Concat(pod.InitContainers, pod.Containers) {
+		for _, mount := range container.VolumeMounts {
+			if mount.Name == retiredToolsVolume {
+				found = append(found, "mount on "+container.Name)
+			}
+		}
+		if _, set := environmentOf(container)[retiredToolsDirVariable]; set {
+			found = append(found, retiredToolsDirVariable+" on "+container.Name)
 		}
 	}
 
-	return stripped
+	return found
 }

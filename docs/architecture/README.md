@@ -64,7 +64,7 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0016-report-what-the-operator-observed-and-stay-silent-where-it-observed-nothing.md` | Report to `garam` what this operator observed, stay silent where it observed nothing, and carry the epoch on the `Agent` it was proved at | accepted |
 | `adr/0017-an-unreconciled-environments-values-live-in-an-overlay-here.md` | Keep an environment's values where that environment is reconciled, and in an overlay here where nothing reconciles it | accepted |
 | `adr/0018-keep-the-image-of-an-agent-this-operator-constructed-current-with-its-own-configuration.md` | Keep the image of an agent this operator constructed current with its own configuration | accepted |
-| `adr/0019-mount-an-agents-tool-tree-from-an-image-this-operator-names.md` | Mount an agent's tool tree from an image this operator names, and point the agent at it | accepted |
+| `adr/0019-mount-an-agents-tool-tree-from-an-image-this-operator-names.md` | Mount an agent's tool tree from an image this operator names, and point the agent at it | superseded by ADR-0027 |
 | `adr/0020-enroll-this-operator-with-a-one-time-token-and-keep-the-key-it-generated.md` | Enroll this operator with a one-time token, and keep the key it generated | superseded by ADR-0021 |
 | `adr/0021-present-any-one-enrollment-token-once-and-wait-for-another.md` | Present any one enrollment token once and wait for another, and end the enrollment on a certificate rather than on an attempt | superseded by ADR-0022 |
 | `adr/0022-end-the-enrollment-on-a-certificate-that-has-not-expired.md` | End the enrollment on a certificate that has not expired, rather than on one this operator can read | accepted |
@@ -72,5 +72,6 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0024-write-an-agents-config-file-from-an-init-container-into-a-directory-this-operator-names.md` | Render a declared tool set into the Pod through an init container that writes a config file into a directory this operator names | accepted |
 | `adr/0025-generalize-the-agent-kind-by-agent-type.md` | Generalize the `Agent` kind by `spec.type`, with a closed enum and a per-type dispatch table in the controller | accepted |
 | `adr/0026-single-ecr-repository-dev-tag-by-role.md` | Publish one image to one ECR repository, with a `dev-<hash>` tag on bring-up builds and the commit-hash tag carrying the identifier | accepted |
+| `adr/0027-an-agents-tools-arrive-in-its-own-image-and-this-operator-mounts-no-tool-tree.md` | An agent's tools arrive in its own image, and this operator mounts no tool tree | accepted |
 | `adr/0028-run-the-checks-and-the-e2e-suite-on-the-promotion-to-main-and-nothing-on-dev.md` | Run the checks and the e2e suite on the promotion to `main`, and nothing on `dev` | accepted |
 | `adr/0024-write-an-agents-config-file-from-an-init-container-into-a-directory-this-operator-names.md` | Write an agent's config file from an init container, into a configuration directory this operator names | accepted |
