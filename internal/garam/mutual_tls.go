@@ -76,11 +76,12 @@ func trustedRoots(trustFile string) (*x509.CertPool, error) {
 }
 
 // operatorCertificate reads the certificate this operator authenticates to
-// garam as.
+// garam as, and records its notAfter where it reads one.
 func operatorCertificate(certificateFile, keyFile string) (*tls.Certificate, error) {
 	certificate, err := tls.LoadX509KeyPair(certificateFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("read the certificate this operator authenticates to garam with: %w", err)
 	}
+	recordCertificate(certificate.Leaf)
 	return &certificate, nil
 }

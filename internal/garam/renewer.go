@@ -59,15 +59,18 @@ func (r *Renewer) renew(ctx context.Context) {
 	credential, err := r.client.RenewIdentity(ctx)
 	switch {
 	case errors.Is(err, ErrRenewalTooEarly):
-		// Not a failure. The window opens off the certificate's own validity,
-		// and asking is how this operator learns that it has.
+		// Not a failure, so not counted as a refusal. The window opens off the
+		// certificate's own validity, and asking is how this operator learns
+		// that it has.
 		log.V(1).Info("Renewed nothing: garam admits no renewal of this certificate yet")
 		return
 	case errors.Is(err, ErrCredentialSuperseded):
+		countRefusal(runnableRenewer, err)
 		log.Error(err, "Cannot renew this operator's certificate. It authenticates until it expires "+
 			"and no retry recovers the lineage: mint one out of band")
 		return
 	case err != nil:
+		countRefusal(runnableRenewer, err)
 		log.Error(err, "Failed to renew this operator's certificate")
 		return
 	}
