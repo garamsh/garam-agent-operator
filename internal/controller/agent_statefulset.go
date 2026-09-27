@@ -39,7 +39,6 @@ const (
 	credentialsVolumeName       = "credentials"
 	credentialsSecretVolumeName = "credentials-secret"
 	stateVolumeName             = "state"
-	toolsVolumeName             = "tools"
 	configVolumeName            = "config"
 
 	// credentialsMountPath holds the copy the agent reads. credentialsSecretMountPath
@@ -48,22 +47,12 @@ const (
 	credentialsSecretMountPath = "/etc/sherlock/credentials"
 	stateMountPath             = "/var/lib/sherlock"
 
-	// toolsMountPath is where the tool tree is mounted and what the agent is
-	// pointed at. It sits outside the state volume's path, which the agent
-	// writes and this tree is not part of.
-	toolsMountPath = "/opt/sherlock/tools"
-
-	// toolsDirVariable names the environment variable sherlock reads the directory
-	// it loads its tools from. The name is that project's, because this operator
-	// is writing that project's setting.
-	toolsDirVariable = "SHERLOCK_TOOLS_DIR"
-
 	// configMountPath is the configuration directory the agent is given, and the
-	// one the file below is found under. It is absolute and this operator's for
-	// the reason toolsMountPath is: sherlock's other two roads to a config file are
-	// a path relative to a working directory the agent's image declares and a
-	// flag this operator does not write, so the directory it resolves against
-	// would otherwise be one this operator did not choose
+	// one the file below is found under. It is absolute and this operator's:
+	// sherlock's other two roads to a config file are a path relative to a
+	// working directory the agent's image declares and a flag this operator does
+	// not write, so the directory it resolves against would otherwise be one
+	// this operator did not choose
 	// (sherlock@fc5fca4:internal/config/config.go:371-395).
 	configMountPath = "/run/sherlock/config"
 
@@ -106,7 +95,7 @@ const (
 
 	// workspaceDirPath is the subtree of the state volume the workspace serves,
 	// and the only part of it the workspace touches. It is absolute and this
-	// operator's for the reason toolsMountPath is, and for a second: sherlock's
+	// operator's for the reason configMountPath is, and for a second: sherlock's
 	// default is relative, the published workspace image declares no working
 	// directory, and the /data it therefore resolves against is root-owned at
 	// 0755 — which the user this Pod names cannot create in, so the workspace
@@ -257,9 +246,9 @@ func claimedStorageSize(statefulSet *appsv1.StatefulSet) resource.Quantity {
 // leaves every other field as it found it, so that an unchanged Agent produces
 // an unchanged object. The fields a StatefulSet refuses a change to are written
 // at creation only. What the workload carries that no Agent names — the image
-// the credential's init container runs, the image an agent's tools are mounted
-// from, and the image its workspace runs — is read off the reconciler, which is
-// where this operator's own configuration reaches the workload. descriptor
+// the credential's init container runs and the image its workspace runs — is
+// read off the reconciler, which is where this operator's own configuration
+// reaches the workload. descriptor
 // carries the per-type environment-variable prefix and config directory name
 // this controller uses to build the workload. Today's descriptor is sherlock,
 // and its env prefix and config dir are the literals the workload carries;
@@ -348,28 +337,6 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	// stops pointing the agent at what the Pod no longer carries.
 	container.Env = nil
 
-	// The whole of the tool tree, so that an operator naming no image builds the
-	// workload it built before one could be named.
-	if r.ToolsImage != "" {
-		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: toolsVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				// The kubelet mounts the image itself, so nothing copies the tree
-				// and the image carrying it needs no shell and nothing writable.
-				// Pulled at every start on the ground the init container's image
-				// is: the reference is the deployer's and its tag need name no one
-				// build, so a node's cache would leave two agents running different
-				// tools under one name.
-				Image: &corev1.ImageVolumeSource{Reference: r.ToolsImage, PullPolicy: corev1.PullAlways},
-			},
-		})
-		container.VolumeMounts = append(container.VolumeMounts,
-			corev1.VolumeMount{Name: toolsVolumeName, MountPath: toolsMountPath, ReadOnly: true})
-		// The variable is what points the agent at the tree; the image's own
-		// entrypoint is left to run what it runs.
-		container.Env = append(container.Env, corev1.EnvVar{Name: toolsDirVariable, Value: toolsMountPath})
-	}
-
 	// The agent's end of the link, written only where the other end is built:
 	// an agent told where to dial with nothing listening there is the failure
 	// this container exists to remove, reported one call later instead of at
@@ -451,8 +418,7 @@ func (r *AgentReconciler) applyToolPins(agent *agentv1alpha1.Agent, statefulSet 
 // applyWorkspace builds the container an agent's files and commands are served
 // by, and removes it again where this operator names no workspace image — so
 // that an operator that stops naming one builds the workload it built before
-// one could be named. It is not folded into the tool tree's shape above: that
-// one adds a volume and a variable to a container, and this one adds a
+// one could be named. It is a function of its own because it adds a
 // container, which is the thing every pointer into the slice depends on.
 func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet) {
 	containers := &statefulSet.Spec.Template.Spec.Containers
@@ -471,8 +437,7 @@ func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet) {
 	workspace.ImagePullPolicy = corev1.PullAlways
 	workspace.SecurityContext = containerSecurityContext()
 	// The image's own entrypoint already serves the workspace, so every setting
-	// reaches it through the environment and this operator writes no command —
-	// the road the tool tree's directory already travels.
+	// reaches it through the environment and this operator writes no command.
 	workspace.Env = []corev1.EnvVar{
 		{Name: listenAddressVariable, Value: workspaceAddress},
 		{Name: workspaceDirVariable, Value: workspaceDirPath},

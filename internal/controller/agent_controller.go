@@ -29,11 +29,6 @@ type AgentReconciler struct {
 	// the agent reads. It needs a shell and install, and nothing of the agent.
 	CopyImage string
 
-	// ToolsImage is the image carrying the tool tree an agent loads its tools
-	// from, mounted read-only into the agent's container. Empty builds the Pod
-	// with no tool tree at all.
-	ToolsImage string
-
 	// WorkspaceImage is the image the agent's workspace container runs: the
 	// process serving the files an agent reads and writes and the commands it
 	// executes. Empty builds the Pod with no workspace at all.

@@ -60,7 +60,7 @@ func main() {
 	var enableHTTP2 bool
 	var garamAddress, garamCertificateFile, garamKeyFile, garamTrustFile string
 	var garamCredentialSecret, garamEnrollmentTokenFile string
-	var agentImage, agentStorageSize, agentCopyImage, agentToolsImage, agentWorkspaceImage string
+	var agentImage, agentStorageSize, agentCopyImage, agentWorkspaceImage string
 	var garamPollInterval, garamRenewalInterval, garamReportInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -116,11 +116,6 @@ func main() {
 			"volume the agent reads it from. It needs a shell and install, and nothing of the agent. It has "+
 			"no default and is always required: an agent whose credential arrives any other way is one its "+
 			"reader refuses.")
-	flag.StringVar(&agentToolsImage, "agent-tools-image", "",
-		"The image carrying the tool tree every agent this operator constructs loads its tools from. Every "+
-			"agent's Pod mounts it read-only, and the agent is pointed at where it is mounted. Unset builds "+
-			"agents' Pods carrying no tool tree at all, which is an agent whose tool registry refuses to "+
-			"start.")
 	flag.StringVar(&agentWorkspaceImage, "agent-workspace-image", "",
 		"The image every agent's Pod runs its workspace container from: the process serving the files an "+
 			"agent reads and writes and the commands it runs. It needs a shell, and the agent's own image "+
@@ -237,14 +232,8 @@ func main() {
 
 	// Unset is a deployment that has decided nothing rather than one that is
 	// misconfigured, so it is said once here and nothing is built for it. An
-	// agent that finds no tool tree says the rest itself, by refusing to start.
-	if agentToolsImage == "" {
-		setupLog.Info("Building agents with no tool tree: agent-tools-image is unset")
-	}
-
-	// Said once here for the same reason, and it carries more: an agent built
-	// with no workspace starts and reports itself available, so this line is
-	// the whole of the notice rather than the first half of one.
+	// agent built with no workspace starts and reports itself available, so
+	// this line is the whole of the notice.
 	if agentWorkspaceImage == "" {
 		setupLog.Info("Building agents with no workspace: agent-workspace-image is unset, " +
 			"so their file and exec tools will fail on a connection error")
@@ -254,7 +243,6 @@ func main() {
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		CopyImage:      agentCopyImage,
-		ToolsImage:     agentToolsImage,
 		WorkspaceImage: agentWorkspaceImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
