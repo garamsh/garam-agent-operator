@@ -1,6 +1,6 @@
 # ADR 0019: Mount an agent's tool tree from an image this operator names, and point the agent at it
 
-> Status: accepted
+> Status: superseded by ADR-0027
 > Date: 2026-09-04
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
