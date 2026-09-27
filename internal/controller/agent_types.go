@@ -29,6 +29,11 @@ type agentTypeDescriptor struct {
 	// container and in its workspace.
 	stateMountPath string
 
+	// memoryPathVariable is the variable the agent reads its memory store's path
+	// from, and memoryFile is that path relative to stateMountPath.
+	memoryPathVariable string
+	memoryFile         string
+
 	// configMountPath is the configuration directory the agent is given and the
 	// one its config file is found under.
 	configMountPath string
@@ -67,6 +72,15 @@ var agentTypeSherlock = agentTypeDescriptor{
 	credentialsMountPath:       "/run/sherlock/credentials",
 	credentialsSecretMountPath: "/etc/sherlock/credentials",
 	stateMountPath:             "/var/lib/sherlock",
+
+	// sherlock's setting memory-path, whose default is relative and resolves
+	// against its image's working directory, off this volume
+	// (sherlock@8218189:docs/architecture/deployment.md:63,149). It sits one
+	// directory down because the outbox is derived beside it
+	// (sherlock@8218189:internal/gateway/outbox.go:25-26), so the store and the
+	// outbox share one subtree, disjoint from workspaceDirName's.
+	memoryPathVariable: "SHERLOCK_MEMORY_PATH",
+	memoryFile:         "memory/memory.db",
 
 	// Absolute and this operator's: sherlock's other two roads to a config file
 	// are a path relative to a working directory the agent's image declares and a
@@ -187,6 +201,10 @@ func (d agentTypeDescriptor) implemented() bool {
 
 	return true
 }
+
+// memoryPath is the absolute path of the agent's memory store on its state
+// volume.
+func (d agentTypeDescriptor) memoryPath() string { return d.stateMountPath + "/" + d.memoryFile }
 
 // configFileIn is where the agent looks for its config file under the
 // configuration directory dir.

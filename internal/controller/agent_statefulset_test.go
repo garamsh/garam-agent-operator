@@ -3,6 +3,7 @@ package controller
 import (
 	"os"
 	"os/exec"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -62,8 +63,8 @@ var _ = Describe("Agent workload", func() {
 		Expect(container.Image).To(Equal(agent.Spec.Image))
 		Expect(container.Resources.Requests.Memory().String()).To(Equal("256Mi"))
 
-		By("putting the credential nowhere in the environment")
-		Expect(container.Env).To(BeEmpty())
+		By("putting the credential nowhere in the environment, which carries the memory store's path alone")
+		Expect(container.Env).To(ConsistOf(corev1.EnvVar{Name: agentTypeSherlock.memoryPathVariable, Value: agentTypeSherlock.memoryPath()}))
 		Expect(container.EnvFrom).To(BeEmpty())
 
 		By("claiming the Agent's storage size for the volume it keeps state on")
@@ -331,6 +332,37 @@ var _ = Describe("Agent workload", func() {
 		Expect(workspace.VolumeMounts).NotTo(ContainElement(HaveField("Name", credentialsVolumeName)))
 	})
 
+	It("puts the agent's memory store and its outbox on the state volume, in a subtree disjoint from the workspace's", func() {
+		name := "keeps-memory-on-its-volume"
+		createSecret(credentialsSecretName(name))
+		createAgent(newAgent(name))
+
+		_, err := reconcileAgentWithWorkspace(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		pod := statefulSetFor(name).Spec.Template.Spec
+		agentContainer := containerOf(pod, agentContainerName)
+		volume := agentTypeSherlock.stateMountPath + "/"
+
+		By("pointing the agent at an absolute path under the mount of the volume its state is claimed on")
+		Expect(agentContainer.VolumeMounts).To(ContainElement(
+			corev1.VolumeMount{Name: stateVolumeName, MountPath: agentTypeSherlock.stateMountPath}))
+		Expect(environmentOf(agentContainer)).To(HaveKey(agentTypeSherlock.memoryPathVariable))
+		memoryPath := environmentOf(agentContainer)[agentTypeSherlock.memoryPathVariable]
+		Expect(memoryPath).To(HavePrefix(volume))
+
+		By("giving the store a directory of its own, so the outbox derived beside it lands in the same subtree")
+		memoryDir := path.Dir(memoryPath) + "/"
+		Expect(memoryDir).To(HavePrefix(volume))
+		Expect(memoryDir).NotTo(Equal(volume))
+
+		By("keeping that subtree and the workspace's apart, neither holding the other")
+		workspaceDir := environmentOf(containerOf(pod, workspaceContainerName))[agentTypeSherlock.workspaceDirVariable] + "/"
+		Expect(workspaceDir).To(HavePrefix(volume))
+		Expect(memoryDir).NotTo(HavePrefix(workspaceDir))
+		Expect(workspaceDir).NotTo(HavePrefix(memoryDir))
+	})
+
 	It("tells the workspace to run exec children as the user the Pod names, which is what lets it run any", func() {
 		name := "agrees-on-one-uid"
 		createSecret(credentialsSecretName(name))
@@ -375,7 +407,7 @@ var _ = Describe("Agent workload", func() {
 
 		By("carrying no second container and telling the agent to dial nothing")
 		Expect(unset.Containers).To(HaveLen(1))
-		Expect(unset.Containers[0].Env).To(BeEmpty())
+		Expect(unset.Containers[0].Env).To(ConsistOf(corev1.EnvVar{Name: agentTypeSherlock.memoryPathVariable, Value: agentTypeSherlock.memoryPath()}))
 
 		set := statefulSetFor(named).Spec.Template.Spec
 
@@ -401,7 +433,7 @@ var _ = Describe("Agent workload", func() {
 		pod := statefulSetFor(name).Spec.Template.Spec
 		Expect(pod.Containers).To(HaveLen(1))
 		Expect(pod.Containers[0].Name).To(Equal(agentContainerName))
-		Expect(pod.Containers[0].Env).To(BeEmpty())
+		Expect(pod.Containers[0].Env).To(ConsistOf(corev1.EnvVar{Name: agentTypeSherlock.memoryPathVariable, Value: agentTypeSherlock.memoryPath()}))
 	})
 
 	It("builds a Pod carrying the workspace that a namespace enforcing PodSecurity restricted admits", func() {

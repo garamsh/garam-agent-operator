@@ -255,7 +255,7 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	}
 	// Written on every pass, so that an operator that stops naming an image
 	// stops pointing the agent at what the Pod no longer carries.
-	container.Env = nil
+	container.Env = []corev1.EnvVar{{Name: descriptor.memoryPathVariable, Value: descriptor.memoryPath()}}
 
 	// The agent's end of the link, written only where the other end is built:
 	// an agent told where to dial with nothing listening there is the failure
