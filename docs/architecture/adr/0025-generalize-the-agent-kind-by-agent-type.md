@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Settled on issue #169 after a measurement that this controller is
+Accepted; descriptor fields extended by ADR-0029. Settled on issue #169 after a measurement that this controller is
 asked for every supported agent binary, not only sherlock. Implements ADR 0025
 on issue #169, supersedes nothing.
 
