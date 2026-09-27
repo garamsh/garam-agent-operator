@@ -46,3 +46,23 @@ Ruled out: `InsecureSkipVerify`, in every form including an off-by-default flag 
 Not decided here: **where the operator's own image and storage size come from.** The division above says the operator supplies them; it does not say from what — a flag, a ConfigMap, a field on a resource above `Agent`, one default for every agent or a choice per definition. Nothing in this change constructs an `Agent` from a claimed definition, and that is what it waits on rather than on a question about garam's contract. `agent.md` §Open questions carries it.
 
 Not decided here either: the poll interval as anything but a default, metrics for the poll, and what the operator reports back to garam. Nothing needs them yet.
+
+## Errata
+
+### 2026-09-27 — `garam` names no values key, and three of the five named here were never in its tree
+
+Context says: "The keys expected are `model`, `system-prompt`, `workspace`, `model-credential`, `repo-credential`", citing `garam@8f9dd9d:api/openapi.yaml:1606`, and Decision repeats `model`, `system-prompt` and `workspace` as the composition `garam` owns. The schema cited names no key. `AgentValues` there is `additionalProperties: {type: string}` with no `required` and no `enum`, and the only keys near it are an `example` of two, `model: haiku` and `workspace: grn-acme-default-project-frontend`, illustrating that the map is free-form. The list was read off that example and presented as a contract.
+
+Where each key existed in `garam`, read on 2026-09-27 at `garam@66c9de1`:
+
+| Key | Provenance |
+|---|---|
+| `model` | The `AgentValues` example at `garam@8f9dd9d`, and the console's suggestion list from `garam@f779293` to `garam@b11f23a` |
+| `workspace` | The `AgentValues` example only, whose value is a project GRN |
+| `system-prompt` | Nowhere at `garam@8f9dd9d`. Added hours later by `garam@f779293` (#494) as `SUGGESTED_VALUE_KEYS` in `web/src/lib/agent-definition.ts:27`, documented there as "a starting point and never the set a definition is limited to"; removed by `garam@b11f23a` (#1094, 2026-09-06). At `garam@66c9de1` it appears in tests only |
+| `model-credential` | No commit of `garam`'s history contains the string (`git log --all -S`) |
+| `repo-credential` | No commit of `garam`'s history contains the string (`git log --all -S`) |
+
+Falsified on issue #155, raised by `garam`'s PM and verified against `garam`'s history rather than taken on report.
+
+The decision stands. Context already said what the keys mean is this operator's contract rather than `garam`'s, and the division — composition is what a definition says, construction is what this operator supplies — rests on `garam`'s ADR-0026 and not on the list. What does not follow is that `garam` expects any key: it publishes none, and the only keys this operator reads are those it chose itself. `workspace` names a project GRN in that example, the site an agent's capabilities are enforced at in `garam`'s own ADR-0012 (`garam@8f9dd9d:docs/architecture/adr/0012-agent-operator-model.md:31,67`), and a composition value in this ADR — each use correct where it was written, which is why the list went unchecked. `agent.md` §Open questions carries it.
