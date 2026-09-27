@@ -1,6 +1,6 @@
 # Documentation Conventions
 
-What makes documentation valid in this project. Applies to every file under `docs/` and to GitHub artifacts (issues, PRs, comments). Violations are grounds for PR rejection.
+What makes documentation valid in this project. Applies to every Markdown document in this repository, and to GitHub artifacts (issues, PRs, comments). Violations are grounds for PR rejection.
 
 ## Keep it maintainable
 
@@ -14,12 +14,15 @@ What makes documentation valid in this project. Applies to every file under `doc
 - A PR that changes structure, workflow, or conventions updates the affected docs in the same PR. Stale docs are worse than missing docs.
 - Delete docs that no longer describe anything real. Do not archive.
 - Every claim about this repository must be verifiable in it. If you cannot point at it, remove it.
-- A claim about anything outside it names the release it holds for — `deprecated in v2` can be checked against the library, `deprecated` cannot. A file may name its versions once at the top instead, and then every claim in it holds for those. Where the claim is about a package's health rather than a release (`unmaintained`, `legacy`), do not rest a rule on it: name what to use instead, which does not expire.
+- A claim about anything outside it names what it holds for, precisely enough that a reader can check it there: a release where the project publishes them, a commit where it does not. `deprecated in v2` can be checked against the library and `deprecated` cannot; a path and a line number with neither looks precise and goes on looking valid after the line moves.
+- A file may state once at the top what it was checked against, and then every claim in it holds for that. That statement records a check; it promises nothing about later versions. A reader past it holds claims nobody checked there, and moving the statement means re-checking the claims under it rather than editing the number.
+- Where the claim is about a package's health rather than a release (`unmaintained`, `legacy`), do not rest a rule on it: name what to use instead, which does not expire.
+- A claim about the project that will carry this document cannot be checked from here, so it is written as an obligation and not as a description. "`findOneByOrFail` throws, which the global filter maps" asserts a filter this file has never seen; "`findOneByOrFail` throws; map it in the filter at X" is a rule the reader can act on and a reviewer can look for.
 - Update an existing document when the topic is already covered there; do not create a parallel document for a new facet of the same topic. Total document volume is a managed cost — a new file earns its place by adding a topic no existing file owns.
 
 ## GitHub artifacts
 
-Issues, PRs, and comments are documentation too.
+These are documentation too.
 
 - **Facts only.** No rhetoric, no self-assessment, no inflated language ("perfect", "massive improvement"). State what changed, where, and why.
 - **Stay inside the template.** No extra sections beyond the template fields; leave no field empty — write `N/A` with a reason.
@@ -27,9 +30,10 @@ Issues, PRs, and comments are documentation too.
 
 ## Format
 
-- English and Markdown. The H1 is the document's title in title case, or the exact name where the document is named after a file or a repository; every heading below it is sentence case.
+- English and Markdown. The H1 takes the case of what it is — a name in title case, an exact file or repository name as spelled, a statement in sentence case (an ADR's H1 states its decision). Every heading below it is sentence case.
 - Start each file with one line stating what it governs.
-- A file past ~50 lines opens with a `## Contents` list of its section headings; a shorter one does not. A Contents list is never the remedy for a file that has outgrown one topic — see §Keep it maintainable.
-- **No decoration.** No emojis, badges, or ornamental headers. This holds for files under `docs/` as much as for GitHub artifacts: a check-mark glyph in a table is decoration where `yes` is a word.
+- A `## Contents` list indexes a file's `##` headings, so how many of them there are decides whether it carries one and the file's length does not: more than eight, it opens with the list; three or fewer, it carries none; between the two, the writer decides. A Contents list is never the remedy for a file that has outgrown one topic — see §Keep it maintainable.
+- A file whose headings come from a template owes no Contents list, however many it has. Those headings are the same in every file written from that template, so listing them tells a reader only what the template already told them.
+- **No decoration.** No emojis, badges, or ornamental headers. Nothing these rules reach is held to a looser standard: a check-mark glyph in a table is decoration where `yes` is a word.
 - Use file paths (`src/auth/service.ts`) instead of drawn hierarchies.
 - File names: lowercase kebab-case (`runtime-safety.md`). Uppercase is reserved for files a tool or a reader looks for by an exact name it did not choose: `README.md`, `AGENTS.md`, `CLAUDE.md`, and the names GitHub requires under `.github/`.

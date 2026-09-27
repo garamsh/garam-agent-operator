@@ -1,0 +1,27 @@
+# permission to construct the agents garam assigns this operator, in the
+# operator's own namespace, which is where a constructed agent is built. The
+# reads it makes of an Agent and of a Secret are already granted by the
+# reconciler's own role, and so is the patch of an Agent's status that reports
+# the GRN it was constructed from; what is left is creating the two objects and
+# correcting the image this operator wrote in an Agent's spec.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/name: garam-agent-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: garam-construction-role
+rules:
+- apiGroups:
+  - agent.garam.sh
+  resources:
+  - agents
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create

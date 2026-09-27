@@ -3,7 +3,7 @@ kind: Namespace
 metadata:
   labels:
     control-plane: controller-manager
-    app.kubernetes.io/name: gagent-operator
+    app.kubernetes.io/name: garam-agent-operator
     app.kubernetes.io/managed-by: kustomize
   name: system
 ---
@@ -14,13 +14,13 @@ metadata:
   namespace: system
   labels:
     control-plane: controller-manager
-    app.kubernetes.io/name: gagent-operator
+    app.kubernetes.io/name: garam-agent-operator
     app.kubernetes.io/managed-by: kustomize
 spec:
   selector:
     matchLabels:
       control-plane: controller-manager
-      app.kubernetes.io/name: gagent-operator
+      app.kubernetes.io/name: garam-agent-operator
   replicas: 1
   template:
     metadata:
@@ -28,7 +28,7 @@ spec:
         kubectl.kubernetes.io/default-container: manager
       labels:
         control-plane: controller-manager
-        app.kubernetes.io/name: gagent-operator
+        app.kubernetes.io/name: garam-agent-operator
     spec:
       # TODO(user): Uncomment the following code to configure the nodeAffinity expression
       # according to the platforms which are supported by your solution.
@@ -57,14 +57,54 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+        # The credential this operator authenticates to garam with arrives as
+        # files the kubelet writes, and those are owned by root whatever user
+        # the container runs as. The group is what the container's own uid
+        # reads them by; 65532 is the uid `Dockerfile` runs the manager as.
+        fsGroup: 65532
       containers:
       - command:
         - /manager
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+          # The image the init container of every agent's Pod copies that
+          # agent's credential with. The manager has no default for it, so this
+          # base names one; an overlay that prefers another replaces the
+          # argument. Pinned to the multi-platform index digest, because a tag
+          # can be moved to different content.
+          - --agent-copy-image=busybox:stable-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213
+          # The Secret this operator reads its credential from and renews into.
+          # It is the one the volume below mounts, and the two names have to
+          # agree.
+          - --garam-credential-secret=garam-credential
+          # The credential as the kubelet delivers it, under that volume's
+          # mountPath. Each file's base name is the Secret key it is renewed
+          # into.
+          - --garam-certificate-file=/etc/garam/credential/certificate.pem
+          - --garam-key-file=/etc/garam/credential/key.pem
+          # What garam's listener is verified against: the server root, not the
+          # organization issuer this operator's own certificate arrives beside.
+          - --garam-trust-file=/etc/garam/credential/server-root.pem
+          # The one-time token this operator obtains its first certificate
+          # with, as a key of the Secret above. A deployment enrolls by placing
+          # that key; no key, an empty one, or a certificate this operator
+          # already holds leaves it enrolling nothing.
+          - --garam-enrollment-token-file=/etc/garam/credential/enrollment-token
+          # --garam-address, --agent-image and --agent-storage-size are the
+          # deploying overlay's and are never set here: each names something one
+          # cluster owns. docs/architecture/configuration.md names the overlay.
         image: controller:latest
         name: manager
+        env:
+        # The namespace the Secret holding this operator's credential is looked
+        # for in. It is this Pod's own, and it arrives here because the
+        # kustomize transformer that sets the namespace does not reach into an
+        # argument.
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         ports:
         - containerPort: 8081
           name: health
@@ -96,7 +136,22 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
-        volumeMounts: []
-      volumes: []
+        volumeMounts:
+        - name: garam-credential
+          mountPath: /etc/garam/credential
+          readOnly: true
+      volumes:
+      # The credential is optional so that a deployment given no identity still
+      # starts, which is the state one is in until it has been given one. A
+      # Secret placed later reaches the running Pod without a restart.
+      #
+      # The mount is read-only and stays so: a renewal replaces this Secret
+      # through the API server, and the kubelet is what carries the change back
+      # into this volume.
+      - name: garam-credential
+        secret:
+          secretName: garam-credential
+          defaultMode: 0440
+          optional: true
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10

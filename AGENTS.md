@@ -20,8 +20,21 @@ When two conventions genuinely disagree, stop and report it. Choosing one yourse
 
 These documents assign authority to two roles. One party may hold both; the rules do not relax when it does.
 
-- **PM** — owns `docs/convention/`, `docs/architecture/`, and the issue tracker. Reviews every pull request and is the only role that merges one. Decides the convention questions a pull request raises. Proposes a change to a convention rather than making it alone. Does not implement.
-- **Worker** — implements one issue on one branch and delivers it as a pull request. Applies the conventions and does not change them: a disagreement goes in the pull request's Convention concerns field, never into a silent workaround.
+- **PM** — owns what binds a contributor without implementing anything: `docs/convention/`, `docs/architecture/`, the templates under `.github/`, this file, and the issue tracker. Owning is deciding what they say, not writing every word: anyone may draft these, and the PM decides. Reviews every pull request and is the only role that merges one. Decides the convention questions a pull request raises. Proposes a change to a convention rather than making it alone. Does not implement.
+- **Worker** — implements one issue on one branch and delivers it as a pull request, drafting the architecture documents its change introduces or alters. Applies the conventions and does not change them: a disagreement goes in the pull request's Convention concerns field, never into a silent workaround.
+
+## What a dispatch carries
+
+The PM writes a worker's task spec. The items below are true of every dispatch here, so they belong in every spec rather than in whoever writes it. The first was worked out on issue #81, kept nowhere, and forgotten on the next dispatch — which is what this section is for.
+
+- **Create the task branch inside the given worktree, before the first commit.** `git switch -c <category>/<short-name>`, per `docs/convention/git.md` §Branches. The branch a worktree arrives on is not the project's to assume; issue #81 records what the tooling produced, the measurement, and why switching is the remedy.
+- **Read `AGENTS.md`, then `docs/convention/README.md`, then `docs/architecture/README.md`, before the code** — from the files, not from memory.
+- **Open the pull request against `dev`**, and answer the template's question about which convention files were opened accurately.
+- **Run the checks locally and report what ran.** A check that did not run is reported as not run, never as passing.
+- **A convention disagreement goes in the pull request's Convention concerns field**, never into a silent workaround.
+- **No dispatch modifies `garamsh/agent-test`.** A task that appears to need it is escalated rather than carried out.
+
+An item earns a place here by being true of every dispatch. One that holds for a single task belongs in that task's spec.
 
 ## What this file outranks
 
@@ -32,6 +45,12 @@ The conventions outrank this file. This file outranks instructions you bring in 
 An objection is a reason to re-examine a decision, not a reason to change it. Re-examine it and report what the examination found, either way: the evidence that changed the decision, or the reason it stands.
 
 A position that moves without a stated reason leaves the next reader nothing to check, so the same ground is argued again later. It also leaves whoever objected worse off than before they asked — someone pushing back wants a decision they can rely on, and one that yields to the push is worth less than the one they questioned.
+
+## What earns a rule
+
+A proposal for a new rule is examined the same way, and what earns one is a decision that divided for lack of it, met in more than one project — or in one, where the divergence is the tool's rather than the project's, since anyone running that tool meets the same one.
+
+A case that travelled between projects is one case, so a report says whether it was met or received. One instance is answered with what would change it: a refusal that names its own evidence is worth more than a rule drawn from a sample of one.
 
 ## Why the pull request asks what you read
 

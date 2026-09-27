@@ -1,0 +1,18 @@
+apiVersion: agent.garam.sh/v1alpha1
+kind: Agent
+metadata:
+  labels:
+    app.kubernetes.io/name: garam-agent-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: agent-sample
+spec:
+  image: example.com/sherlock:v0.1.0
+  credentialsSecretName: agent-sample-credentials
+  storageSize: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

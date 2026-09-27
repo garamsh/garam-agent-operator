@@ -5,6 +5,8 @@ Test layers, mocking, and placement — what each layer proves, what to mock, an
 ## Contents
 - Three layers — different goals, different scopes
 - Behavior over implementation
+- Waiting
+- Failing
 - Mocking strategy
 - Coverage and naming
 - Placement
@@ -19,7 +21,11 @@ The concrete in-process client per stack is owned by the project's stack convent
 | **Integration** | modules cooperating | external systems mocked or substituted; SUT is real | in-process client | mocked |
 | **E2E** | built binary against real infra | nothing | real client | **real** (testcontainers OK) |
 
-The app is *not yet a built binary* in integration. **No testcontainers in integration** — real Postgres for an integration test is e2e.
+What separates the layers is the subject: integration exercises real modules in process, e2e exercises what the build produces.
+
+**No testcontainers in integration.** Reaching for a container to get a real service means the test wanted the deployed system. A suite of in-process modules stays an integration test however real its Postgres, so substitute the service — renaming the suite e2e leaves the project with nothing exercising the built artifact, which is what the e2e row is for. Where the deployed system is what you meant, build it and test that.
+
+The exception is a dependency no in-process substitute can stand in for, because the code exists to interact with it: a controller's API server, not a database. Run that as a fixture and the test is still integration, because the subject is still in-process modules.
 
 ## Behavior over implementation
 
@@ -32,6 +38,23 @@ Assert on outputs and side-effects only:
 Do not assert on: call order, unexported helper shape, private type structure, internal refactors. **If an internal refactor forces test updates, the tests were testing implementation.**
 
 The concrete targets for a given stack are owned by the project's stack convention file; the lists above state only the kinds that qualify.
+
+## Waiting
+
+A test that waits on the wrong condition passes for the wrong reason, and the failure surfaces later on a machine with different timing.
+
+- **A step waits on the condition it depends on.** Waiting for something already true proves nothing, and waiting for something unrelated proves less. A step that needs a form to be interactive waits for that, not for a label that was on screen before the step began.
+- **The condition waited on and the condition asserted are the same.** A wait that passes while the assertion reads a stale value waited on the wrong thing.
+- **Raising a timeout is not a fix.** It only lengthens how long the test tolerates the wrong condition. Find what the step depends on.
+- **An intermittent failure is reproduced before it is fixed**, and the fix is shown by the failure rate before against after. A run count is not a rate: a handful of green runs is consistent with every failure rate small enough to be worth chasing, and a defect at one in a thousand is invisible to ten. The conditions that expose it are not always the loaded ones either — a slow machine can hide a race by delaying the thing that would otherwise arrive too early.
+
+## Failing
+
+A test that cannot fail is not evidence. It passes on the day the behaviour is deleted, and it reads exactly like one that would have caught it.
+
+- **A test is shown to fail before it is trusted.** Remove the behaviour it names, watch it break, put the behaviour back. An assertion that survives that is measuring something else, and the pull request says which tests were seen to fail.
+- **A test asserting a refusal carries a control that isolates the mechanism.** A rejection holds for reasons that have nothing to do with the one under test — two unrelated keys fail to match as readily as two wrongly separated ones — and a control chosen only to pass proves no more than the refusal did. The control is whatever fails when something other than the mechanism is doing the refusing: the accepted case that stops being accepted without it, or — where the mechanism accepts nothing of its own, as with a check that only narrows — an input everything around it accepts. Assert both in the same test, so they are read together.
+- **Assert the property, not the absence of its consequence.** A field that is false and a field that is absent are different states, and most assertions cannot tell them apart. Only one of them is the property.
 
 ## Mocking strategy
 
