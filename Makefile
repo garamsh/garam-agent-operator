@@ -246,9 +246,12 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
+# Departs from the scaffold, and a regeneration restores the scaffold's form: it
+# passes the checked-out commit as REVISION, which Dockerfile writes into the
+# image's revision label.
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build --build-arg REVISION=$$(git rev-parse HEAD) -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -266,14 +269,16 @@ PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 # push line has no `-` prefix, so a failed push fails the target, and it removes
 # Dockerfile.cross on that path; Dockerfile.cross is written after `buildx use`, so
 # a missing builder leaves none behind. `buildx create` keeps its prefix because it
-# fails when the builder exists, and `buildx use` fails when it does not.
+# fails when the builder exists, and `buildx use` fails when it does not. The build
+# passes the checked-out commit as REVISION, which Dockerfile writes into the
+# image's revision label.
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	- $(CONTAINER_TOOL) buildx create --name garam-agent-operator-builder
 	$(CONTAINER_TOOL) buildx use garam-agent-operator-builder
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross . || { rm Dockerfile.cross; exit 1; }
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg REVISION=$$(git rev-parse HEAD) --tag ${IMG} -f Dockerfile.cross . || { rm Dockerfile.cross; exit 1; }
 	- $(CONTAINER_TOOL) buildx rm garam-agent-operator-builder
 	rm Dockerfile.cross
 
