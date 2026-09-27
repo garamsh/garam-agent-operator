@@ -30,3 +30,11 @@ Easier: the ordering guarantee is the only thing standing between the design and
 Harder: a StatefulSet is more machinery than one agent needs, and `volumeClaimTemplates` is deliberately hard to change — a claim template is immutable after creation, so altering `spec.storageSize` on an existing `Agent` cannot be satisfied by editing the StatefulSet. That is a real limitation this decision accepts and does not solve; whatever answers it will be its own decision.
 
 Ruled out: a Deployment, at any update strategy. A bare Pod plus PVC, on rescheduling alone — it is the shape to revisit if the StatefulSet's rigidity costs more than the rescheduling is worth.
+
+## Errata
+
+### 2026-09-27 — the agent's store was not on the volume
+
+Context says: "The agent keeps its state in a single-writer store on a persistent volume." The store is single-writer, and that is what the decision rests on, so the decision stands. That it was on the persistent volume was wrong for every agent this operator built until issue #157.
+
+`sherlock`'s `memory-path` defaults to the relative `data/memory.db`, which resolves against the agent image's working directory, `/home/nonroot` (`sherlock@8218189:docs/architecture/deployment.md:63,149`), and this operator set no path. The store was on the container's own filesystem. On 2026-09-06 the state volume of the first agent constructed in production held `lost+found` and the workspace's directory and nothing of the agent's (issue #157). Since issue #157 this operator sets the path to one under the volume's mount.
