@@ -241,7 +241,7 @@ func TestCreate_RefusesWhatItCannotCreateFrom(t *testing.T) {
 	malformed := []byte(`{"requestId":"n2","controller":"` + controllerGRN + `","unknown":true}`)
 	assert.Equal(t, http.StatusBadRequest, e.create(t, e.authorizeCreate("n2", malformed, nil), malformed).status)
 
-	// Control: the same request id with a body naming what is published creates the agent.
-	body := e.createBody("n3", nil)
-	assert.Equal(t, http.StatusCreated, e.create(t, e.authorizeCreate("n3", body, nil), body).status)
+	// Control: the first request id, with a body naming what is published, creates the agent.
+	body := e.createBody("n1", nil)
+	assert.Equal(t, http.StatusCreated, e.create(t, e.authorizeCreate("n1", body, nil), body).status)
 }

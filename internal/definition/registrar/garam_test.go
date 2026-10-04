@@ -86,4 +86,10 @@ func TestGaram_RefusalsAreTold(t *testing.T) {
 func TestGaram_AnswerWithoutAnAgentRefused(t *testing.T) {
 	_, _, err := register(t, http.StatusCreated, `{"grn":"","epoch":"1"}`)
 	require.Error(t, err)
+	_, _, err = register(t, http.StatusCreated, `{"grn":"grn:acme:default:agent:0a1b","epoch":""}`)
+	require.Error(t, err)
+
+	// Control: the same answer naming both an agent and an epoch is read.
+	_, _, err = register(t, http.StatusCreated, `{"grn":"grn:acme:default:agent:0a1b","epoch":"1"}`)
+	require.NoError(t, err)
 }
