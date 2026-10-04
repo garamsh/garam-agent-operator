@@ -4,7 +4,10 @@ The control service's desired state: agents' execution definitions and their rev
 
 ## Current decisions
 
-- **The control service is a second binary, and its desired state is `internal/definition/`.** Its entry point `cmd/control/main.go` is not built yet (issue #208). It follows `stack-go.md` alone, as `docs/convention/README.md` §Stack-specific splits a binary that is not the manager. Nothing in the manager imports it.
+- **The control service is a second binary, and its desired state is `internal/definition/`.** It follows `stack-go.md` alone, as `docs/convention/README.md` §Stack-specific splits a binary that is not the manager. Nothing in the manager imports it.
+- **The binary serves health and nothing else yet.** `cmd/control/main.go` opens its store from the connection URL in `CONTROL_DATABASE_URL`, which is an environment variable rather than a flag because it carries a password. It applies the schema and serves `/healthz` and `/readyz` on `--health-probe-bind-address` (default `:8081`). `/readyz` answers only while the database answers a ping. Any failure to open the store or apply the schema stops the binary. No API is served and garam is not called.
+- **Its image is built from `build/control.Dockerfile`**, by `make docker-build-control`, with the repository root as context. Where it is published is `delivery.md`.
+- **The control service's image stays separate from the manager's.** The manager runs in a customer's cluster and holds the cluster controller's credential. The control service runs where this project's operators of the service deploy it, and the two hold distinct credentials, which `garamsh/garam#1155` §2 requires. One image would carry both programs to both places.
 - **Each agent has one desired definition, keyed by its GRN, held as revisions.** Revision 1 is stored only when garam registers the agent's creation. Every later change appends the next revision and earlier ones are kept. A change states the revision it was based on; one based on any revision but the latest is refused with `ErrStaleRevision`, and nothing from it is merged. A change to an agent with no revision is refused with `ErrNotFound`.
 - **A definition carries the agent's configuration and names a profile version.** The configuration is the model (provider, base URL, model name, and a reference to its API key), the ego text, and the tool pins, one per tool, each opaque here as `agent.md` records. A secret appears only as a reference to where it is held.
 - **A template is a named configuration and profile version, published in numbered versions and never modified.** Publishing a name again is its next version. Creating an agent copies the template version it names into revision 1 once; a later version of the template never reaches an agent created from an earlier one.
@@ -13,8 +16,15 @@ The control service's desired state: agents' execution definitions and their rev
 - **A creation is identified by its actor, organization and request id, and ends at most once.** It is stored `Pending` before garam is asked, then becomes `Registered` with the GRN garam minted or `Failed` with garam's refusal. A repeated request returns the stored outcome and never stores a second creation. One still `Pending` asks garam again, which `Registrar` requires to answer one key with one GRN. An error that is not a refusal leaves the outcome unknown, so the creation stays `Pending`. A repeated key naming a different template is refused with `ErrRequestReused`.
 - **garam's registration is the `Registrar` interface, with no implementation yet.** Its wire contract is still being agreed (`garamsh/garam#1155` §2).
 - **The store is `Repository`, and each rule's atomicity is the store's.** Appending a revision checks the latest in the same write, a creation is inserted or the stored one returned in one step, and a registration stores the creation's outcome and revision 1 together. `internal/definition/repository/memory.go` holds it in process for tests and development.
-- **The persistent store is a PostgreSQL database of the control service's own, through pgx v5 — decided and not yet built.** The implementation and its schema land in issue #208, beside the in-memory one.
-- **Domain behaviour is tested on the in-memory store**, in `internal/definition/*_test.go`. The PostgreSQL implementation is exercised at the e2e layer against the built binary, in issue #208: `testing.md` keeps a real database out of the integration layer.
+- **The persistent store is a PostgreSQL database of the control service's own, through pgx v5.** `internal/definition/repository/postgres.go` implements `Repository`.
+  - **Schema.** `schema.sql` beside the implementation is embedded in the binary and applied at every start. Every statement in it only creates what is missing.
+  - **Stale revision.** The key on (agent, revision) refuses a second revision under one number, so of two updates based on one revision, one is stored and the other is refused as stale.
+  - **Duplicate creation.** The key on (actor, organization, request id) leaves one creation per request; an insert that meets it stores nothing.
+  - **Registration.** It locks the creation's row and stores the outcome and revision 1 in one transaction.
+  - **Publication.** A profile or template publication locks its table, so two publications cannot take one version number.
+  - **Errors.** The driver's errors do not leave the implementation: a missing row is `ErrNotFound`, a duplicate revision is `ErrStaleRevision`, and anything else is opaque.
+- **Domain behaviour is tested on the in-memory store**, in `internal/definition/*_test.go`. `testing.md` keeps a real database out of the integration layer.
+- **The PostgreSQL store is tested at the e2e layer**, in `tests/control/`. It builds `cmd/control` and runs it against a PostgreSQL container that testcontainers-go starts. It then exercises the store on the schema the binary applied: a stale revision refused, one of several concurrent updates on one revision stored, a repeated creation returning the first outcome, and concurrent repeats of one creation storing one. `make test-e2e-control` runs it, and `make test-e2e` runs it first.
 
 ## Rationale
 
@@ -26,6 +36,8 @@ A creation stays `Pending` on an unknown outcome rather than failing, because a 
 
 ## Open questions
 
-- **What moves the Go module pins.** `.github/dependabot.yml` has no `gomod` entry, so neither pgx (once #208 adds it) nor any other module in `go.mod` has the mover `ci.md` §Verify a pinned dependency requires.
+- **What moves the Go module pins.** `.github/dependabot.yml` has no `gomod` entry, so neither pgx, testcontainers-go nor any other module in `go.mod` has the mover `ci.md` §Verify a pinned dependency requires. Issue #215 adds it.
+- **What moves the e2e suite's PostgreSQL image.** It is pinned by digest in `tests/control/main_test.go`, which no Dependabot ecosystem reads, so it is moved by hand.
+- **How the schema changes once a table holds rows.** `schema.sql` creates what is missing and alters nothing, so a change to an existing table needs a migration that no part of the binary performs yet.
 - **What configuration the domain refuses.** It stores any configuration it is given, including an empty tool-pin set, which `agent.md` records `sherlock` refusing. Where that check belongs waits on the boundary that parses a request, which is not built.
 - **Who may publish a profile or a template.** `garamsh/garam#1155` D4 makes editing a profile a high-trust action; nothing here checks an actor yet.

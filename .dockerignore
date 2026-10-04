@@ -6,6 +6,9 @@
 !**/*.go
 **/*_test.go
 
+# Re-include the files Go source embeds
+!internal/definition/repository/schema.sql
+
 # Re-include Go module files
 !go.mod
 !go.sum

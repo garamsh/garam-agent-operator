@@ -17,3 +17,10 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore
+  - package-ecosystem: docker
+    directory: /build
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
