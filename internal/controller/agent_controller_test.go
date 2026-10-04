@@ -132,6 +132,26 @@ func reconcileAgentWith(name, workspaceImage string) (reconcile.Result, error) {
 	})
 }
 
+// testAdapterImage is the image the specs expect garam's adapter to run, where
+// this operator names one, and testGaramAddress the machine listener it claims
+// from.
+const (
+	testAdapterImage = "example.com/garam:v0.1.0"
+	testGaramAddress = "garam-machine.garam.svc:8443"
+)
+
+// reconcileAgentWithAdapter runs one reconcile for the named Agent, with this
+// operator placing garam's adapter from testAdapterImage.
+func reconcileAgentWithAdapter(name string) (reconcile.Result, error) {
+	return runReconcile(name, &AgentReconciler{
+		Client:       k8sClient,
+		Scheme:       k8sClient.Scheme(),
+		CopyImage:    testCopyImage,
+		AdapterImage: testAdapterImage,
+		GaramAddress: testGaramAddress,
+	})
+}
+
 // reconcileAgentRenderingEpoch runs one reconcile for the named Agent, with this
 // operator passing agents their assignment epoch.
 func reconcileAgentRenderingEpoch(name string) (reconcile.Result, error) {

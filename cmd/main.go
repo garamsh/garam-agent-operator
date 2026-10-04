@@ -64,7 +64,7 @@ func main() {
 	var enableHTTP2 bool
 	var garamAddress, garamCertificateFile, garamKeyFile, garamTrustFile string
 	var garamCredentialSecret, garamEnrollmentTokenFile string
-	var agentImage, agentStorageSize, agentCopyImage, agentWorkspaceImage string
+	var agentImage, agentStorageSize, agentCopyImage, agentWorkspaceImage, agentAdapterImage string
 	var garamPollInterval, garamRenewalInterval, garamReportInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -125,6 +125,11 @@ func main() {
 			"agent reads and writes and the commands it runs. It needs a shell, and the agent's own image "+
 			"does not carry one. Unset builds agents' Pods carrying no workspace at all, which is an agent "+
 			"that starts and reports itself available and fails every file and exec call.")
+	flag.StringVar(&agentAdapterImage, "agent-adapter-image", "",
+		"The image garam's adapter runs from, as a sidecar beside every agent this operator constructed: "+
+			"garam's own image, whose adapter subcommand carries messages between garam and the agent. "+
+			"It is built only where garam-address is set too. Unset builds agents' Pods carrying no adapter, "+
+			"which is an agent garam delivers no message to.")
 	flag.BoolVar(&agentAssignmentEpoch, "agent-assignment-epoch", false,
 		"Pass every agent this operator constructed its assignment epoch on the command line, as "+
 			"--assignment-epoch. Off by default: set it only once the agent image this deployment runs "+
@@ -247,11 +252,20 @@ func main() {
 			"so their file and exec tools will fail on a connection error")
 	}
 
+	// Said once, as the workspace's absence is: an agent built with no adapter
+	// starts and reports itself available, and garam reaches it by no route.
+	if agentAdapterImage == "" || garamAddress == "" {
+		setupLog.Info("Building agents with no adapter: agent-adapter-image or garam-address is unset, " +
+			"so garam delivers them no message")
+	}
+
 	if err := (&controller.AgentReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		CopyImage:      agentCopyImage,
 		WorkspaceImage: agentWorkspaceImage,
+		AdapterImage:   agentAdapterImage,
+		GaramAddress:   garamAddress,
 
 		RenderAssignmentEpoch: agentAssignmentEpoch,
 	}).SetupWithManager(mgr); err != nil {
