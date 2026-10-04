@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,8 +26,8 @@ import (
 // PM moves it and reviews it at each promotion to main.
 const postgresImage = "postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
 
-// garamURL is the machine listener the binary is pointed at. Until garam can be brought up
-// for this suite (issue #230), nothing answers there.
+// garamURL is the machine listener the detached binary is pointed at, where nothing answers.
+// The attached binary is pointed at the real garam the suite brings up.
 const garamURL = "https://127.0.0.1:1"
 
 // readyTimeout bounds how long the binary has to apply its schema and answer ready.
@@ -43,7 +44,11 @@ var (
 	apiClient *http.Client
 	// controllerClient is apiClient presenting a controller's client certificate.
 	controllerClient *http.Client
-	// binaryPath, controlArgs and databaseURL are what the binary was started with.
+	// real is the garam the attached binary calls, and attachedURL that binary's console and
+	// controller routes.
+	real        *garamStack
+	attachedURL string
+	// binaryPath, controlArgs and databaseURL are what the detached binary was started with.
 	binaryPath  string
 	controlArgs []string
 	databaseURL string
@@ -129,6 +134,22 @@ func run(m *testing.M) (int, error) {
 		return 0, err
 	}
 
+	serverURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		return 0, err
+	}
+	serverURL = strings.Replace(serverURL, "/control?", "/postgres?", 1)
+	real, err = startGaram(ctx, os.Getenv("GARAM_BIN_DIR"), os.Getenv("GARAM_MIGRATIONS_DIR"), serverURL, dir)
+	if err != nil {
+		return 0, fmt.Errorf("start garam: %w", err)
+	}
+	defer real.stop()
+	stopAttached, err := startAttached(binary, id, real)
+	if err != nil {
+		return 0, err
+	}
+	defer stopAttached()
+
 	pool, err = pgxpool.New(ctx, databaseURL)
 	if err != nil {
 		return 0, err
@@ -160,4 +181,42 @@ func freeAddress() (string, error) {
 	}
 	defer func() { _ = l.Close() }()
 	return l.Addr().String(), nil
+}
+
+// startAttached starts a second control binary on the same database, calling the real garam as
+// the hosted operator garam enrolled, and serving under the suite's serving certificate.
+func startAttached(binary string, id identity, g *garamStack) (func(), error) {
+	probeAddr, err := freeAddress()
+	if err != nil {
+		return nil, err
+	}
+	apiAddr, err := freeAddress()
+	if err != nil {
+		return nil, err
+	}
+	attachedURL = "https://" + apiAddr
+	control := exec.Command(binary,
+		"--health-probe-bind-address", probeAddr,
+		"--api-bind-address", apiAddr,
+		"--api-certificate-file", id.servingCertificate,
+		"--api-key-file", id.servingKey,
+		"--garam-machine-url", g.machineURL,
+		"--garam-server-root-file", g.hostedFiles.serverRoot,
+		"--operator-certificate-file", g.hostedFiles.certificate,
+		"--operator-key-file", g.hostedFiles.key,
+	)
+	control.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+databaseURL)
+	control.Stdout, control.Stderr = os.Stdout, os.Stderr
+	if err := control.Start(); err != nil {
+		return nil, fmt.Errorf("start attached control binary: %w", err)
+	}
+	stop := func() {
+		_ = control.Process.Kill()
+		_ = control.Wait()
+	}
+	if err := waitReady("http://" + probeAddr + "/readyz"); err != nil {
+		stop()
+		return nil, err
+	}
+	return stop, nil
 }
