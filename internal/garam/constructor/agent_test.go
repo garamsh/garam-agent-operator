@@ -479,6 +479,9 @@ func TestCorrectSpecLeavesTheSpecOfAnAgentThisOperatorDidNotConstructAlone(t *te
 	g.Expect(identityOf(t, c, sampleAgent)).To(BeNil())
 	g.Expect(accepted).To(BeTrue())
 	g.Expect(imageOf(t, c, otherAgent)).To(Equal(laterImage))
+	g.Expect(identityOf(t, c, otherAgent)).To(Equal(&agentv1alpha1.AgentIdentity{
+		GRN: string(otherAgent), AssignmentEpoch: "7",
+	}))
 }
 
 // identityOf is the identity the cluster carries in the spec of the Agent

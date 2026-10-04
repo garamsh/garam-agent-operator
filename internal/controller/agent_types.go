@@ -151,6 +151,14 @@ type agentArguments struct {
 	assignmentEpoch string
 }
 
+// sherlock's subcommand and the flags renderSherlockArgs passes it.
+const (
+	sherlockAgentCommand        = "agent"
+	sherlockAgentIDFlag         = "--agent-id"
+	sherlockEgoFileFlag         = "--ego-file"
+	sherlockAssignmentEpochFlag = "--assignment-epoch"
+)
+
 // renderSherlockArgs is sherlock's command line for args.
 //
 // All three are flags read off the flag and through no other layer: the agent
@@ -161,12 +169,12 @@ type agentArguments struct {
 // CMD ["agent"]). The agent ID is always passed, because sherlock refuses to
 // start without one (sherlock@0ced773:cmd/sherlock/agent.go:79).
 func renderSherlockArgs(args agentArguments) []string {
-	rendered := []string{"agent", "--agent-id", args.agentID}
+	rendered := []string{sherlockAgentCommand, sherlockAgentIDFlag, args.agentID}
 	if args.egoFile != "" {
-		rendered = append(rendered, "--ego-file", args.egoFile)
+		rendered = append(rendered, sherlockEgoFileFlag, args.egoFile)
 	}
 	if args.assignmentEpoch != "" {
-		rendered = append(rendered, "--assignment-epoch", args.assignmentEpoch)
+		rendered = append(rendered, sherlockAssignmentEpochFlag, args.assignmentEpoch)
 	}
 
 	return rendered

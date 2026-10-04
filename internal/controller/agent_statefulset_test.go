@@ -657,7 +657,7 @@ var _ = Describe("Agent workload", func() {
 		egoFile := agentTypeSherlock.egoFileIn(agentTypeSherlock.configMountPath)
 		Expect(environmentOf(config)).To(HaveKeyWithValue(egoContentVariable, testEgo))
 		Expect(strings.Join(config.Command, " ")).To(ContainSubstring(egoFile))
-		Expect(agentContainer.Args).To(Equal([]string{"agent", "--agent-id", name, "--ego-file", egoFile}))
+		Expect(agentContainer.Args).To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, name, sherlockEgoFileFlag, egoFile}))
 		Expect(environmentOf(agentContainer)).NotTo(HaveKey(egoContentVariable))
 		Expect(agentContainer.Command).To(BeEmpty())
 	})
@@ -764,9 +764,9 @@ var _ = Describe("Agent workload", func() {
 		}
 
 		Expect(containerOf(statefulSetFor(constructed).Spec.Template.Spec, agentContainerName).Args).
-			To(Equal([]string{"agent", "--agent-id", testGRN}))
+			To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, testGRN}))
 		Expect(containerOf(statefulSetFor(written).Spec.Template.Spec, agentContainerName).Args).
-			To(Equal([]string{"agent", "--agent-id", written}))
+			To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, written}))
 	})
 
 	It("passes the assignment epoch only where this operator is told the agent image accepts it", func() {
@@ -780,13 +780,13 @@ var _ = Describe("Agent workload", func() {
 		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(containerOf(statefulSetFor(name).Spec.Template.Spec, agentContainerName).Args).
-			NotTo(ContainElement("--assignment-epoch"))
+			NotTo(ContainElement(sherlockAssignmentEpochFlag))
 
 		By("reconciling with it on")
 		_, err = reconcileAgentRenderingEpoch(name)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(containerOf(statefulSetFor(name).Spec.Template.Spec, agentContainerName).Args).
-			To(Equal([]string{"agent", "--agent-id", testGRN, "--assignment-epoch", "7"}))
+			To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, testGRN, sherlockAssignmentEpochFlag, "7"}))
 	})
 
 	It("keeps the workload of an Agent whose identity is filled in after it was built", func() {
@@ -807,7 +807,7 @@ var _ = Describe("Agent workload", func() {
 
 		By("starting the agent under the GRN, which is what moved")
 		Expect(containerOf(after.Spec.Template.Spec, agentContainerName).Args).
-			To(Equal([]string{"agent", "--agent-id", testGRN}))
+			To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, testGRN}))
 
 		By("on the same StatefulSet and the same volume claim, not a new workload")
 		Expect(after.UID).To(Equal(before.UID))
