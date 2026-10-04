@@ -3,7 +3,7 @@
 package e2e
 
 import (
-	"fmt"
+	_ "embed"
 	"os"
 	"os/exec"
 	"strings"
@@ -40,25 +40,13 @@ const agentImageRegistry = "localhost:5000"
 // the registry has to share the node's network.
 const agentImageRegistryNamespace = "e2e-agent-image-registry"
 
-// agentImageRegistryManifest is the registry the node pulls agentImage from. Its
-// image is pinned to the multi-platform index, and moved by hand, because no file
-// Dependabot reads holds it. The PM moves it and reviews it at each promotion to
-// main.
-var agentImageRegistryManifest = fmt.Sprintf(`
-apiVersion: v1
-kind: Pod
-metadata:
-  name: registry
-  namespace: %s
-spec:
-  hostNetwork: true
-  containers:
-  - name: registry
-    image: registry:3@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
-    env:
-    - name: REGISTRY_HTTP_ADDR
-      value: %s
-`, agentImageRegistryNamespace, agentImageRegistry)
+// agentImageRegistryManifest is the registry the node pulls agentImage from,
+// applied into agentImageRegistryNamespace. It is a file of its own so that
+// Dependabot's docker entry for test/e2e/agent-image reads its image pin, which
+// it does not read inside Go source.
+//
+//go:embed agent-image/registry.yaml
+var agentImageRegistryManifest string
 
 // serveAgentImage builds agentImage, starts the registry, and pushes the image
 // into it from inside every node of the cluster.
@@ -79,7 +67,10 @@ func serveAgentImage() {
 	By("starting the registry it is pulled from")
 	_, err = utils.Run(exec.Command("kubectl", "create", "ns", agentImageRegistryNamespace))
 	Expect(err).NotTo(HaveOccurred(), "Failed to create the registry's namespace")
-	apply := exec.Command("kubectl", "apply", "-f", "-")
+	// The address is written once in each language; this keeps them one value.
+	Expect(agentImageRegistryManifest).To(ContainSubstring("value: "+agentImageRegistry),
+		"agent-image/registry.yaml listens somewhere other than agentImageRegistry")
+	apply := exec.Command("kubectl", "-n", agentImageRegistryNamespace, "apply", "-f", "-")
 	apply.Stdin = strings.NewReader(agentImageRegistryManifest)
 	_, err = utils.Run(apply)
 	Expect(err).NotTo(HaveOccurred(), "Failed to create the registry")
