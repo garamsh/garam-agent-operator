@@ -184,10 +184,10 @@ func TestConstructPlacesEveryPartOfTheCredentialUnderItsOwnKey(t *testing.T) {
 		Namespace: namespace, Name: constructor.Name(sampleAgent) + "-credentials"}, secret)).To(Succeed())
 
 	g.Expect(secret.Data).To(Equal(map[string][]byte{
-		constructor.CertificateKey: sampleCredential.CertificatePEM,
-		constructor.KeyKey:         sampleCredential.KeyPEM,
-		constructor.IssuerKey:      sampleCredential.IssuerPEM,
-		constructor.ServerRootKey:  sampleCredential.ServerRootPEM,
+		garam.CertificateKey: sampleCredential.CertificatePEM,
+		garam.KeyKey:         sampleCredential.KeyPEM,
+		garam.IssuerKey:      sampleCredential.IssuerPEM,
+		garam.ServerRootKey:  sampleCredential.ServerRootPEM,
 	}))
 }
 
@@ -254,7 +254,7 @@ func TestConstructReplacesNoCredentialItAlreadyPlaced(t *testing.T) {
 	secret := &corev1.Secret{}
 	g.Expect(c.Get(context.Background(), client.ObjectKey{
 		Namespace: namespace, Name: constructor.Name(sampleAgent) + "-credentials"}, secret)).To(Succeed())
-	g.Expect(secret.Data[constructor.CertificateKey]).To(Equal(sampleCredential.CertificatePEM))
+	g.Expect(secret.Data[garam.CertificateKey]).To(Equal(sampleCredential.CertificatePEM))
 }
 
 // TestConstructAdoptsTheAgentItAlreadyBuilt says a second pass over a

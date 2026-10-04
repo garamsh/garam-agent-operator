@@ -100,6 +100,18 @@ type AgentCredential struct {
 	NotAfter time.Time
 }
 
+// The keys an agent's credential is placed under, which are also the names the
+// kubelet gives the files in the volume its workload mounts. They are the names
+// garam's own mint writes the three public-and-private files under
+// (garam@5130ca9:internal/cli/issue_certificate.go:113-115), with the server
+// root that arrives beside them named for what it is.
+const (
+	CertificateKey = "certificate.pem"
+	KeyKey         = "key.pem"
+	IssuerKey      = "issuer.pem"
+	ServerRootKey  = "server-root.pem"
+)
+
 // ErrAgentNotHeld is what garam answers an agent this operator does not hold at
 // the current epoch. It answers the same for an agent assigned to another
 // operator, for one this operator was replaced on, and for one that does not

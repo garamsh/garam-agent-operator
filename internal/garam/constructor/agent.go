@@ -24,18 +24,6 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
-// The keys an agent's credential is placed under, which are also the names the
-// kubelet gives the files in the volume its workload mounts. They are the names
-// garam's own mint writes the three public-and-private files under
-// (garam@5130ca9:internal/cli/issue_certificate.go:113-115), with the server
-// root that arrives beside them named for what it is.
-const (
-	CertificateKey = "certificate.pem"
-	KeyKey         = "key.pem"
-	IssuerKey      = "issuer.pem"
-	ServerRootKey  = "server-root.pem"
-)
-
 // credentialsSecretSuffix is what an agent's credential Secret is named after
 // the Agent it belongs to. The operator names it because nothing else can: the
 // Agent is constructed here and the definition carries no name for it.
@@ -167,10 +155,10 @@ func (a *Agent) placeCredential(ctx context.Context, constructed *agentv1alpha1.
 			Namespace: constructed.Namespace,
 		},
 		Data: map[string][]byte{
-			CertificateKey: credential.CertificatePEM,
-			KeyKey:         credential.KeyPEM,
-			IssuerKey:      credential.IssuerPEM,
-			ServerRootKey:  credential.ServerRootPEM,
+			garam.CertificateKey: credential.CertificatePEM,
+			garam.KeyKey:         credential.KeyPEM,
+			garam.IssuerKey:      credential.IssuerPEM,
+			garam.ServerRootKey:  credential.ServerRootPEM,
 		},
 	}
 	if err := controllerutil.SetControllerReference(constructed, secret, a.scheme); err != nil {
