@@ -15,7 +15,7 @@ What makes documentation valid in this project. Applies to every Markdown docume
 - Delete docs that no longer describe anything real. Do not archive.
 - Every claim about this repository must be verifiable in it. If you cannot point at it, remove it.
 - A claim about anything outside it names what it holds for, precisely enough that a reader can check it there: a release where the project publishes them, a commit where it does not. `deprecated in v2` can be checked against the library and `deprecated` cannot; a path and a line number with neither looks precise and goes on looking valid after the line moves.
-- A file may state once at the top what it was checked against, and then every claim in it holds for that. That statement records a check; it promises nothing about later versions. A reader past it holds claims nobody checked there, and moving the statement means re-checking the claims under it rather than editing the number.
+- A file may state once at the top what it was checked against, and then every claim in it holds for that. That statement records a check; it promises nothing about later versions. A reader past it holds claims nobody checked there, so moving the statement means re-checking the claims under it rather than editing the number, and a project receiving the statement over claims it has changed re-checks those claims or drops the statement.
 - Where the claim is about a package's health rather than a release (`unmaintained`, `legacy`), do not rest a rule on it: name what to use instead, which does not expire.
 - A claim about the project that will carry this document cannot be checked from here, so it is written as an obligation and not as a description. "`findOneByOrFail` throws, which the global filter maps" asserts a filter this file has never seen; "`findOneByOrFail` throws; map it in the filter at X" is a rule the reader can act on and a reviewer can look for.
 - Update an existing document when the topic is already covered there; do not create a parallel document for a new facet of the same topic. Total document volume is a managed cost — a new file earns its place by adding a topic no existing file owns.
@@ -25,6 +25,7 @@ What makes documentation valid in this project. Applies to every Markdown docume
 These are documentation too.
 
 - **Facts only.** No rhetoric, no self-assessment, no inflated language ("perfect", "massive improvement"). State what changed, where, and why.
+- **A claim names a basis that could have contradicted it.** Name what established it — the command with its arguments, the repository and revision of a file read, the source consulted — precisely enough that a reader can repeat it. A basis that would read the same had the claim been false establishes nothing: an expression matching nothing shows an absence only where the same expression is shown to match what is present, and a run whose output nobody has read is not a basis at all.
 - **Stay inside the template.** No extra sections beyond the template fields; leave no field empty — write `N/A` with a reason.
 - **One comment, one point.** A comment carries a single request, instruction, or question. Ground it by citing a path or a rule, not by arguing.
 
