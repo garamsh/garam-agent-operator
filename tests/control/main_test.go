@@ -8,16 +8,21 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	dockercontainer "github.com/moby/moby/api/types/container"
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -76,12 +81,7 @@ func run(m *testing.M) (int, error) {
 		return 0, step("build control binary", fmt.Errorf("%w: %s", err, out))
 	}
 
-	container, err := postgres.Run(ctx, postgresImage,
-		postgres.WithDatabase("control"),
-		postgres.WithUsername("control"),
-		postgres.WithPassword("control"),
-		postgres.BasicWaitStrategies(),
-	)
+	container, err := startPostgres(ctx)
 	defer func() { _ = testcontainers.TerminateContainer(container) }()
 	if err != nil {
 		return 0, step("start postgres", err)
@@ -167,6 +167,67 @@ func waitReady(url string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("control binary not ready at %s within %s", url, readyTimeout)
+}
+
+// postgresStartAttempts bounds how many host ports startPostgres tries.
+const postgresStartAttempts = 3
+
+// startPostgres starts the suite's PostgreSQL, published on a loopback port below the kernel's
+// ephemeral range. Docker otherwise picks the host port inside that range, where any outgoing
+// connection on the host, including the many left in TIME-WAIT, may already hold it, and rootless
+// Docker then fails the container's start with "address already in use". A port below the range
+// is taken only by an explicit bind, so another attempt is made only when one took it first.
+func startPostgres(ctx context.Context) (*postgres.PostgresContainer, error) {
+	var lastErr error
+	for range postgresStartAttempts {
+		port, err := portBelowEphemeralRange()
+		if err != nil {
+			return nil, err
+		}
+		container, err := postgres.Run(ctx, postgresImage,
+			postgres.WithDatabase("control"),
+			postgres.WithUsername("control"),
+			postgres.WithPassword("control"),
+			postgres.BasicWaitStrategies(),
+			testcontainers.WithHostConfigModifier(func(hc *dockercontainer.HostConfig) {
+				hc.PortBindings = dockernetwork.PortMap{dockernetwork.MustParsePort("5432/tcp"): {{
+					HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: strconv.Itoa(port),
+				}}}
+			}),
+		)
+		if err == nil || !strings.Contains(err.Error(), "address already in use") {
+			return container, err
+		}
+		_ = testcontainers.TerminateContainer(container)
+		lastErr = fmt.Errorf("port %d: %w", port, err)
+	}
+	return nil, fmt.Errorf("every one of %d host ports was taken: %w", postgresStartAttempts, lastErr)
+}
+
+// portBelowEphemeralRange is a loopback port nothing listens on, between 20000 and the first
+// port of the kernel's ephemeral range.
+func portBelowEphemeralRange() (int, error) {
+	raw, err := os.ReadFile("/proc/sys/net/ipv4/ip_local_port_range")
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) != 2 {
+		return 0, fmt.Errorf("ip_local_port_range holds %q", raw)
+	}
+	low, err := strconv.Atoi(fields[0])
+	if err != nil || low <= 20001 {
+		return 0, fmt.Errorf("ephemeral range starts at %q, leaving no port below it", fields[0])
+	}
+	for range 100 {
+		port := 20000 + rand.IntN(low-20000)
+		l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err == nil {
+			_ = l.Close()
+			return port, nil
+		}
+	}
+	return 0, fmt.Errorf("no free port between 20000 and %d", low)
 }
 
 func freeAddress() (string, error) {
