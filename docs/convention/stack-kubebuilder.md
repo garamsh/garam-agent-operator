@@ -38,9 +38,10 @@ as licence for a new `utils` elsewhere.
 
 ## 1. Directory layout
 
-- `cmd/main.go` — the manager entry point. No directory named for the binary:
-  the CLI writes this exact path. What belongs in it here is flag parsing,
-  scheme registration, manager construction, and the `SetupWithManager` calls.
+- `cmd/main.go` — the manager entry point, at the exact path the CLI writes;
+  the manager has no directory named for it. What belongs in it here is flag
+  parsing, scheme registration, manager construction, and the
+  `SetupWithManager` calls.
 - `api/<version>/<kind>_types.go` — one file per kind, holding its `Spec`,
   `Status`, the object, and its list type. This project is single-group, so
   types live directly under `api/<version>/`.
