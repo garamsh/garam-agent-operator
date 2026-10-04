@@ -19,8 +19,12 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition/repository"
 )
 
-// concurrency is how many callers race for one revision or one creation key.
-const concurrency = 8
+const (
+	// concurrency is how many callers race for one revision or one creation key.
+	concurrency = 16
+	// raceRounds is how many separate races one test runs, since any one race may serialize.
+	raceRounds = 20
+)
 
 // registrar answers each key with one GRN, as garam answers a repeated registration;
 // a request id beginning "refuse" is refused.
@@ -103,33 +107,39 @@ func TestPostgres_StaleRevisionRefused(t *testing.T) {
 func TestPostgres_ConcurrentUpdatesOnOneRevisionStoreOne(t *testing.T) {
 	ctx := context.Background()
 	svc, profile, tmpl := newService(t)
-	created, err := svc.CreateAgent(ctx, key(t, "race"), tmpl)
-	require.NoError(t, err)
-	agent := created.Outcome.(definition.Registered).Agent
 
-	errs := make([]error, concurrency)
-	var wg sync.WaitGroup
-	for i := range concurrency {
-		wg.Go(func() {
-			_, errs[i] = svc.UpdateDefinition(ctx, definition.UpdateInput{
-				Agent: agent, BasedOn: 1, Profile: profile, Config: config(fmt.Sprintf("edit %d", i)),
+	for round := range raceRounds {
+		created, err := svc.CreateAgent(ctx, key(t, fmt.Sprintf("race-%d", round)), tmpl)
+		require.NoError(t, err)
+		agent := created.Outcome.(definition.Registered).Agent
+
+		errs := make([]error, concurrency)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range concurrency {
+			wg.Go(func() {
+				<-start
+				_, errs[i] = svc.UpdateDefinition(ctx, definition.UpdateInput{
+					Agent: agent, BasedOn: 1, Profile: profile, Config: config(fmt.Sprintf("edit %d", i)),
+				})
 			})
-		})
-	}
-	wg.Wait()
-
-	accepted := 0
-	for _, err := range errs {
-		if err == nil {
-			accepted++
-			continue
 		}
-		assert.ErrorIs(t, err, definition.ErrStaleRevision)
+		close(start)
+		wg.Wait()
+
+		accepted := 0
+		for _, err := range errs {
+			if err == nil {
+				accepted++
+				continue
+			}
+			require.ErrorIs(t, err, definition.ErrStaleRevision)
+		}
+		require.Equal(t, 1, accepted, "round %d", round)
+		var revisions int
+		require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM definitions WHERE agent = $1", string(agent)).Scan(&revisions))
+		require.Equal(t, 2, revisions, "round %d", round)
 	}
-	assert.Equal(t, 1, accepted)
-	var revisions int
-	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM definitions WHERE agent = $1", string(agent)).Scan(&revisions))
-	assert.Equal(t, 2, revisions)
 }
 
 func TestPostgres_RepeatedCreationReturnsFirstOutcome(t *testing.T) {
@@ -163,14 +173,17 @@ func TestPostgres_ConcurrentRepeatedCreationStoresOne(t *testing.T) {
 
 	outcomes := make([]definition.Outcome, concurrency)
 	errs := make([]error, concurrency)
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := range concurrency {
 		wg.Go(func() {
+			<-start
 			var c definition.Creation
 			c, errs[i] = svc.CreateAgent(ctx, key(t, "together"), tmpl)
 			outcomes[i] = c.Outcome
 		})
 	}
+	close(start)
 	wg.Wait()
 
 	for i := range concurrency {

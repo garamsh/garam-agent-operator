@@ -91,7 +91,13 @@ func run(m *testing.M) (int, error) {
 		return 0, err
 	}
 
-	pool, err = pgxpool.New(ctx, databaseURL)
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return 0, err
+	}
+	// One connection per racing caller, so a race is not serialized by the pool.
+	poolConfig.MaxConns = concurrency
+	pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return 0, err
 	}
