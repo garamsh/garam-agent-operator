@@ -125,24 +125,23 @@ func TestConfigure_ConcurrentConfiguresOnOneRevisionStoreOne(t *testing.T) {
 	g := requireGaram(t)
 	profile := seedRevision(t, g)
 
-	requestIDs := make([]string, concurrency)
-	bodies := make([][]byte, concurrency)
-	for i := range concurrency {
-		requestIDs[i] = name(t, "request")
-		bodies[i] = configureBody(requestIDs[i], profile, fmt.Sprintf("edit %d", i), 1)
+	// Each round races concurrency configures on the revision the round before it stored. One
+	// race may serialize on its own, so the suite runs many.
+	for round := 1; round <= raceRounds; round++ {
+		bodies := make([][]byte, concurrency)
+		authorities := make([]string, concurrency)
+		for i := range concurrency {
+			requestID := name(t, "request")
+			bodies[i] = configureBody(requestID, profile, fmt.Sprintf("round %d edit %d", round, i), round)
+			authorities[i] = g.mint(t, requestID, bodies[i])
+		}
+		counts := map[int]int{}
+		for _, status := range concurrently(t, g, authorities, bodies) {
+			counts[status]++
+		}
+		require.Equal(t, map[int]int{http.StatusOK: 1, http.StatusConflict: concurrency - 1}, counts, "round %d", round)
+		require.Equal(t, round+1, revisionCount(t, g.agent()), "round %d", round)
 	}
-	authorities := make([]string, concurrency)
-	for i := range concurrency {
-		authorities[i] = g.mint(t, requestIDs[i], bodies[i])
-	}
-	statuses := concurrently(t, g, authorities, bodies)
-
-	counts := map[int]int{}
-	for _, status := range statuses {
-		counts[status]++
-	}
-	assert.Equal(t, map[int]int{http.StatusOK: 1, http.StatusConflict: concurrency - 1}, counts)
-	assert.Equal(t, 2, revisionCount(t, g.agent()))
 }
 
 func TestConfigure_RepeatedRequestReturnsFirstOutcome(t *testing.T) {
@@ -188,8 +187,12 @@ func requestCount(t *testing.T, org, requestID string) int {
 	return n
 }
 
-// concurrency is how many requests race in one test.
-const concurrency = 16
+const (
+	// concurrency is how many requests race in one round.
+	concurrency = 16
+	// raceRounds is how many rounds the configure race runs, since any one round may serialize.
+	raceRounds = 10
+)
 
 func revisionCount(t *testing.T, agent string) int {
 	t.Helper()
