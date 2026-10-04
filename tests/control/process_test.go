@@ -37,7 +37,7 @@ func startProcess(name, dir string, cmd *exec.Cmd) (*process, error) {
 	p := &process{name: name, log: log, cmd: cmd, exited: make(chan struct{})}
 	if err := cmd.Start(); err != nil {
 		_ = out.Close()
-		return nil, &setupError{step: "start " + name, err: err}
+		return nil, newSetupError("start "+name, err)
 	}
 	go func() {
 		p.err = cmd.Wait()
@@ -61,8 +61,7 @@ func (p *process) waitReady(url string) error {
 	for time.Now().Before(deadline) {
 		select {
 		case <-p.exited:
-			return &setupError{step: p.name + " ready", err: fmt.Errorf("exited before %s answered: %v", url, p.err),
-				processes: []*process{p}}
+			return newSetupError(p.name+" ready", fmt.Errorf("exited before %s answered: %v", url, p.err), p)
 		default:
 		}
 		resp, err := http.Get(url)
@@ -78,7 +77,7 @@ func (p *process) waitReady(url string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	err := fmt.Errorf("%s not ready within %s; last: %s", url, readyTimeout, last)
-	return &setupError{step: p.name + " ready", err: err, processes: []*process{p}}
+	return newSetupError(p.name+" ready", err, p)
 }
 
 // tail is the process's last tailLines log lines.
@@ -92,20 +91,29 @@ func (p *process) tail() string {
 }
 
 // setupError is a failure of one TestMain setup step, with the last log lines of the processes
-// it involved, so a failure seen once can be diagnosed from its output alone.
+// it involved, read when the failure happened: the suite removes its logs before TestMain prints.
 type setupError struct {
-	step      string
-	err       error
-	processes []*process
+	step  string
+	err   error
+	tails []string
+}
+
+func newSetupError(name string, err error, processes ...*process) *setupError {
+	e := &setupError{step: name, err: err}
+	e.attach(processes...)
+	return e
+}
+
+// attach records the processes' last log lines now.
+func (e *setupError) attach(processes ...*process) {
+	for _, p := range processes {
+		e.tails = append(e.tails, fmt.Sprintf("--- last %d lines of %s (%s):\n%s", tailLines, p.name, p.log, p.tail()))
+	}
 }
 
 func (e *setupError) Error() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "TestMain setup step %q failed: %v", e.step, e.err)
-	for _, p := range e.processes {
-		fmt.Fprintf(&b, "\n--- last %d lines of %s (%s):\n%s", tailLines, p.name, p.log, p.tail())
-	}
-	return b.String()
+	head := fmt.Sprintf("TestMain setup step %q failed: %v", e.step, e.err)
+	return strings.Join(append([]string{head}, e.tails...), "\n")
 }
 
 func (e *setupError) Unwrap() error { return e.err }
@@ -118,8 +126,8 @@ func step(name string, err error, processes ...*process) error {
 	}
 	var named *setupError
 	if errors.As(err, &named) {
-		named.processes = append(named.processes, processes...)
+		named.attach(processes...)
 		return named
 	}
-	return &setupError{step: name, err: err, processes: processes}
+	return newSetupError(name, err, processes...)
 }
