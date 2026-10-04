@@ -39,7 +39,7 @@ Before a delta between this file and the template is called stale, read it again
 |---|---|
 | `agent.md` | The `agent.garam.sh` API group, the `Agent` kind, and its controller |
 | `configuration.md` | How this operator's deployment is configured, and which repository owns each value |
-| `delivery.md` | The image this project publishes, the reference a deployment uses, and where its output lands in a cluster |
+| `delivery.md` | The images this project publishes, the reference a deployment uses, and where its output lands in a cluster |
 | `integration.md` | How a change reaches `dev` and then `main`, and which checks run at each step |
 
 ### ADRs
@@ -71,9 +71,10 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0023-run-an-agents-workspace-as-a-second-container-this-operator-names.md` | Run an agent's workspace as a second container this operator names, and give it the user the Pod already names | accepted |
 | `adr/0024-write-an-agents-config-file-from-an-init-container-into-a-directory-this-operator-names.md` | Render a declared tool set into the Pod through an init container that writes a config file into a directory this operator names | accepted |
 | `adr/0025-generalize-the-agent-kind-by-agent-type.md` | Generalize the `Agent` kind by `spec.type`, with a closed enum and a per-type dispatch table in the controller | accepted; descriptor fields extended by ADR-0029 |
-| `adr/0026-single-ecr-repository-dev-tag-by-role.md` | Publish one image to one ECR repository, with a `dev-<hash>` tag on bring-up builds and the commit-hash tag carrying the identifier | accepted |
+| `adr/0026-single-ecr-repository-dev-tag-by-role.md` | Publish one image to one ECR repository, with a `dev-<hash>` tag on bring-up builds and the commit-hash tag carrying the identifier | accepted; one-image scope superseded by ADR-0033 |
 | `adr/0027-an-agents-tools-arrive-in-its-own-image-and-this-operator-mounts-no-tool-tree.md` | An agent's tools arrive in its own image, and this operator mounts no tool tree | accepted |
 | `adr/0028-run-the-checks-and-the-e2e-suite-on-the-promotion-to-main-and-nothing-on-dev.md` | Run the checks and the e2e suite on the promotion to `main`, and nothing on `dev` | accepted |
 | `adr/0029-route-every-agent-specific-name-in-the-pod-through-its-types-descriptor.md` | Route every agent-specific name in the Pod through its type's descriptor, and keep the operator's images out of it | accepted |
 | `adr/0030-carry-the-operators-certificate-expiry-and-garams-refusals-as-metrics.md` | Carry the operator's certificate expiry and garam's refusals as metrics, under names an alert can depend on | accepted |
 | `adr/0031-support-agents-declared-in-garam-on-one-cluster-of-the-sherlock-type.md` | Support agents declared in garam, on one cluster, of the sherlock type, and keep a hand-written `Agent` to development | accepted |
+| `adr/0033-publish-the-control-service-as-a-second-image-to-its-own-repository.md` | Publish the control service as a second image, to a repository of its own, under the rules every image here follows | accepted |
