@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,16 +20,20 @@ import (
 // operatorGRN is the operator GRN the binary reads from its certificate as its audience.
 const operatorGRN = "grn:root:default:operator:control-e2e"
 
-// identity names the files the binary's garam flags point at.
+// identity names the files the binary's certificate flags point at, and the root that signed them.
 type identity struct {
-	serverRoot  string
-	certificate string
-	key         string
+	serverRoot         string
+	certificate        string
+	key                string
+	servingCertificate string
+	servingKey         string
+	roots              *x509.CertPool
 }
 
-// writeOperatorIdentity writes a server root and an operator certificate it signed, carrying
-// operatorGRN as its one SAN URI, into dir. garam signs none of it: no garam answers this suite.
-func writeOperatorIdentity(dir string) (identity, error) {
+// writeIdentity writes into dir a root and two certificates it signed: an operator certificate
+// carrying operatorGRN as its one SAN URI, and a serving certificate for 127.0.0.1, under which
+// the binary serves the console's routes. garam signs none of it: no garam answers this suite.
+func writeIdentity(dir string) (identity, error) {
 	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return identity{}, err
@@ -43,6 +48,10 @@ func writeOperatorIdentity(dir string) (identity, error) {
 		KeyUsage:              x509.KeyUsageCertSign,
 	}
 	rootDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, &rootKey.PublicKey, rootKey)
+	if err != nil {
+		return identity{}, err
+	}
+	rootCert, err := x509.ParseCertificate(rootDER)
 	if err != nil {
 		return identity{}, err
 	}
@@ -69,15 +78,40 @@ func writeOperatorIdentity(dir string) (identity, error) {
 	if err != nil {
 		return identity{}, err
 	}
-	id := identity{
-		serverRoot:  filepath.Join(dir, "server-root.pem"),
-		certificate: filepath.Join(dir, "operator.pem"),
-		key:         filepath.Join(dir, "operator-key.pem"),
+	servingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return identity{}, err
 	}
+	servingDER, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}, rootTemplate, &servingKey.PublicKey, rootKey)
+	if err != nil {
+		return identity{}, err
+	}
+	servingKeyDER, err := x509.MarshalECPrivateKey(servingKey)
+	if err != nil {
+		return identity{}, err
+	}
+	id := identity{
+		serverRoot:         filepath.Join(dir, "server-root.pem"),
+		certificate:        filepath.Join(dir, "operator.pem"),
+		key:                filepath.Join(dir, "operator-key.pem"),
+		servingCertificate: filepath.Join(dir, "serving.pem"),
+		servingKey:         filepath.Join(dir, "serving-key.pem"),
+		roots:              x509.NewCertPool(),
+	}
+	id.roots.AddCert(rootCert)
 	for path, block := range map[string]*pem.Block{
-		id.serverRoot:  {Type: "CERTIFICATE", Bytes: rootDER},
-		id.certificate: {Type: "CERTIFICATE", Bytes: leafDER},
-		id.key:         {Type: "EC PRIVATE KEY", Bytes: keyDER},
+		id.serverRoot:         {Type: "CERTIFICATE", Bytes: rootDER},
+		id.certificate:        {Type: "CERTIFICATE", Bytes: leafDER},
+		id.key:                {Type: "EC PRIVATE KEY", Bytes: keyDER},
+		id.servingCertificate: {Type: "CERTIFICATE", Bytes: servingDER},
+		id.servingKey:         {Type: "EC PRIVATE KEY", Bytes: servingKeyDER},
 	} {
 		if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
 			return identity{}, err

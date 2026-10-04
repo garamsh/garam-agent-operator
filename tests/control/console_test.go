@@ -23,7 +23,7 @@ func postConfigure(t *testing.T, authorization string) *http.Response {
 	if authorization != "" {
 		req.Header.Set("Authorization", authorization)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiClient.Do(req)
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	return resp

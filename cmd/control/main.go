@@ -38,6 +38,8 @@ const garamTimeout = 10 * time.Second
 type options struct {
 	probeAddr       string
 	apiAddr         string
+	apiCertificate  string
+	apiKey          string
 	garamURL        string
 	serverRootFile  string
 	certificateFile string
@@ -47,7 +49,10 @@ type options struct {
 func main() {
 	var o options
 	flag.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "The address the health endpoints bind to.")
-	flag.StringVar(&o.apiAddr, "api-bind-address", ":8080", "The address the console's routes bind to.")
+	flag.StringVar(&o.apiAddr, "api-bind-address", ":8080", "The address the console's routes bind to, over TLS.")
+	flag.StringVar(&o.apiCertificate, "api-certificate-file", "",
+		"PEM file holding the certificate chain the console's routes are served under.")
+	flag.StringVar(&o.apiKey, "api-key-file", "", "PEM file holding that certificate's private key.")
 	flag.StringVar(&o.garamURL, "garam-machine-url", "", "The base URL of garam's machine listener.")
 	flag.StringVar(&o.serverRootFile, "garam-server-root-file", "",
 		"PEM file holding the garam server root the machine listener's certificate chains to.")
@@ -68,6 +73,10 @@ func main() {
 func run(ctx context.Context, o options, databaseURL string) error {
 	if databaseURL == "" {
 		return fmt.Errorf("%s is not set", databaseURLVariable)
+	}
+	apiTLS, err := apiTLSConfig(o)
+	if err != nil {
+		return err
 	}
 	machine, audience, err := garamClient(o)
 	if err != nil {
@@ -107,14 +116,13 @@ func run(ctx context.Context, o options, databaseURL string) error {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	servers := []*http.Server{
-		{Addr: o.probeAddr, Handler: health, ReadHeaderTimeout: 5 * time.Second},
-		{Addr: o.apiAddr, Handler: api, ReadHeaderTimeout: 5 * time.Second},
-	}
+	healthServer := &http.Server{Addr: o.probeAddr, Handler: health, ReadHeaderTimeout: 5 * time.Second}
+	// Every console request carries a bearer operation authority, so its routes are served over TLS only.
+	apiServer := &http.Server{Addr: o.apiAddr, Handler: api, TLSConfig: apiTLS, ReadHeaderTimeout: 5 * time.Second}
+	servers := []*http.Server{healthServer, apiServer}
 	served := make(chan error, len(servers))
-	for _, server := range servers {
-		go func() { served <- fmt.Errorf("serve %s: %w", server.Addr, server.ListenAndServe()) }()
-	}
+	go func() { served <- fmt.Errorf("serve %s: %w", healthServer.Addr, healthServer.ListenAndServe()) }()
+	go func() { served <- fmt.Errorf("serve %s: %w", apiServer.Addr, apiServer.ListenAndServeTLS("", "")) }()
 	slog.Info("serving", "health", o.probeAddr, "api", o.apiAddr, "audience", audience)
 
 	select {
@@ -130,6 +138,19 @@ func run(ctx context.Context, o options, databaseURL string) error {
 		}
 	}
 	return nil
+}
+
+// apiTLSConfig loads the certificate the console's routes are served under, and refuses to
+// go on without one.
+func apiTLSConfig(o options) (*tls.Config, error) {
+	if o.apiCertificate == "" || o.apiKey == "" {
+		return nil, errors.New("--api-certificate-file and --api-key-file are both required")
+	}
+	pair, err := tls.LoadX509KeyPair(o.apiCertificate, o.apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("load api certificate: %w", err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}, nil
 }
 
 // garamClient builds the mutual-TLS client garam's machine listener requires, and reads this

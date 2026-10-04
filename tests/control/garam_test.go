@@ -73,7 +73,7 @@ func sendConfigure(g garam, authority string, body []byte) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("Authorization", "Garam-Operation "+authority)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiClient.Do(req)
 	if err != nil {
 		return 0, err
 	}

@@ -7,7 +7,11 @@ The control service: agents' execution definitions and their revisions, template
 - **The control service is a second binary, and its desired state is `internal/definition/`.** It follows `stack-go.md` alone, as `docs/convention/README.md` §Stack-specific splits a binary that is not the manager. Nothing in the manager imports it.
 - **The binary serves health and the console's configure route.** `cmd/control/main.go` opens its store from the connection URL in `CONTROL_DATABASE_URL`, which is an environment variable rather than a flag because it carries a password, and applies the schema.
   - **Health.** `/healthz` and `/readyz` are served on `--health-probe-bind-address` (default `:8081`). `/readyz` answers only while the database answers a ping.
-  - **Console routes.** These are served on `--api-bind-address` (default `:8080`).
+  - **Console routes.** These are served on `--api-bind-address` (default `:8080`), over TLS 1.3 and nothing else.
+    - **Certificate.** The binary terminates TLS itself, under the certificate chain in `--api-certificate-file` and the key in `--api-key-file`. It refuses to start without both.
+    - **Why.** Every request carries a bearer operation authority. Plaintext would hand that authority to anyone on the path for the five minutes it lives, and the body digest bounds only what it can send, not who sends it.
+    - **Plain HTTP.** A plaintext request to the port is answered by the TLS listener and never reaches a route.
+    - **Health.** The health listener stays plain HTTP: it carries no credential.
   - **garam.** The binary calls garam's machine listener at `--garam-machine-url` over mutual TLS. It presents the operator certificate in `--operator-certificate-file` and `--operator-key-file`, and verifies garam against `--garam-server-root-file`. The certificate's one SAN URI is this service's operator GRN, the audience every authority must name.
   - Any failure to read those files, open the store or apply the schema stops the binary.
 - **Its image is built from `build/control.Dockerfile`**, by `make docker-build-control`, with the repository root as context. Where it is published is `delivery.md`.
@@ -53,7 +57,10 @@ The control service: agents' execution definitions and their revisions, template
 
 - **Domain behaviour is tested on the in-memory store**, in `internal/definition/*_test.go`, and the console's pipeline in `internal/console/*_test.go`, through `httptest` with a test double standing in for `Introspector`. `testing.md` keeps a real database out of the integration layer.
 - **The e2e layer runs the built binary**, in `tests/control/`, against a PostgreSQL container that testcontainers-go starts. `make test-e2e-control` runs it, and `make test-e2e` runs it first.
-  - **Runs today.** The schema's tables exist. Each key refuses a second row under it, beside an accepted first. The configure route refuses a request with no authority. It answers 503 while garam is unreachable.
+  - **Runs today.**
+    - The schema's tables exist, and each key refuses a second row under it, beside an accepted first.
+    - The binary refuses to start without either API certificate file, and a plaintext request never reaches the route.
+    - The configure route, called over HTTPS under a throwaway serving certificate the suite generates, refuses a request with no authority, and answers 503 while garam is unreachable.
   - **Skipped today.** Configures through the binary against a real garam are written but skip: concurrent configures on one revision storing one, and concurrent repeats of one request storing one record. garam has no supported way to mint an authority for a test organization (issue #230). Until it does, the PostgreSQL implementation of `Configure` and the store's races have no e2e coverage.
 
 ## Rationale

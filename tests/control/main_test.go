@@ -6,6 +6,7 @@ package control_test
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -35,8 +36,14 @@ var (
 	pool *pgxpool.Pool
 	// healthURL is the base URL of the binary's health endpoints.
 	healthURL string
-	// apiURL is the base URL of the binary's console routes.
+	// apiURL is the base URL of the binary's console routes, served over TLS.
 	apiURL string
+	// apiClient trusts the root that signed the binary's serving certificate.
+	apiClient *http.Client
+	// binaryPath, controlArgs and databaseURL are what the binary was started with.
+	binaryPath  string
+	controlArgs []string
+	databaseURL string
 )
 
 func TestMain(m *testing.M) {
@@ -73,7 +80,7 @@ func run(m *testing.M) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("start postgres: %w", err)
 	}
-	databaseURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	databaseURL, err = container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		return 0, err
 	}
@@ -86,19 +93,23 @@ func run(m *testing.M) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	healthURL, apiURL = "http://"+probeAddr, "http://"+apiAddr
-	identity, err := writeOperatorIdentity(dir)
+	healthURL, apiURL = "http://"+probeAddr, "https://"+apiAddr
+	id, err := writeIdentity(dir)
 	if err != nil {
 		return 0, err
 	}
-	control := exec.Command(binary,
+	apiClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: id.roots}}}
+	binaryPath, controlArgs = binary, []string{
 		"--health-probe-bind-address", probeAddr,
 		"--api-bind-address", apiAddr,
+		"--api-certificate-file", id.servingCertificate,
+		"--api-key-file", id.servingKey,
 		"--garam-machine-url", garamURL,
-		"--garam-server-root-file", identity.serverRoot,
-		"--operator-certificate-file", identity.certificate,
-		"--operator-key-file", identity.key,
-	)
+		"--garam-server-root-file", id.serverRoot,
+		"--operator-certificate-file", id.certificate,
+		"--operator-key-file", id.key,
+	}
+	control := exec.Command(binary, controlArgs...)
 	control.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+databaseURL)
 	control.Stdout, control.Stderr = os.Stdout, os.Stderr
 	if err := control.Start(); err != nil {
