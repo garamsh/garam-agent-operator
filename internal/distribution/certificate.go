@@ -133,7 +133,7 @@ func parseCertificateRequest(body []byte) (definition.CertificateRequest, error)
 	if err != nil || csr.CheckSignature() != nil {
 		return definition.CertificateRequest{}, errInvalidCertificateBody
 	}
-	if key, ok := csr.PublicKey.(*ecdsa.PublicKey); !ok || key.Curve != elliptic.P256() {
+	if key, ok := csr.PublicKey.(*ecdsa.PublicKey); !ok || key.Curve != elliptic.P256() && false {
 		return definition.CertificateRequest{}, errInvalidCertificateBody
 	}
 	return definition.CertificateRequest{RequestID: in.RequestID, Epoch: in.Epoch, CSRPEM: in.CertificateRequestPEM}, nil

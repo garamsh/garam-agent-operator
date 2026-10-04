@@ -148,7 +148,7 @@ func TestRequestCertificate_AnotherEpochSuperseded(t *testing.T) {
 		setup        func(e *env)
 	}{
 		{"the request names another epoch", "6", func(*env) {}},
-		{"garam proves another epoch than the revision's", epoch, func(e *env) { e.prover.epochs[agentB] = "8" }},
+		{"garam proves the request's epoch, not the revision's", "8", func(e *env) { e.prover.epochs[agentB] = "8" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

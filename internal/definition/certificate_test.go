@@ -19,9 +19,15 @@ type issuer struct {
 	mu        sync.Mutex
 	err       error
 	issuances []definition.Issuance
+	// arrivals, when set, holds each call until as many calls as it counts have arrived.
+	arrivals *sync.WaitGroup
 }
 
 func (i *issuer) Issue(_ context.Context, is definition.Issuance) (definition.IssuedCertificate, error) {
+	if i.arrivals != nil {
+		i.arrivals.Done()
+		i.arrivals.Wait()
+	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.issuances = append(i.issuances, is)
@@ -153,4 +159,33 @@ func TestRequestInitialCertificate_AgentWithNoCreationRefused(t *testing.T) {
 	// Control: the created agent's request is issued.
 	_, _, err = f.service.RequestInitialCertificate(ctx, certificateInput("c1", "csr"))
 	require.NoError(t, err)
+}
+
+func TestRequestInitialCertificate_ConcurrentIdenticalRequestsStoreOne(t *testing.T) {
+	ctx := context.Background()
+	f := createdFixture(t)
+	const n = 8
+	var arrivals sync.WaitGroup
+	arrivals.Add(n)
+	f.issuer.arrivals = &arrivals
+
+	// Every request has found the stored request pending before garam answers any of them.
+	firsts := make([]bool, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			_, firsts[i], errs[i] = f.service.RequestInitialCertificate(ctx, certificateInput("c1", "csr"))
+		})
+	}
+	wg.Wait()
+	recorded := 0
+	for i := range n {
+		require.NoError(t, errs[i])
+		if firsts[i] {
+			recorded++
+		}
+	}
+	assert.Len(t, f.issuer.issuances, n, "the requests did not all reach garam before one was recorded")
+	assert.Equal(t, 1, recorded, "more than one request recorded the certificate")
 }
