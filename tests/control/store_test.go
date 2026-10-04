@@ -46,21 +46,27 @@ func newService(t *testing.T) (definition.Service, definition.ProfileRef, defini
 
 	class := "standard"
 	p, err := svc.PublishProfile(ctx, t.Name(), definition.ExecutionSettings{
-		Resources:        corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")}},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")},
+		},
 		StorageSize:      resource.MustParse("1Gi"),
 		StorageClassName: &class,
 	})
 	require.NoError(t, err)
 	profile := definition.ProfileRef{Name: p.Name, Version: p.Version}
 
-	tmpl, err := svc.PublishTemplate(ctx, definition.Template{Name: t.Name(), Profile: profile, Config: config("first ego")})
+	tmpl, err := svc.PublishTemplate(ctx, definition.Template{
+		Name: t.Name(), Profile: profile, Config: config("first ego"),
+	})
 	require.NoError(t, err)
 	return svc, profile, definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version}
 }
 
 func config(ego string) definition.Configuration {
 	return definition.Configuration{
-		Model: definition.Model{Provider: "anthropic", BaseURL: "https://api.anthropic.com", Name: "claude-opus-5-5", APIKey: "model-api-key"},
+		Model: definition.Model{
+			Provider: "anthropic", BaseURL: "https://api.anthropic.com", Name: "claude-opus-5-5", APIKey: "model-api-key",
+		},
 		Ego:   ego,
 		Tools: definition.ToolPins{"web_fetch": "sha256:aa"},
 	}
@@ -91,11 +97,15 @@ func TestPostgres_StaleRevisionRefused(t *testing.T) {
 	agent := created.Outcome.(definition.Registered).Agent
 
 	// Control: an update based on the latest revision is accepted as the next revision.
-	accepted, err := svc.UpdateDefinition(ctx, definition.UpdateInput{Agent: agent, BasedOn: 1, Profile: profile, Config: config("edited by one")})
+	accepted, err := svc.UpdateDefinition(ctx, definition.UpdateInput{
+		Agent: agent, BasedOn: 1, Profile: profile, Config: config("edited by one"),
+	})
 	require.NoError(t, err)
 	assert.Equal(t, definition.Revision(2), accepted.Revision)
 
-	_, err = svc.UpdateDefinition(ctx, definition.UpdateInput{Agent: agent, BasedOn: 1, Profile: profile, Config: config("edited by two")})
+	_, err = svc.UpdateDefinition(ctx, definition.UpdateInput{
+		Agent: agent, BasedOn: 1, Profile: profile, Config: config("edited by two"),
+	})
 	require.ErrorIs(t, err, definition.ErrStaleRevision)
 
 	d, err := svc.GetDefinition(ctx, agent)
@@ -136,9 +146,7 @@ func TestPostgres_ConcurrentUpdatesOnOneRevisionStoreOne(t *testing.T) {
 			require.ErrorIs(t, err, definition.ErrStaleRevision)
 		}
 		require.Equal(t, 1, accepted, "round %d", round)
-		var revisions int
-		require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM definitions WHERE agent = $1", string(agent)).Scan(&revisions))
-		require.Equal(t, 2, revisions, "round %d", round)
+		require.Equal(t, 2, revisions(t, string(agent)), "round %d", round)
 	}
 }
 
@@ -191,9 +199,7 @@ func TestPostgres_ConcurrentRepeatedCreationStoresOne(t *testing.T) {
 		assert.Equal(t, definition.Registered{Agent: "grn:acme:default:agent:together"}, outcomes[i])
 	}
 	assert.Equal(t, 1, creations(t))
-	var revisions int
-	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM definitions WHERE agent = $1", "grn:acme:default:agent:together").Scan(&revisions))
-	assert.Equal(t, 1, revisions)
+	assert.Equal(t, 1, revisions(t, "grn:acme:default:agent:together"))
 }
 
 func TestPostgres_StoredValuesReadBackUnchanged(t *testing.T) {
@@ -232,8 +238,17 @@ func TestPostgres_UnknownRowsAreNotFound(t *testing.T) {
 
 // creations counts the creations stored under the test's organization.
 func creations(t *testing.T) int {
+	return count(t, "SELECT count(*) FROM creations WHERE organization = $1", t.Name())
+}
+
+// revisions counts the revisions stored for agent.
+func revisions(t *testing.T, agent string) int {
+	return count(t, "SELECT count(*) FROM definitions WHERE agent = $1", agent)
+}
+
+func count(t *testing.T, query, arg string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, pool.QueryRow(context.Background(), "SELECT count(*) FROM creations WHERE organization = $1", t.Name()).Scan(&n))
+	require.NoError(t, pool.QueryRow(context.Background(), query, arg).Scan(&n))
 	return n
 }
