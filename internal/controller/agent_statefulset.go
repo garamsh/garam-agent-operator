@@ -212,6 +212,28 @@ func claimedStorageSize(statefulSet *appsv1.StatefulSet) resource.Quantity {
 	return resource.Quantity{}
 }
 
+// claimedStorageClass is the storage class the StatefulSet claims the agent's
+// state volume from, nil where it names none.
+func claimedStorageClass(statefulSet *appsv1.StatefulSet) *string {
+	for _, claim := range statefulSet.Spec.VolumeClaimTemplates {
+		if claim.Name == stateVolumeName {
+			return claim.Spec.StorageClassName
+		}
+	}
+
+	return nil
+}
+
+// describeStorageClass names a storage class in a message, and says where none
+// is named.
+func describeStorageClass(class *string) string {
+	if class == nil {
+		return "the cluster's default"
+	}
+
+	return fmt.Sprintf("%q", *class)
+}
+
 // applyAgent writes the fields an Agent's spec decides onto statefulSet and
 // leaves every other field as it found it, so that an unchanged Agent produces
 // an unchanged object. The fields a StatefulSet refuses a change to are written
