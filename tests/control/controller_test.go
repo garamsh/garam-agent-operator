@@ -25,7 +25,7 @@ func TestBinary_ControllerRoutesRequireAClientCertificate(t *testing.T) {
 	routes := []struct{ method, path, body string }{
 		{http.MethodGet, "/v1/operators/self/desired", ""},
 		{http.MethodPost, "/v1/operators/self/agents/grn:acme:default:agent:a/status",
-			`{"observedRevision":1,"renderedRevision":1}`},
+			`{"observedRevision":"1","renderedRevision":"1"}`},
 	}
 	for _, route := range routes {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -107,7 +108,7 @@ func newEnv(t *testing.T) *env {
 func (e *env) body(requestID, ego string, expected int) []byte {
 	b, err := json.Marshal(map[string]any{
 		"requestId":        requestID,
-		"expectedRevision": expected,
+		"expectedRevision": strconv.Itoa(expected),
 		"profile":          map[string]any{"name": e.profile.Name, "version": e.profile.Version},
 		"configuration": map[string]any{
 			"model": map[string]string{"provider": "anthropic", "baseUrl": "https://api.anthropic.com",
@@ -150,7 +151,7 @@ func (e *env) authorize(requestID string, body []byte, change func(*console.Bind
 // response is what a configure request was answered.
 type response struct {
 	status    int
-	revision  int64
+	revision  string
 	message   string
 	challenge string
 }
@@ -167,7 +168,7 @@ func (e *env) configure(t *testing.T, authority console.Authority, body []byte) 
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	var out struct {
-		Revision int64  `json:"revision"`
+		Revision string `json:"revision"`
 		Message  string `json:"message"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))

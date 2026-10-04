@@ -28,6 +28,9 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeMessage(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, definition.ErrNotFound):
 		writeMessage(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, errTooManyAgents):
+		s.logger.Error("controller request refused", "trace_id", newTraceID(), "error", err)
+		writeMessage(w, http.StatusInternalServerError, err.Error())
 	default:
 		s.logger.Error("controller request failed", "trace_id", newTraceID(), "error", err)
 		writeMessage(w, http.StatusInternalServerError, "internal error")

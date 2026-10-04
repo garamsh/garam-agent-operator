@@ -39,8 +39,12 @@ const shutdownTimeout = 5 * time.Second
 // garamTimeout bounds one call to garam's machine listener.
 const garamTimeout = 10 * time.Second
 
-// feedPollInterval is how often a waiting request for the desired feed reads the store again.
+// feedPollInterval is how often a waiting request for the desired feed reads the position again.
 const feedPollInterval = time.Second
+
+// feedMaxAgents bounds the candidate agents one answer of the desired feed carries, and so the
+// agent proofs one answer asks garam for.
+const feedMaxAgents = 500
 
 // apiWriteTimeout bounds writing one answer, above the desired feed's longest wait.
 const apiWriteTimeout = 45 * time.Second
@@ -119,6 +123,7 @@ func run(ctx context.Context, o options, databaseURL string) error {
 		Definitions:  definitions,
 		Prover:       prover.NewGaram(garam),
 		PollInterval: feedPollInterval,
+		MaxAgents:    feedMaxAgents,
 		Logger:       slog.Default(),
 	}))
 

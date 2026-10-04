@@ -14,8 +14,11 @@ type Config struct {
 	Definitions definition.Service
 	// Prover proves each request's controller, and each agent's placement on it, with garam.
 	Prover Prover
-	// PollInterval is how often a waiting request for the feed reads it again.
+	// PollInterval is how often a waiting request for the feed reads the position again.
 	PollInterval time.Duration
+	// MaxAgents bounds the candidate agents one answer of the feed carries, and so the agent
+	// proofs one answer costs. A controller with more is refused rather than answered in part.
+	MaxAgents int
 	// Logger receives one line per request that failed for a reason the caller cannot act on.
 	Logger *slog.Logger
 }
@@ -24,6 +27,7 @@ type server struct {
 	definitions  definition.Service
 	prover       Prover
 	pollInterval time.Duration
+	maxAgents    int
 	logger       *slog.Logger
 }
 
@@ -33,7 +37,9 @@ type server struct {
 //	GET  /v1/operators/self/desired                the desired feed, long-polled
 //	POST /v1/operators/self/agents/{agent}/status  a report of what the controller observed and rendered
 func NewHandler(c Config) http.Handler {
-	s := &server{definitions: c.Definitions, prover: c.Prover, pollInterval: c.PollInterval, logger: c.Logger}
+	s := &server{
+		definitions: c.Definitions, prover: c.Prover, pollInterval: c.PollInterval, maxAgents: c.MaxAgents, logger: c.Logger,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/operators/self/desired", s.desired)
 	mux.HandleFunc("POST /v1/operators/self/agents/{agent}/status", s.status)

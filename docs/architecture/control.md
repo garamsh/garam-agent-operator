@@ -41,8 +41,8 @@ The control service: agents' execution definitions and their revisions, template
     - `definitions` gained `position` and the recorded assignment, beside the new `positions` and `agent_status` tables.
     A database created before either change keeps the earlier shape, because `CREATE TABLE IF NOT EXISTS` alters nothing.
 - **The console API is `internal/console`, a domain of its own over `internal/definition`'s surface** ([ADR 0039](adr/0039-serve-the-consoles-mutations-from-a-console-domain-over-the-definition-domains-surface.md)). Its one route so far is `POST /v1/orgs/{org}/agents/{agent}/revisions`, which configures an agent's definition. `{org}` is the organization's identifier, the last segment of its GRN, and `{agent}` is the agent's GRN.
-  - **Body.** `{requestId, expectedRevision, profile: {name, version}, configuration: {model: {provider, baseUrl, name, apiKeyRef}, ego, tools}}`, at most 1 MiB, with unknown fields refused.
-  - **Answer.** `200 {agent, revision}`, identical for every repeat of the request.
+  - **Body.** `{requestId, expectedRevision, profile: {name, version}, configuration: {model: {provider, baseUrl, name, apiKeyRef}, ego, tools}}`, at most 1 MiB, with unknown fields refused. `expectedRevision` is a canonical decimal string.
+  - **Answer.** `200 {agent, revision}`, `revision` a canonical decimal string, identical for every repeat of the request.
 - **Its principal is the user garam's operation authority names.** The console presents the authority as `Authorization: Garam-Operation <authority>`, outside the body. The authority is never logged or stored. Every console mutation runs in this order, and stops at the first refusal:
   1. **Introspect.** The authority is introspected on garam's `POST /operation-authorities/introspection` under `Garam-Contract-Version: operation-authority.v1` (`garam@f2ac780`, `api/machine.yaml`). Introspection consumes nothing.
   2. **Bound fields.** Every field the answer binds is checked against the request: an expiry still in the future, the audience (this service), the organization, the operation (`agent:configure`), the target (the agent), and an assignment present.
@@ -58,7 +58,7 @@ The control service: agents' execution definitions and their revisions, template
 | garam answers 404 (unknown, expired, another audience's), or the binding's expiry has passed | 401 |
 | garam answers 403, a bound field differs from the request, or the body's digest differs | 403 |
 | garam stays undecided (500 or 503 on every attempt, or unreachable) | 503 |
-| The body is not one configure request | 400 |
+| The body is not one configure request, or its `expectedRevision` is not a canonical decimal string | 400 |
 | The agent has no revision, or the profile version is unpublished | 404 |
 | A stale expected revision, or a request id reused with another binding, body or agent | 409 |
 
@@ -66,11 +66,14 @@ The control service: agents' execution definitions and their revisions, template
   - **Who is asking.** The leaf's one SAN URI is the controller's operator GRN, and no forwarded subject is read.
   - **Proof.** Every request is proved with garam's `POST /operators/{controller}/introspection` (`garam@f2ac780`, `api/machine.yaml` `introspectController`). The leaf is forwarded as it was presented, as one PEM block of its DER. The proof must name that same operator.
   - **Per decision.** Each agent's release and each status write takes an agent-bound proof of its own, after any long wait, whose epoch must equal the one its latest revision recorded. No proof is kept past the decision it was obtained for.
-  - **`GET /v1/operators/self/desired?after=<cursor>&waitSeconds=<0..30>`.**
-    - **Answer.** The latest revision of each agent recorded for the controller and stored after the cursor, with its profile's settings and configuration, under the cursor the answer accounts up to.
-    - **Long poll.** With nothing new it reads the store again every second until `waitSeconds` passes, then answers no agents under the same cursor.
-    - **Withheld.** An agent garam does not prove here, or proves under another epoch, is left out of the answer and passed over by the cursor.
-  - **`POST /v1/operators/self/agents/{agent}/status`.** It takes `{observedRevision, renderedRevision}`, each from 1 to the agent's latest revision. It answers `{agent, observedRevision, renderedRevision, appliedRevision: null}` as stored, and a lower report changes nothing.
+  - **Revisions on the wire.** Every revision on a control wire is a canonical decimal string (`"3"`), on this API and the console's alike.
+  - **`GET /v1/operators/self/desired?after=<cursor>&waitSeconds=<0..30>`.** It is level-triggered.
+    - **Answer.** Every answer is the controller's whole releasable set: the latest revision of each agent recorded for it that garam proves placed on it under that revision's epoch, with the profile's settings and configuration. The answer carries the current position as its cursor.
+    - **Long poll.** The cursor only says when to ask. A request after it reads the position every second until the position moves past it or `waitSeconds` passes, then answers the whole set.
+    - **Withheld.** An agent garam does not prove here, or proves under another epoch, is absent from that answer and decided again on the next. A refusal that ends releases the agent without a newer revision.
+    - **A moved agent.** It gets nothing until it is reconfigured under its new assignment, as garam refuses a configuration change for an agent that has moved.
+    - **Bound.** One answer carries at most 500 candidates, one proof each. A controller with more is refused with 500 rather than answered in part.
+  - **`POST /v1/operators/self/agents/{agent}/status`.** It takes `{observedRevision, renderedRevision}`, each a canonical decimal string. Each is parsed, range-checked from 1 to the agent's latest revision, and raised with `GREATEST`. It answers `{agent, observedRevision, renderedRevision, appliedRevision: null}` as stored, and a lower report changes nothing.
 - **Each controller-route refusal has one status**, chosen in `internal/distribution/respond.go`:
 
 | Refusal | Status |
@@ -79,8 +82,9 @@ The control service: agents' execution definitions and their revisions, template
 | garam refuses the session proof (403, 404, 422), or it names another operator than the certificate | 403 |
 | A status report for an agent whose latest revision is recorded for another controller, or whose proof fails or names another epoch | 403 |
 | garam stays undecided on any proof the answer needs | 503, with the cursor unmoved |
-| A malformed or future cursor, `waitSeconds` outside 0–30, a report that is not one, or a revision the agent does not have | 400 |
+| A malformed or future cursor, `waitSeconds` outside 0–30, a report that is not one, a revision that is not a canonical decimal string, or a revision the agent does not have | 400 |
 | The agent has no revision | 404 |
+| More candidate agents than one answer carries (500) | 500, naming the bound |
 
 - **Domain behaviour is tested on the in-memory store**, in `internal/definition/*_test.go`. The console's pipeline is tested in `internal/console/*_test.go` through `httptest`, with a test double standing in for `Introspector`. The controller routes are tested in `internal/distribution/*_test.go` through a TLS `httptest` server that requests client certificates, with a test double standing in for `Prover`. `testing.md` keeps a real database out of the integration layer.
 - **The e2e layer runs the built binary**, in `tests/control/`, against a PostgreSQL container that testcontainers-go starts. `make test-e2e-control` runs it, and `make test-e2e` runs it first.
@@ -110,5 +114,4 @@ A creation stays `Pending` on an unknown outcome rather than failing, because a 
 - **The rest of the API.** Create waits on `garamsh/garam#1167`, the controller routes on this repository's next slice, the runtime-status route on `garamsh/garam#1161`, and console reads and publishing on #220 (`garamsh/garam#1170`). Each is judged against `structure.md` §A new domain when it arrives (ADR 0039).
 - **What activation re-reads.** The stored operation reference and `{operator, epoch}` snapshot are what a revision's first activation is to recheck through `GET /operation-references/{ref}`. Activation is not built.
 - **Who may publish a profile or a template.** `garamsh/garam#1155` D4 makes editing a profile a high-trust action; nothing here checks an actor yet.
-- **What a controller is told of an agent moved away from it.** The feed offers new revisions recorded for a controller and nothing else. An agent whose latest revision is recorded elsewhere simply stops appearing. Releasing it is placement and lifecycle, issue #218.
-- **Whether a withheld revision should be offered again.** A revision passed over because garam did not prove its placement, or proved another epoch, is not re-sent unless a newer one is stored (ADR 0040).
+- **What placing an agent elsewhere does.** An agent moved away from a controller is absent from its next answer, and is released to its new controller once reconfigured there. The placement itself is issue #218.

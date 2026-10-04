@@ -2,6 +2,8 @@ package definition
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -12,6 +14,24 @@ type GRN string
 
 // Revision numbers an agent's definitions; the first is 1 and each change adds one.
 type Revision int64
+
+// String is the revision as every wire carries it: a canonical decimal string.
+func (r Revision) String() string {
+	return strconv.FormatInt(int64(r), 10)
+}
+
+// ParseRevision reads a revision from its canonical decimal string: digits only, no sign, no
+// leading zero, at least 1. Anything else is ErrInvalidRevision.
+func ParseRevision(s string) (Revision, error) {
+	if s == "" || s[0] == '0' || strings.TrimLeft(s, "0123456789") != "" {
+		return 0, ErrInvalidRevision
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, ErrInvalidRevision
+	}
+	return Revision(n), nil
+}
 
 // Version numbers a template's or a profile's published versions; the first is 1.
 type Version int64
@@ -93,8 +113,8 @@ type DesiredRevision struct {
 	Settings   ExecutionSettings
 }
 
-// DesiredPage is what a controller is owed after a position: the latest revision of each agent
-// recorded for it and stored after that position, and the position the page accounts up to.
+// DesiredPage is a controller's whole candidate set: the latest revision of each agent recorded
+// for it, and the position the set was read at.
 type DesiredPage struct {
 	Position  Position
 	Revisions []DesiredRevision
@@ -208,6 +228,9 @@ var (
 	// ErrRequestReused is returned when a request key arrives again for a different request:
 	// another actor, operation, target, body or template.
 	ErrRequestReused = errors.New("request id reused for a different request")
+
+	// ErrInvalidRevision is returned for a revision that is not a canonical decimal string of 1 or more.
+	ErrInvalidRevision = errors.New("revision is not a canonical decimal string of 1 or more")
 
 	// ErrInvalidStatus is returned for a status naming a revision the agent does not have.
 	ErrInvalidStatus = errors.New("status names a revision the agent does not have")

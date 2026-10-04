@@ -85,5 +85,5 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0037-carry-an-agents-identity-in-its-spec-and-start-the-agent-under-it.md` | Carry an agent's identity in its spec, and start the agent under it | accepted |
 | `adr/0038-partition-the-code-by-domain.md` | Partition the code by domain, and let a domain depend on a sibling through its surface in one direction | accepted |
 | `adr/0039-serve-the-consoles-mutations-from-a-console-domain-over-the-definition-domains-surface.md` | Serve the console's mutations from a console domain over the definition domain's surface, and keep the request record with the revision it produced | accepted |
-| `adr/0040-release-desired-state-to-controllers-from-a-distribution-domain-each-decision-proved-by-garam.md` | Release desired state to controllers from a distribution domain, each decision proved by garam, over a position-ordered feed | accepted |
+| `adr/0040-release-desired-state-to-controllers-from-a-distribution-domain-each-decision-proved-by-garam.md` | Release desired state to controllers from a distribution domain, each decision proved by garam, as a whole set on every answer | accepted |
 | `adr/0041-join-garams-reply-instruction-to-the-ego-wherever-the-adapter-is-placed.md` | Join garam's reply instruction to the agent's ego wherever the adapter is placed | accepted |

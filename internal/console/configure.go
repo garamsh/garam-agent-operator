@@ -13,7 +13,7 @@ import (
 // configureRequest is the body of a configure request.
 type configureRequest struct {
 	RequestID        string        `json:"requestId"`
-	ExpectedRevision int64         `json:"expectedRevision"`
+	ExpectedRevision string        `json:"expectedRevision"`
 	Profile          profileRef    `json:"profile"`
 	Configuration    configuration `json:"configuration"`
 }
@@ -39,7 +39,7 @@ type model struct {
 // configureResponse is the answer to an applied configure request, and to every repeat of it.
 type configureResponse struct {
 	Agent    string `json:"agent"`
-	Revision int64  `json:"revision"`
+	Revision string `json:"revision"`
 }
 
 // errInvalidBody is returned for a body that is not one configure request.
@@ -57,7 +57,7 @@ func (s *server) configure(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	in, err := parseConfigure(body)
+	in, expected, err := parseConfigure(body)
 	if err != nil {
 		s.respondError(w, err)
 		return
@@ -77,7 +77,7 @@ func (s *server) configure(w http.ResponseWriter, r *http.Request) {
 			Assignment:   definition.Assignment{Operator: b.Assignment.Operator, Epoch: b.Assignment.Epoch},
 		},
 		Agent:            definition.GRN(agent),
-		ExpectedRevision: definition.Revision(in.ExpectedRevision),
+		ExpectedRevision: expected,
 		Profile:          definition.ProfileRef{Name: in.Profile.Name, Version: definition.Version(in.Profile.Version)},
 		Config: definition.Configuration{
 			Model: definition.Model{
@@ -94,19 +94,21 @@ func (s *server) configure(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, configureResponse{Agent: agent, Revision: int64(applied.Revision)})
+	writeJSON(w, http.StatusOK, configureResponse{Agent: agent, Revision: applied.Revision.String()})
 }
 
-// parseConfigure reads exactly one configure request, refusing a field it does not know.
-func parseConfigure(body []byte) (configureRequest, error) {
+// parseConfigure reads exactly one configure request, refusing a field it does not know and an
+// expected revision that is not a canonical decimal string.
+func parseConfigure(body []byte) (configureRequest, definition.Revision, error) {
 	var in configureRequest
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&in); err != nil || decoder.More() {
-		return configureRequest{}, errInvalidBody
+	if err := decoder.Decode(&in); err != nil || decoder.More() || in.RequestID == "" {
+		return configureRequest{}, 0, errInvalidBody
 	}
-	if in.RequestID == "" || in.ExpectedRevision < 1 {
-		return configureRequest{}, errInvalidBody
+	expected, err := definition.ParseRevision(in.ExpectedRevision)
+	if err != nil {
+		return configureRequest{}, 0, errInvalidBody
 	}
-	return in, nil
+	return in, expected, nil
 }

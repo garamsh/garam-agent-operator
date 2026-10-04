@@ -17,7 +17,7 @@ func TestDesired_ReleasesTheAgentsPlacedOnTheController(t *testing.T) {
 
 	got := e.desired(t, e.withCert, "")
 	require.Equal(t, 200, got.status, got.message)
-	assert.Equal(t, map[string]int64{agentA: 2, agentB: 2}, got.agents)
+	assert.Equal(t, map[string]string{agentA: "2", agentB: "2"}, got.agents)
 	assert.NotEmpty(t, got.cursor)
 }
 
@@ -84,26 +84,26 @@ func TestDesired_AnswersUndecidedWhileGaramIs(t *testing.T) {
 	})
 	t.Run("one agent", func(t *testing.T) {
 		e := newEnv(t)
-		e.prover.setAgent(agentB, verdict{err: distribution.ErrUndecided})
+		e.prover.setAgentB(verdict{err: distribution.ErrUndecided})
 		undecided := e.desired(t, e.withCert, "")
 		assert.Equal(t, 503, undecided.status)
 		assert.Empty(t, undecided.cursor, "an undecided answer moved the cursor")
 
 		// Control: once garam decides, the same request releases both agents.
-		e.prover.setAgent(agentB, verdict{proof: distribution.Proof{Operator: controller, Org: org,
+		e.prover.setAgentB(verdict{proof: distribution.Proof{Operator: controller, Org: org,
 			Agent: &distribution.ProvenAgent{GRN: agentB, Epoch: epoch}}})
-		assert.Equal(t, map[string]int64{agentA: 2, agentB: 2}, e.desired(t, e.withCert, "").agents)
+		assert.Equal(t, map[string]string{agentA: "2", agentB: "2"}, e.desired(t, e.withCert, "").agents)
 	})
 }
 
 func TestDesired_WithholdsAnAgentAssignedElsewhere(t *testing.T) {
 	e := newEnv(t)
-	e.prover.setAgent(agentB, verdict{err: distribution.ErrNotProved})
+	e.prover.setAgentB(verdict{err: distribution.ErrNotProved})
 
 	got := e.desired(t, e.withCert, "")
 	require.Equal(t, 200, got.status, got.message)
 	// Control: agentA, proved, is released beside the withheld agentB.
-	assert.Equal(t, map[string]int64{agentA: 2}, got.agents)
+	assert.Equal(t, map[string]string{agentA: "2"}, got.agents)
 }
 
 func TestDesired_WithholdsAnAgentUnderAnotherEpoch(t *testing.T) {
@@ -113,7 +113,7 @@ func TestDesired_WithholdsAnAgentUnderAnotherEpoch(t *testing.T) {
 	got := e.desired(t, e.withCert, "")
 	require.Equal(t, 200, got.status, got.message)
 	// Control: agentA, under the epoch its revision was recorded for, is released.
-	assert.Equal(t, map[string]int64{agentA: 2}, got.agents)
+	assert.Equal(t, map[string]string{agentA: "2"}, got.agents)
 }
 
 func TestDesired_NeverOffersAnAgentRecordedForAnotherController(t *testing.T) {
@@ -128,19 +128,48 @@ func TestDesired_NeverOffersAnAgentRecordedForAnotherController(t *testing.T) {
 	assert.Contains(t, e.desired(t, e.withCert, "").agents, agentC)
 }
 
-func TestDesired_CursorReleasesOnlyWhatIsNewer(t *testing.T) {
+func TestDesired_AnswersTheWholeSetUnderEveryCursor(t *testing.T) {
 	e := newEnv(t)
 	first := e.desired(t, e.withCert, "")
 	require.Equal(t, 200, first.status)
 
+	// A cursor only says when to ask: the answer under it is the whole set again, not a delta.
 	again := e.desired(t, e.withCert, "?after="+first.cursor)
-	assert.Empty(t, again.agents)
+	assert.Equal(t, first.agents, again.agents)
 	assert.Equal(t, first.cursor, again.cursor)
 
-	// Control: a revision stored after the cursor is released, and only it.
+	// Control: a revision stored since moves the cursor and is in the next whole set.
 	e.configure(t, agentA, controller, 2)
 	newer := e.desired(t, e.withCert, "?after="+first.cursor)
-	assert.Equal(t, map[string]int64{agentA: 3}, newer.agents)
+	assert.Equal(t, map[string]string{agentA: "3", agentB: "2"}, newer.agents)
+	assert.NotEqual(t, first.cursor, newer.cursor)
+}
+
+func TestDesired_ReleasesAWithheldAgentOnceGaramProvesIt(t *testing.T) {
+	e := newEnv(t)
+	e.prover.setAgentB(verdict{err: distribution.ErrNotProved})
+	withheld := e.desired(t, e.withCert, "")
+	require.Equal(t, map[string]string{agentA: "2"}, withheld.agents)
+
+	// Garam now proves agentB, as when a Deny is lifted. No revision is stored in between, so the
+	// cursor has not moved, and the next answer still decides agentB again.
+	e.prover.setAgentB(verdict{proof: distribution.Proof{Operator: controller, Org: org,
+		Agent: &distribution.ProvenAgent{GRN: agentB, Epoch: epoch}}})
+	released := e.desired(t, e.withCert, "?after="+withheld.cursor)
+	assert.Equal(t, withheld.cursor, released.cursor)
+	assert.Equal(t, map[string]string{agentA: "2", agentB: "2"}, released.agents)
+}
+
+func TestDesired_RefusesMoreAgentsThanOneAnswerCarries(t *testing.T) {
+	e := newEnvCarrying(t, 2)
+	// Control: as many candidates as one answer carries are answered.
+	assert.Equal(t, 200, e.desired(t, e.withCert, "").status)
+
+	e.configure(t, agentC, controller, 2)
+	refused := e.desired(t, e.withCert, "")
+	assert.Equal(t, 500, refused.status)
+	assert.Contains(t, refused.message, "more agents than one desired answer carries")
+	assert.Empty(t, refused.agents)
 }
 
 func TestDesired_LongPollAnswersWhenARevisionIsStored(t *testing.T) {
@@ -154,7 +183,8 @@ func TestDesired_LongPollAnswersWhenARevisionIsStored(t *testing.T) {
 
 	select {
 	case got := <-answered:
-		assert.Equal(t, map[string]int64{agentB: 3}, got.agents)
+		assert.Equal(t, map[string]string{agentA: "2", agentB: "3"}, got.agents)
+		assert.NotEqual(t, first.cursor, got.cursor)
 	case <-time.After(5 * time.Second):
 		t.Fatal("the long poll did not answer when a revision was stored")
 	}
@@ -168,12 +198,12 @@ func TestDesired_LongPollIsBounded(t *testing.T) {
 	got := e.desired(t, e.withCert, "?after="+first.cursor+"&waitSeconds=1")
 	assert.GreaterOrEqual(t, time.Since(start), time.Second)
 	assert.Equal(t, 200, got.status)
-	assert.Empty(t, got.agents)
+	assert.Equal(t, first.agents, got.agents)
 	assert.Equal(t, first.cursor, got.cursor)
 }
 
 func TestDesired_RefusesAQueryItCannotAnswer(t *testing.T) {
-	for _, query := range []string{"?waitSeconds=31", "?waitSeconds=-1", "?after=abc", "?after=-1", "?after=999"} {
+	for _, query := range []string{"?waitSeconds=31", "?waitSeconds=-1", "?after=abc", "?after=-1", "?after=01", "?after=999"} {
 		t.Run(query, func(t *testing.T) {
 			e := newEnv(t)
 			assert.Equal(t, 400, e.desired(t, e.withCert, query).status)

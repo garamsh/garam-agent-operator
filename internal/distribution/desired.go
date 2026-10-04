@@ -12,10 +12,11 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
-// maxWait bounds how long one request for the desired feed waits for something new.
+// maxWait bounds how long one request for the desired feed waits for the position to move.
 const maxWait = 30 * time.Second
 
-// desiredResponse is the answer to a request for the desired feed.
+// desiredResponse is the answer to a request for the desired feed: the controller's whole
+// releasable set as of cursor.
 type desiredResponse struct {
 	Cursor string         `json:"cursor"`
 	Agents []desiredAgent `json:"agents"`
@@ -23,7 +24,7 @@ type desiredResponse struct {
 
 type desiredAgent struct {
 	Agent         string        `json:"agent"`
-	Revision      int64         `json:"revision"`
+	Revision      string        `json:"revision"`
 	Epoch         string        `json:"epoch"`
 	Profile       profile       `json:"profile"`
 	Configuration configuration `json:"configuration"`
@@ -50,9 +51,19 @@ type model struct {
 	APIKeyRef string `json:"apiKeyRef"`
 }
 
-// errInvalidQuery is returned for a cursor or wait the feed cannot answer.
-var errInvalidQuery = errors.New("cursor or waitSeconds is not one the feed answers")
+var (
+	// errInvalidQuery is returned for a cursor or wait the feed cannot answer.
+	errInvalidQuery = errors.New("cursor or waitSeconds is not one the feed answers")
 
+	// errTooManyAgents is returned when a controller has more candidate agents than one answer
+	// carries; a partial set would read to the controller as the rest withdrawn.
+	errTooManyAgents = errors.New("controller has more agents than one desired answer carries")
+)
+
+// desired answers the controller's whole releasable set: the latest revision of every agent recorded
+// for it that garam proves placed on it, under that revision's epoch, for this answer. A withheld
+// agent is absent from this answer and decided again on the next. The cursor only says when to ask:
+// a request after it waits until the position moves past it, or waitSeconds passes.
 func (s *server) desired(w http.ResponseWriter, r *http.Request) {
 	after, wait, err := parseFeedQuery(r)
 	if err != nil {
@@ -64,13 +75,17 @@ func (s *server) desired(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	page, err := s.waitForDesired(r.Context(), c.grn, after, wait)
+	if err := s.waitPast(r.Context(), after, wait); err != nil {
+		s.respondError(w, err)
+		return
+	}
+	page, err := s.definitions.Desired(r.Context(), c.grn, s.maxAgents+1)
 	if err != nil {
 		s.respondError(w, err)
 		return
 	}
-	if page.Position < after {
-		s.respondError(w, errInvalidQuery)
+	if len(page.Revisions) > s.maxAgents {
+		s.respondError(w, errTooManyAgents)
 		return
 	}
 	out := desiredResponse{Cursor: strconv.FormatInt(int64(page.Position), 10), Agents: []desiredAgent{}}
@@ -87,49 +102,59 @@ func (s *server) desired(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// waitForDesired reads the feed after a position, and reads it again every poll interval while it
-// holds nothing new, until wait has passed.
-func (s *server) waitForDesired(ctx context.Context, operator string, after definition.Position, wait time.Duration) (definition.DesiredPage, error) {
+// waitPast returns once the position has moved past after, reading it every poll interval, or once
+// wait has passed. A request with no cursor does not wait.
+func (s *server) waitPast(ctx context.Context, after *definition.Position, wait time.Duration) error {
+	if after == nil {
+		return nil
+	}
 	deadline := time.Now().Add(wait)
 	for {
-		page, err := s.definitions.Desired(ctx, operator, after)
-		if err != nil || len(page.Revisions) > 0 || page.Position < after || !time.Now().Before(deadline) {
-			return page, err
+		position, err := s.definitions.Position(ctx)
+		if err != nil {
+			return err
+		}
+		if position < *after {
+			return errInvalidQuery
+		}
+		if position > *after || !time.Now().Before(deadline) {
+			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return page, nil
+			return nil
 		case <-time.After(min(s.pollInterval, time.Until(deadline))):
 		}
 	}
 }
 
-func parseFeedQuery(r *http.Request) (definition.Position, time.Duration, error) {
+func parseFeedQuery(r *http.Request) (*definition.Position, time.Duration, error) {
 	q := r.URL.Query()
-	var after int64
+	var after *definition.Position
 	if v := q.Get("after"); v != "" {
 		parsed, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || parsed < 0 {
-			return 0, 0, errInvalidQuery
+		if err != nil || parsed < 0 || strconv.FormatInt(parsed, 10) != v {
+			return nil, 0, errInvalidQuery
 		}
-		after = parsed
+		p := definition.Position(parsed)
+		after = &p
 	}
 	var wait time.Duration
 	if v := q.Get("waitSeconds"); v != "" {
 		seconds, err := strconv.Atoi(v)
 		if err != nil || seconds < 0 || time.Duration(seconds)*time.Second > maxWait {
-			return 0, 0, errInvalidQuery
+			return nil, 0, errInvalidQuery
 		}
 		wait = time.Duration(seconds) * time.Second
 	}
-	return definition.Position(after), wait, nil
+	return after, wait, nil
 }
 
 func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 	def, settings := d.Definition, d.Settings
 	return desiredAgent{
 		Agent:    string(def.Agent),
-		Revision: int64(def.Revision),
+		Revision: def.Revision.String(),
 		Epoch:    def.Assignment.Epoch,
 		Profile: profile{
 			Name:             def.Profile.Name,

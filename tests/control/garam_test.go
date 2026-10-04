@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -53,7 +54,7 @@ SELECT $1::text, 1, $2::text, 1, '{}', (SELECT position FROM next)`, g.agent(), 
 func configureBody(requestID, profile, ego string, expected int) []byte {
 	b, err := json.Marshal(map[string]any{
 		"requestId":        requestID,
-		"expectedRevision": expected,
+		"expectedRevision": strconv.Itoa(expected),
 		"profile":          map[string]any{"name": profile, "version": 1},
 		"configuration": map[string]any{
 			"model": map[string]string{"provider": "anthropic", "baseUrl": "https://api.anthropic.com",
@@ -179,11 +180,11 @@ func TestDesired_ReleasesAConfiguredAgentToItsController(t *testing.T) {
 	var feed struct {
 		Agents []struct {
 			Agent    string `json:"agent"`
-			Revision int64  `json:"revision"`
+			Revision string `json:"revision"`
 		} `json:"agents"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&feed))
 	require.Len(t, feed.Agents, 1)
 	assert.Equal(t, g.agent(), feed.Agents[0].Agent)
-	assert.Equal(t, int64(2), feed.Agents[0].Revision)
+	assert.Equal(t, "2", feed.Agents[0].Revision)
 }

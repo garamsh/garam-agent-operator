@@ -13,18 +13,19 @@ import (
 // maxStatusBytes bounds a status report's body.
 const maxStatusBytes = 4 << 10
 
+// statusRequest is a status report; each revision is a canonical decimal string.
 type statusRequest struct {
-	ObservedRevision int64 `json:"observedRevision"`
-	RenderedRevision int64 `json:"renderedRevision"`
+	ObservedRevision string `json:"observedRevision"`
+	RenderedRevision string `json:"renderedRevision"`
 }
 
 // statusResponse is the agent's status as stored after a report: what every controller report
 // raised so far, and the revision the runtime applied, null until the runtime reports.
 type statusResponse struct {
-	Agent            string `json:"agent"`
-	ObservedRevision int64  `json:"observedRevision"`
-	RenderedRevision int64  `json:"renderedRevision"`
-	AppliedRevision  *int64 `json:"appliedRevision"`
+	Agent            string  `json:"agent"`
+	ObservedRevision string  `json:"observedRevision"`
+	RenderedRevision string  `json:"renderedRevision"`
+	AppliedRevision  *string `json:"appliedRevision"`
 }
 
 var (
@@ -48,7 +49,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	in, err := parseStatus(body)
+	observed, rendered, err := parseStatus(body)
 	if err != nil {
 		s.respondError(w, err)
 		return
@@ -71,27 +72,33 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, errNotPlaced)
 		return
 	}
-	stored, err := s.definitions.RecordStatus(r.Context(), definition.GRN(agent),
-		definition.Revision(in.ObservedRevision), definition.Revision(in.RenderedRevision))
+	stored, err := s.definitions.RecordStatus(r.Context(), definition.GRN(agent), observed, rendered)
 	if err != nil {
 		s.respondError(w, err)
 		return
 	}
-	out := statusResponse{Agent: agent, ObservedRevision: int64(stored.Observed), RenderedRevision: int64(stored.Rendered)}
+	out := statusResponse{Agent: agent, ObservedRevision: stored.Observed.String(), RenderedRevision: stored.Rendered.String()}
 	if stored.Applied != nil {
-		applied := int64(*stored.Applied)
+		applied := stored.Applied.String()
 		out.AppliedRevision = &applied
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// parseStatus reads exactly one status report, refusing a field it does not know.
-func parseStatus(body []byte) (statusRequest, error) {
+// parseStatus reads exactly one status report, refusing a field it does not know and a revision
+// that is not a canonical decimal string.
+func parseStatus(body []byte) (observed, rendered definition.Revision, err error) {
 	var in statusRequest
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&in); err != nil || decoder.More() {
-		return statusRequest{}, errInvalidStatusBody
+		return 0, 0, errInvalidStatusBody
 	}
-	return in, nil
+	if observed, err = definition.ParseRevision(in.ObservedRevision); err != nil {
+		return 0, 0, errInvalidStatusBody
+	}
+	if rendered, err = definition.ParseRevision(in.RenderedRevision); err != nil {
+		return 0, 0, errInvalidStatusBody
+	}
+	return observed, rendered, nil
 }

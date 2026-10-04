@@ -107,7 +107,13 @@ func (m *Memory) GetDefinition(_ context.Context, agent definition.GRN) (definit
 	return cloneDefinition(revisions[len(revisions)-1]), nil
 }
 
-func (m *Memory) Desired(_ context.Context, operator string, after definition.Position) (definition.DesiredPage, error) {
+func (m *Memory) Position(_ context.Context) (definition.Position, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.position, nil
+}
+
+func (m *Memory) Desired(_ context.Context, operator string, limit int) (definition.DesiredPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	type owed struct {
@@ -117,19 +123,18 @@ func (m *Memory) Desired(_ context.Context, operator string, after definition.Po
 	var found []owed
 	for agent, revisions := range m.definitions {
 		latest := revisions[len(revisions)-1]
-		position := m.positions[agent][len(revisions)-1]
-		if position <= after || latest.Assignment == nil || latest.Assignment.Operator != operator {
+		if latest.Assignment == nil || latest.Assignment.Operator != operator {
 			continue
 		}
 		profile := m.profiles[latest.Profile.Name][latest.Profile.Version-1]
 		found = append(found, owed{
 			revision: definition.DesiredRevision{Definition: cloneDefinition(latest), Settings: cloneSettings(profile.Settings)},
-			position: position,
+			position: m.positions[agent][len(revisions)-1],
 		})
 	}
 	slices.SortFunc(found, func(a, b owed) int { return cmp.Compare(a.position, b.position) })
 	page := definition.DesiredPage{Position: m.position}
-	for _, o := range found {
+	for _, o := range found[:min(limit, len(found))] {
 		page.Revisions = append(page.Revisions, o.revision)
 	}
 	return page, nil

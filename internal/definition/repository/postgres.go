@@ -232,7 +232,15 @@ func assignmentOf(operator, epoch *string) *definition.Assignment {
 	return &definition.Assignment{Operator: *operator, Epoch: *epoch}
 }
 
-func (p *Postgres) Desired(ctx context.Context, operator string, after definition.Position) (definition.DesiredPage, error) {
+func (p *Postgres) Position(ctx context.Context) (definition.Position, error) {
+	var position int64
+	if err := p.pool.QueryRow(ctx, getPosition).Scan(&position); err != nil {
+		return 0, storeError("position", err)
+	}
+	return definition.Position(position), nil
+}
+
+func (p *Postgres) Desired(ctx context.Context, operator string, limit int) (definition.DesiredPage, error) {
 	var page definition.DesiredPage
 	// One snapshot for both reads: the position read accounts for exactly the revisions read.
 	err := pgx.BeginTxFunc(ctx, p.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly},
@@ -242,7 +250,7 @@ func (p *Postgres) Desired(ctx context.Context, operator string, after definitio
 				return err
 			}
 			page.Position = definition.Position(position)
-			rows, err := tx.Query(ctx, desired, operator, int64(after))
+			rows, err := tx.Query(ctx, desired, operator, limit)
 			if err != nil {
 				return err
 			}

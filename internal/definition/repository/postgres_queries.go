@@ -37,14 +37,15 @@ SELECT $1::text, 1, $2::text, $3::bigint, $4::jsonb, (SELECT position FROM next)
 
 	getPosition = `SELECT position FROM positions`
 
-	// desired is the latest revision of each agent recorded for an operator, stored after a position.
+	// desired is the latest revision of each agent recorded for an operator, at most $2 of them.
 	desired = `
 SELECT d.agent, d.revision, d.profile_name, d.profile_version, d.config, d.assignment_epoch, p.settings
 FROM definitions d
 JOIN profiles p ON p.name = d.profile_name AND p.version = d.profile_version
-WHERE d.position > $2 AND d.assignment_operator = $1
+WHERE d.assignment_operator = $1
   AND d.revision = (SELECT MAX(revision) FROM definitions latest WHERE latest.agent = d.agent)
-ORDER BY d.position`
+ORDER BY d.position
+LIMIT $2`
 
 	recordStatus = `
 INSERT INTO agent_status (agent, observed_revision, rendered_revision) VALUES ($1, $2, $3)

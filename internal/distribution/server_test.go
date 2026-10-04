@@ -83,10 +83,11 @@ func (p *prover) setSession(v verdict) {
 	p.session = &v
 }
 
-func (p *prover) setAgent(agent string, v verdict) {
+// setAgentB sets the verdict for agentB's placement proofs.
+func (p *prover) setAgentB(v verdict) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.agents[agent] = v
+	p.agents[agentB] = v
 }
 
 // registrar registers each creation under the GRN its request id names.
@@ -111,6 +112,12 @@ type env struct {
 }
 
 func newEnv(t *testing.T) *env {
+	t.Helper()
+	return newEnvCarrying(t, 10)
+}
+
+// newEnvCarrying is newEnv with one feed answer carrying at most maxAgents candidates.
+func newEnvCarrying(t *testing.T, maxAgents int) *env {
 	t.Helper()
 	ctx := context.Background()
 	definitions := definition.NewService(repository.NewMemory(), registrar{})
@@ -143,6 +150,7 @@ func newEnv(t *testing.T) *env {
 		Definitions:  definitions,
 		Prover:       e.prover,
 		PollInterval: 10 * time.Millisecond,
+		MaxAgents:    maxAgents,
 		Logger:       slog.New(slog.DiscardHandler),
 	}))
 	e.server.TLS = &tls.Config{ClientAuth: tls.RequestClientCert}
@@ -197,7 +205,7 @@ func clientWithLeaf(t *testing.T, server *httptest.Server, grn string) (*http.Cl
 type feed struct {
 	status  int
 	cursor  string
-	agents  map[string]int64
+	agents  map[string]string
 	message string
 }
 
@@ -210,12 +218,12 @@ func (e *env) desired(t *testing.T, client *http.Client, query string) feed {
 		Cursor string `json:"cursor"`
 		Agents []struct {
 			Agent    string `json:"agent"`
-			Revision int64  `json:"revision"`
+			Revision string `json:"revision"`
 		} `json:"agents"`
 		Message string `json:"message"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	f := feed{status: resp.StatusCode, cursor: out.Cursor, agents: map[string]int64{}, message: out.Message}
+	f := feed{status: resp.StatusCode, cursor: out.Cursor, agents: map[string]string{}, message: out.Message}
 	for _, a := range out.Agents {
 		f.agents[a.Agent] = a.Revision
 	}
