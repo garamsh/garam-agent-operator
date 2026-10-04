@@ -12,6 +12,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -42,16 +43,25 @@ type AgentReconciler struct {
 	// adapter claims an agent's messages from.
 	GaramAddress string
 
+	// APIReader reads straight from the API server. The writer fence reads a
+	// Pod's node and its claim through it, so that the controller holds no
+	// informer over every node and claim in the cluster for a check it makes
+	// only when a Pod is deleted.
+	APIReader client.Reader
+
 	// RenderAssignmentEpoch passes an agent its assignment epoch on the command
 	// line. It is off until the agent image the deployment runs accepts the flag,
 	// because one that does not refuses to start on it.
 	RenderAssignmentEpoch bool
 }
 
-// +kubebuilder:rbac:groups=agent.garam.sh,resources=agents,verbs=get;list;watch
+// +kubebuilder:rbac:groups=agent.garam.sh,resources=agents,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=agent.garam.sh,resources=agents/status,verbs=patch
-// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get
 
 // Reconcile drives the workload an Agent describes toward the Agent's spec, and
 // reports on the Agent what it observed.
@@ -65,7 +75,29 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, fmt.Errorf("get agent: %w", err)
 	}
 
+	if agent.DeletionTimestamp != nil {
+		return r.reconcileDeletion(ctx, &agent)
+	}
+
+	// Before anything is built, so that no Pod exists that the Agent could be
+	// deleted out from under.
+	if !controllerutil.ContainsFinalizer(&agent, workloadFencedFinalizer) {
+		fenced := agent.DeepCopy()
+		controllerutil.AddFinalizer(fenced, workloadFencedFinalizer)
+		if err := r.Patch(ctx, fenced, client.MergeFrom(&agent)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("add the workload fence to the agent: %w", err)
+		}
+		agent = *fenced
+	}
+
 	held := agent.DeepCopy()
+
+	// The fence first: a Pod being deleted is held or released on what it shows,
+	// whatever the spec now asks of the workload.
+	_, unverified, err := r.reconcileFence(ctx, &agent)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	if err := r.reconcileWorkload(ctx, &agent); err != nil {
 		return ctrl.Result{}, err
@@ -76,7 +108,58 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
+	return fenceResult(unverified), nil
+}
+
+// reconcileDeletion takes a deleting Agent's workload down in order. The
+// StatefulSet is deleted, which deletes its Pod; the Pod is held by its writer
+// fence until its writers are seen to stop, with the evidence recorded on this
+// Agent; and only once the Pod is gone does the Agent let itself go. A Pod
+// whose fence stays unverified keeps the Agent deleting until a person
+// releases the Pod.
+func (r *AgentReconciler) reconcileDeletion(ctx context.Context, agent *agentv1alpha1.Agent) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(agent, workloadFencedFinalizer) {
+		return ctrl.Result{}, nil
+	}
+
+	held := agent.DeepCopy()
+	podGone, unverified, err := r.reconcileFence(ctx, agent)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// The Agent's own finalizer keeps the garbage collector from deleting what
+	// it owns, so the StatefulSet is deleted here.
+	statefulSet := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: agent.Namespace}}
+	if err := r.Delete(ctx, statefulSet, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil &&
+		!apierrors.IsNotFound(err) {
+		return ctrl.Result{}, fmt.Errorf("delete the agent's statefulset: %w", err)
+	}
+
+	if err := r.writeStatus(ctx, agent, held); err != nil {
+		return ctrl.Result{}, err
+	}
+	if !podGone {
+		return fenceResult(unverified), nil
+	}
+
+	released := agent.DeepCopy()
+	controllerutil.RemoveFinalizer(released, workloadFencedFinalizer)
+	if err := r.Patch(ctx, released, client.MergeFrom(agent)); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, fmt.Errorf("release the agent's workload fence: %w", err)
+	}
+
 	return ctrl.Result{}, nil
+}
+
+// fenceResult asks to read an unverified fence again, which re-reads it and
+// never releases it.
+func fenceResult(unverified bool) ctrl.Result {
+	if unverified {
+		return ctrl.Result{RequeueAfter: fenceRecheckInterval}
+	}
+
+	return ctrl.Result{}
 }
 
 // reconcileWorkload brings the workload the Agent describes to what its spec
@@ -124,6 +207,13 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 			}
 
 			return fmt.Errorf("get secret %q: %w", key.Name, err)
+		}
+	}
+
+	// Before the StatefulSet, so the first Pod finds the Secret it copies from.
+	if r.adapterBuilt(agent) {
+		if err := r.ensurePlacementToken(ctx, agent); err != nil {
+			return err
 		}
 	}
 
@@ -195,8 +285,23 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&agentv1alpha1.Agent{}).
 		Owns(&appsv1.StatefulSet{}).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.agentsNamingSecret), builder.OnlyMetadata).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(agentOfPod)).
 		Named("agent").
 		Complete(r)
+}
+
+// agentOfPod maps an agent's Pod to its Agent, by the label the StatefulSet's
+// template gives it, so that a Pod's deletion and its containers' states wake
+// the Agent whose fence holds it.
+func agentOfPod(_ context.Context, pod client.Object) []reconcile.Request {
+	labels := pod.GetLabels()
+	if labels["app.kubernetes.io/name"] != agentContainerName || labels["app.kubernetes.io/instance"] == "" {
+		return nil
+	}
+
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{
+		Namespace: pod.GetNamespace(), Name: labels["app.kubernetes.io/instance"],
+	}}}
 }
 
 // agentsNamingSecret maps a Secret to the Agents whose spec names it, so that

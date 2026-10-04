@@ -280,6 +280,45 @@ func TestConstructAdoptsTheAgentItAlreadyBuilt(t *testing.T) {
 // anywhere. Reported as constructed, that credential is gone: garam generated
 // the key per certificate and keeps none, and nothing would ask for another.
 // What is read is the Secret that holds the key, never the Agent beside it.
+// TestConstructBuildsNoSecondAgentWhileOneIsDeleting says that while an Agent
+// is held deleting, by its workload fence or a Pod whose writers are not yet seen
+// to stop, a pass over its definition reconstructs nothing under its name: the
+// name is still taken, so the Agent being deleted is the one the pass reads. A
+// new Agent can follow only once the deleting one is gone. The control is the
+// same pass after it is gone, which does construct.
+func TestConstructBuildsNoSecondAgentWhileOneIsDeleting(t *testing.T) {
+	g := NewWithT(t)
+	scheme := newScheme(t)
+	c := newClient(scheme)
+	building := newConstructor(t, scheme, c)
+	key := client.ObjectKey{Namespace: namespace, Name: constructor.Name(sampleAgent)}
+
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	deleting := &agentv1alpha1.Agent{}
+	g.Expect(c.Get(context.Background(), key, deleting)).To(Succeed())
+	deleting.Finalizers = []string{"agent.garam.sh/workload-fenced"}
+	g.Expect(c.Update(context.Background(), deleting)).To(Succeed())
+	g.Expect(c.Delete(context.Background(), deleting)).To(Succeed())
+	g.Expect(c.Get(context.Background(), key, deleting)).To(Succeed())
+	g.Expect(deleting.DeletionTimestamp).NotTo(BeNil())
+
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	still := &agentv1alpha1.Agent{}
+	g.Expect(c.Get(context.Background(), key, still)).To(Succeed())
+	g.Expect(still.UID).To(Equal(deleting.UID))
+	g.Expect(still.DeletionTimestamp).NotTo(BeNil())
+
+	// The control: once its fence is released the Agent is gone, and the next
+	// pass builds a new one under the same name.
+	still.Finalizers = nil
+	g.Expect(c.Update(context.Background(), still)).To(Succeed())
+	g.Expect(c.Get(context.Background(), key, &agentv1alpha1.Agent{})).NotTo(Succeed())
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	rebuilt := &agentv1alpha1.Agent{}
+	g.Expect(c.Get(context.Background(), key, rebuilt)).To(Succeed())
+	g.Expect(rebuilt.DeletionTimestamp).To(BeNil())
+}
+
 func TestHasCredentialReportsNothingHeldWhereOnlyTheAgentWasBuilt(t *testing.T) {
 	g := NewWithT(t)
 	scheme := newScheme(t)

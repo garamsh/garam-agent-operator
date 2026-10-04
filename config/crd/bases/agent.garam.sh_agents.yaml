@@ -395,6 +395,80 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              placement:
+                description: |-
+                  placement is the Pod this Agent's agent last ran in, and the volume claim
+                  it ran on, as the controller observed them. A new Pod is a new placement;
+                  a container restarted in the same Pod is not. It is a report and is never
+                  read back by the controller.
+                properties:
+                  podUID:
+                    description: podUID is the UID of the Pod.
+                    type: string
+                  pvcUID:
+                    description: |-
+                      pvcUID is the UID of the claim the agent's state volume is bound through,
+                      when the Pod was first seen.
+                    type: string
+                required:
+                - podUID
+                type: object
+              writerStopped:
+                description: |-
+                  writerStopped is the evidence on which the controller last released a
+                  deleting Pod's fence: every container that could write the agent's state
+                  had terminated, or the Pod was never scheduled. It is written before the
+                  fence is released, and each release replaces it.
+                properties:
+                  containers:
+                    description: |-
+                      containers are the containers that could write the agent's state, each in
+                      its terminated state. Empty where the Pod was never scheduled to a node, so
+                      none of them ever started.
+                    items:
+                      description: |-
+                        TerminatedContainer is one container's terminated state, as the kubelet
+                        reported it.
+                      properties:
+                        containerID:
+                          description: |-
+                            containerID is the runtime's ID of the container instance that
+                            terminated.
+                          type: string
+                        exitCode:
+                          description: exitCode is the code it exited with.
+                          format: int32
+                          type: integer
+                        finishedAt:
+                          description: finishedAt is when it terminated.
+                          format: date-time
+                          type: string
+                        name:
+                          description: name is the container's name.
+                          type: string
+                      required:
+                      - containerID
+                      - exitCode
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  observedAt:
+                    description: observedAt is when the controller read the evidence.
+                    format: date-time
+                    type: string
+                  podUID:
+                    description: podUID is the UID of the Pod the evidence is about.
+                    type: string
+                  pvcUID:
+                    description: |-
+                      pvcUID is the UID of the state volume's claim at the time, empty where the
+                      Pod was never scheduled.
+                    type: string
+                required:
+                - observedAt
+                - podUID
+                type: object
             type: object
         required:
         - spec

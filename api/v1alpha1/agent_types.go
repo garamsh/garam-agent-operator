@@ -225,6 +225,77 @@ type AgentStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	Epoch int64 `json:"epoch,omitempty"`
+
+	// placement is the Pod this Agent's agent last ran in, and the volume claim
+	// it ran on, as the controller observed them. A new Pod is a new placement;
+	// a container restarted in the same Pod is not. It is a report and is never
+	// read back by the controller.
+	// +optional
+	Placement *Placement `json:"placement,omitempty"`
+
+	// writerStopped is the evidence on which the controller last released a
+	// deleting Pod's fence: every container that could write the agent's state
+	// had terminated, or the Pod was never scheduled. It is written before the
+	// fence is released, and each release replaces it.
+	// +optional
+	WriterStopped *WriterStoppedEvidence `json:"writerStopped,omitempty"`
+}
+
+// Placement is one Pod an agent runs in and the claim of its state volume.
+type Placement struct {
+	// podUID is the UID of the Pod.
+	// +required
+	PodUID string `json:"podUID"`
+
+	// pvcUID is the UID of the claim the agent's state volume is bound through,
+	// when the Pod was first seen.
+	// +optional
+	PVCUID string `json:"pvcUID,omitempty"`
+}
+
+// WriterStoppedEvidence is what showed that a deleting Pod's writers had
+// stopped.
+type WriterStoppedEvidence struct {
+	// podUID is the UID of the Pod the evidence is about.
+	// +required
+	PodUID string `json:"podUID"`
+
+	// pvcUID is the UID of the state volume's claim at the time, empty where the
+	// Pod was never scheduled.
+	// +optional
+	PVCUID string `json:"pvcUID,omitempty"`
+
+	// containers are the containers that could write the agent's state, each in
+	// its terminated state. Empty where the Pod was never scheduled to a node, so
+	// none of them ever started.
+	// +optional
+	// +listType=atomic
+	Containers []TerminatedContainer `json:"containers,omitempty"`
+
+	// observedAt is when the controller read the evidence.
+	// +required
+	ObservedAt metav1.Time `json:"observedAt"`
+}
+
+// TerminatedContainer is one container's terminated state, as the kubelet
+// reported it.
+type TerminatedContainer struct {
+	// name is the container's name.
+	// +required
+	Name string `json:"name"`
+
+	// containerID is the runtime's ID of the container instance that
+	// terminated.
+	// +required
+	ContainerID string `json:"containerID"`
+
+	// exitCode is the code it exited with.
+	// +required
+	ExitCode int32 `json:"exitCode"`
+
+	// finishedAt is when it terminated.
+	// +optional
+	FinishedAt metav1.Time `json:"finishedAt,omitzero"`
 }
 
 // ConditionSynced is the condition type reporting whether the cluster carries
@@ -271,6 +342,43 @@ const (
 	// ReasonWorkloadNotObserved is set when the controller stopped before
 	// reconciling a workload, so it read none and observed no readiness.
 	ReasonWorkloadNotObserved = "WorkloadNotObserved"
+)
+
+// ConditionWriterFence is the condition type reporting the controller's last
+// decision on a deleting Pod of this Agent: whether the agent's writers there
+// were positively seen to stop. True is released on evidence; Unknown is
+// unverified, and the Pod is held until the evidence arrives or a person
+// releases it. The fence is never released on a timeout.
+const ConditionWriterFence = "WriterFence"
+
+// Reasons for the WriterFence condition.
+const (
+	// ReasonWriterStopped is set when every writing container was seen
+	// terminated, or the Pod was never scheduled, and the evidence was recorded
+	// in writerStopped before the Pod was released.
+	ReasonWriterStopped = "WriterStopped"
+
+	// ReasonContainerRunning is set when a writing container is still running,
+	// which is what a force-deleted Pod looks like until its node reports.
+	ReasonContainerRunning = "ContainerRunning"
+
+	// ReasonContainerWaiting is set when a writing container on a scheduled Pod
+	// is waiting. A waiting state reported by a node that may be partitioned is
+	// not evidence that the container never started.
+	ReasonContainerWaiting = "ContainerWaiting"
+
+	// ReasonNoContainerStatus is set when a scheduled Pod reports no status, or
+	// no container ID, for a writing container. An absent report can be a
+	// started process nobody observed.
+	ReasonNoContainerStatus = "NoContainerStatus"
+
+	// ReasonNodeUnknown is set when the Pod's node is gone or its Ready
+	// condition is Unknown, so the container states it reported may be stale.
+	ReasonNodeUnknown = "NodeUnknown"
+
+	// ReasonPVCChanged is set when the state volume's claim is missing or is
+	// not the one the Pod started with.
+	ReasonPVCChanged = "PVCChanged"
 )
 
 // +kubebuilder:object:root=true
