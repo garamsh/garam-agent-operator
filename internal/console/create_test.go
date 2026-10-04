@@ -65,6 +65,7 @@ type created struct {
 	agent    string
 	revision string
 	epoch    string
+	kind     string
 	message  string
 }
 
@@ -80,10 +81,12 @@ func (e *env) create(t *testing.T, authority console.Authority, body []byte) cre
 		Agent    string `json:"agent"`
 		Revision string `json:"revision"`
 		Epoch    string `json:"epoch"`
+		Kind     string `json:"kind"`
 		Message  string `json:"message"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	return created{status: resp.StatusCode, agent: out.Agent, revision: out.Revision, epoch: out.Epoch, message: out.Message}
+	return created{status: resp.StatusCode, agent: out.Agent, revision: out.Revision, epoch: out.Epoch,
+		kind: out.Kind, message: out.Message}
 }
 
 func TestCreate_CreatesTheAgentWithRevisionOneRecordedForItsAssignment(t *testing.T) {

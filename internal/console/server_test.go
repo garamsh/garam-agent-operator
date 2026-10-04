@@ -93,6 +93,7 @@ type env struct {
 	introspector *introspector
 	registrar    *registrar
 	definitions  definition.Service
+	repository   definition.Repository
 	profile      definition.ProfileRef
 	template     definition.TemplateRef
 	authorities  int
@@ -105,7 +106,8 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
 	reg := &registrar{}
-	definitions := definition.NewService(repository.NewMemory(), reg)
+	store := repository.NewMemory()
+	definitions := definition.NewService(store, reg)
 	p, err := definitions.PublishProfile(ctx, org, "small", definition.ExecutionSettings{})
 	require.NoError(t, err)
 	profile := definition.ProfileRef{Name: p.Name, Version: p.Version}
@@ -125,7 +127,8 @@ func newEnv(t *testing.T) *env {
 
 	e := &env{
 		introspector: &introspector{answers: map[console.Authority]answer{}}, registrar: reg,
-		definitions: definitions, profile: profile, template: definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
+		definitions: definitions, repository: store, profile: profile,
+		template: definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
 	}
 	server := httptest.NewServer(console.NewHandler(console.Config{
 		Definitions:  definitions,
@@ -141,13 +144,18 @@ func newEnv(t *testing.T) *env {
 
 // body is a configure request's body.
 func (e *env) body(requestID, ego string, expected int) []byte {
+	return e.bodyWithKey(requestID, ego, expected, "model-api-key/api-key")
+}
+
+// bodyWithKey is a configure request's body whose model names its key by keyRef.
+func (e *env) bodyWithKey(requestID, ego string, expected int, keyRef string) []byte {
 	b, err := json.Marshal(map[string]any{
 		"requestId":        requestID,
 		"expectedRevision": strconv.Itoa(expected),
 		"profile":          map[string]any{"name": e.profile.Name, "version": e.profile.Version},
 		"configuration": map[string]any{
 			"model": map[string]string{"provider": "anthropic", "baseUrl": "https://api.anthropic.com",
-				"name": "claude-opus-5-5", "apiKeyRef": "model-api-key"},
+				"name": "claude-opus-5-5", "apiKeyRef": keyRef},
 			"ego":   ego,
 			"tools": map[string]string{"web_fetch": "sha256:aa"},
 		},
@@ -187,6 +195,7 @@ func (e *env) authorize(requestID string, body []byte, change func(*console.Bind
 type response struct {
 	status    int
 	revision  string
+	kind      string
 	message   string
 	challenge string
 }
@@ -204,10 +213,11 @@ func (e *env) configure(t *testing.T, authority console.Authority, body []byte) 
 	defer func() { _ = resp.Body.Close() }()
 	var out struct {
 		Revision string `json:"revision"`
+		Kind     string `json:"kind"`
 		Message  string `json:"message"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	return response{status: resp.StatusCode, revision: out.Revision, message: out.Message,
+	return response{status: resp.StatusCode, revision: out.Revision, kind: out.Kind, message: out.Message,
 		challenge: resp.Header.Get("WWW-Authenticate")}
 }
 

@@ -122,7 +122,7 @@ func config(ego string, tools definition.ToolPins) definition.Configuration {
 			Provider: "anthropic",
 			BaseURL:  "https://api.anthropic.com",
 			Name:     "claude-opus-5-5",
-			APIKey:   "model-api-key",
+			APIKey:   "model-api-key/api-key",
 		},
 		Ego:   ego,
 		Tools: tools,

@@ -10,10 +10,14 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
-// errorBody is every refusal's answer.
+// errorBody is every refusal's answer. Kind names a refusal a client branches on.
 type errorBody struct {
+	Kind    string `json:"kind,omitempty"`
 	Message string `json:"message"`
 }
+
+// kindInvalidAPIKeyRef is the kind a malformed model key reference is refused under.
+const kindInvalidAPIKeyRef = "invalid_api_key_ref"
 
 // respondError translates err to its status. It is the only place a status is chosen for an
 // error, and the only place one is logged.
@@ -31,6 +35,8 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeMessage(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, errInvalidBody):
 		writeMessage(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, definition.ErrInvalidSecretRef):
+		writeJSON(w, http.StatusBadRequest, errorBody{Kind: kindInvalidAPIKeyRef, Message: err.Error()})
 	case errors.Is(err, definition.ErrNotFound):
 		writeMessage(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, definition.ErrStaleRevision), errors.Is(err, definition.ErrRequestReused),
