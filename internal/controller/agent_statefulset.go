@@ -6,6 +6,7 @@ import (
 	"path"
 	"slices"
 	"strconv"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -341,11 +342,29 @@ func (r *AgentReconciler) agentArgumentsFor(agent *agentv1alpha1.Agent,
 			args.assignmentEpoch = identity.AssignmentEpoch
 		}
 	}
-	if agent.Spec.Ego != "" {
+	if r.egoFor(agent, descriptor) != "" {
 		args.egoFile = descriptor.egoFileIn(descriptor.configMountPath)
 	}
 
 	return args
+}
+
+// egoFor is the text of the ego file an Agent's agent is given: the ego its
+// spec declares, and garam's reply instruction after it wherever the adapter is
+// placed, because only then does a message in garam's envelope arrive. The spec
+// holds what its author wrote and nothing of this operator's; the instruction is
+// joined here, at rendering. Where the spec declares no ego, the instruction is
+// the whole file, and the file replaces the default ego the agent's image
+// carries (ADR 0041). Empty means no ego file.
+func (r *AgentReconciler) egoFor(agent *agentv1alpha1.Agent, descriptor agentTypeDescriptor) string {
+	if !r.adapterBuilt(agent) {
+		return agent.Spec.Ego
+	}
+	if agent.Spec.Ego == "" {
+		return descriptor.garamReplyInstruction
+	}
+
+	return strings.TrimRight(agent.Spec.Ego, "\n") + "\n\n" + descriptor.garamReplyInstruction
 }
 
 // applyConfig builds the config file an Agent's declared tool set and model
@@ -368,7 +387,8 @@ func (r *AgentReconciler) agentArgumentsFor(agent *agentv1alpha1.Agent,
 func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
 	container *corev1.Container, descriptor agentTypeDescriptor) error {
 	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
-	ego := agent.Spec.Ego != ""
+	egoText := r.egoFor(agent, descriptor)
+	ego := egoText != ""
 	if len(agent.Spec.Tools.Pins) == 0 && agent.Spec.Model == nil && !ego {
 		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
 			return initContainer.Name == configContainerName
@@ -397,7 +417,7 @@ func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *a
 	config.Command = writeConfigCommand(descriptor.configMountPath, descriptor, ego)
 	config.Env = []corev1.EnvVar{{Name: configContentVariable, Value: file}}
 	if ego {
-		config.Env = append(config.Env, corev1.EnvVar{Name: egoContentVariable, Value: agent.Spec.Ego})
+		config.Env = append(config.Env, corev1.EnvVar{Name: egoContentVariable, Value: egoText})
 	}
 	config.SecurityContext = containerSecurityContext()
 	config.VolumeMounts = []corev1.VolumeMount{{Name: configVolumeName, MountPath: descriptor.configMountPath}}

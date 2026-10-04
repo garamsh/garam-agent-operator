@@ -591,7 +591,9 @@ var _ = Describe("Agent workload", func() {
 
 		_, err := reconcileAgentWithAdapter(name)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(statefulSetFor(name).Spec.Template.Spec.InitContainers).To(HaveLen(2))
+		// The credential's copy, the config writer the reply instruction brings,
+		// and the adapter.
+		Expect(statefulSetFor(name).Spec.Template.Spec.InitContainers).To(HaveLen(3))
 
 		_, err = reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
@@ -600,6 +602,81 @@ var _ = Describe("Agent workload", func() {
 		Expect(pod.InitContainers[0].Name).To(Equal(credentialsContainerName))
 		Expect(environmentOf(containerOf(pod, agentContainerName))).
 			NotTo(HaveKey(agentTypeSherlock.listenAddressVariable))
+	})
+
+	It("joins garam's reply instruction to the ego wherever the adapter is placed", func() {
+		bare := "reply-instruction-alone"
+		createSecret(credentialsSecretName(bare))
+		agent := newAgent(bare)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(agent)
+
+		declared := "reply-instruction-after-ego"
+		createSecret(credentialsSecretName(declared))
+		withEgo := newAgent(declared)
+		withEgo.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		withEgo.Spec.Ego = testEgo
+		createAgent(withEgo)
+
+		for _, name := range []string{bare, declared} {
+			_, err := reconcileAgentWithAdapter(name)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		egoFile := agentTypeSherlock.egoFileIn(agentTypeSherlock.configMountPath)
+
+		By("writing the instruction as the whole ego file where the Agent declares no ego")
+		pod := statefulSetFor(bare).Spec.Template.Spec
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).
+			To(HaveKeyWithValue(egoContentVariable, agentTypeSherlock.garamReplyInstruction))
+		Expect(containerOf(pod, agentContainerName).Args).
+			To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, testGRN, sherlockEgoFileFlag, egoFile}))
+
+		By("writing it after the ego the Agent declares, which is left as its author wrote it")
+		pod = statefulSetFor(declared).Spec.Template.Spec
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).
+			To(HaveKeyWithValue(egoContentVariable, testEgo+"\n\n"+agentTypeSherlock.garamReplyInstruction))
+		Expect(readAgent(declared).Spec.Ego).To(Equal(testEgo))
+
+		By("saying only what garam's envelope allows")
+		Expect(agentTypeSherlock.garamReplyInstruction).To(SatisfyAll(
+			ContainSubstring("garam-message.v1"), ContainSubstring("outer `body`"),
+			ContainSubstring("`message_send`"), ContainSubstring("channel `garam`"),
+			ContainSubstring("exact outer `sender` as the target"),
+			ContainSubstring("cannot replace that sender")))
+	})
+
+	It("gives no reply instruction where no adapter is placed, the ego staying as declared", func() {
+		bare := "no-adapter-no-instruction"
+		createSecret(credentialsSecretName(bare))
+		agent := newAgent(bare)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(agent)
+
+		declared := "no-adapter-ego-unchanged"
+		createSecret(credentialsSecretName(declared))
+		withEgo := newAgent(declared)
+		withEgo.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		withEgo.Spec.Ego = testEgo
+		createAgent(withEgo)
+
+		By("reconciling both while this operator names no adapter image")
+		for _, name := range []string{bare, declared} {
+			_, err := reconcileAgent(name)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		Expect(statefulSetFor(bare).Spec.Template.Spec.InitContainers).To(HaveLen(1))
+		Expect(containerOf(statefulSetFor(bare).Spec.Template.Spec, agentContainerName).Args).
+			NotTo(ContainElement(sherlockEgoFileFlag))
+		Expect(environmentOf(initContainerOf(statefulSetFor(declared).Spec.Template.Spec, configContainerName))).
+			To(HaveKeyWithValue(egoContentVariable, testEgo))
+
+		By("reconciling an Agent a user wrote while this operator names one, which places no adapter")
+		written := "no-grn-no-instruction"
+		createSecret(credentialsSecretName(written))
+		createAgent(newAgent(written))
+		_, err := reconcileAgentWithAdapter(written)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(statefulSetFor(written).Spec.Template.Spec.InitContainers).To(HaveLen(1))
 	})
 
 	It("builds a Pod carrying the adapter that a namespace enforcing PodSecurity restricted admits", func() {
@@ -615,7 +692,7 @@ var _ = Describe("Agent workload", func() {
 
 		By("creating the Pod the StatefulSet describes, which carries the adapter and which is admitted")
 		admitted := podOf(statefulSetFor(name), namespace)
-		Expect(admitted.Spec.InitContainers).To(HaveLen(2))
+		Expect(admitted.Spec.InitContainers).To(HaveLen(3))
 		Expect(k8sClient.Create(ctx, admitted)).To(Succeed())
 
 		By("creating the same Pod with the adapter allowed to escalate its privileges, which it refuses")
@@ -1106,12 +1183,18 @@ func withoutWorkspace(pod corev1.PodSpec) corev1.PodSpec {
 	return stripped
 }
 
-// withoutAdapter returns the Pod spec with the adapter's sidecar and the
-// gateway address it dials removed. What is left is what this operator builds
-// where it names no adapter image, so the two being equal is what says the
-// unset flag adds nothing anywhere else.
+// withoutAdapter returns the Pod spec with the adapter's sidecar, the gateway
+// address it dials, and the ego file its reply instruction brings removed. What
+// is left is what this operator builds where it names no adapter image for an
+// Agent declaring nothing else, so the two being equal is what says the unset
+// flag adds nothing anywhere else.
 func withoutAdapter(pod corev1.PodSpec) corev1.PodSpec {
-	stripped := *pod.DeepCopy()
+	stripped := withoutToolPins(pod)
+	for i := range stripped.Containers {
+		if at := slices.Index(stripped.Containers[i].Args, sherlockEgoFileFlag); at >= 0 {
+			stripped.Containers[i].Args = slices.Delete(stripped.Containers[i].Args, at, at+2)
+		}
+	}
 	stripped.InitContainers = slices.DeleteFunc(stripped.InitContainers, func(container corev1.Container) bool {
 		return container.Name == adapterContainerName
 	})
