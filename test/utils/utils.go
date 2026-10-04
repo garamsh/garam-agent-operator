@@ -120,13 +120,18 @@ func IsCertManagerCRDsInstalled() bool {
 // LoadImageToKindClusterWithName loads a local docker image to the kind cluster
 func LoadImageToKindClusterWithName(name string) error {
 	kindOptions := []string{"load", "docker-image", name, "--name", KindCluster()}
-	kindBinary := defaultKindBinary
-	if v, ok := os.LookupEnv("KIND"); ok {
-		kindBinary = v
-	}
-	cmd := exec.Command(kindBinary, kindOptions...)
+	cmd := exec.Command(KindBinary(), kindOptions...)
 	_, err := Run(cmd)
 	return err
+}
+
+// KindBinary is the kind executable the run was given in KIND, or the one on
+// PATH.
+func KindBinary() string {
+	if v, ok := os.LookupEnv("KIND"); ok {
+		return v
+	}
+	return defaultKindBinary
 }
 
 // GetNonEmptyLines converts given command output string into individual objects
