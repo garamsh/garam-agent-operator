@@ -42,7 +42,8 @@ func (g garam) mint(t *testing.T, requestID string, body []byte) string {
 // controllerClient presents the certificate garam issued the controller the agent is assigned to.
 func (g garam) controllerClient() *http.Client {
 	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		RootCAs: apiClient.Transport.(*http.Transport).TLSClientConfig.RootCAs, Certificates: []tls.Certificate{g.stack.controller},
+		RootCAs:      apiClient.Transport.(*http.Transport).TLSClientConfig.RootCAs,
+		Certificates: []tls.Certificate{g.stack.controller},
 	}}}
 }
 
@@ -65,18 +66,37 @@ SELECT $1::text, 1, $2::text, 1, '{}', (SELECT position FROM next)`, g.agent(), 
 	return profile
 }
 
+// configureRequest is the configure route's body, as the console sends it.
+type configureRequest struct {
+	RequestID        string `json:"requestId"`
+	ExpectedRevision string `json:"expectedRevision"`
+	Profile          struct {
+		Name    string `json:"name"`
+		Version int    `json:"version"`
+	} `json:"profile"`
+	Configuration struct {
+		Model struct {
+			Provider  string `json:"provider"`
+			BaseURL   string `json:"baseUrl"`
+			Name      string `json:"name"`
+			APIKeyRef string `json:"apiKeyRef"`
+		} `json:"model"`
+		Ego   string            `json:"ego"`
+		Tools map[string]string `json:"tools"`
+	} `json:"configuration"`
+}
+
 func configureBody(requestID, profile, ego string, expected int) []byte {
-	b, err := json.Marshal(map[string]any{
-		"requestId":        requestID,
-		"expectedRevision": strconv.Itoa(expected),
-		"profile":          map[string]any{"name": profile, "version": 1},
-		"configuration": map[string]any{
-			"model": map[string]string{"provider": "anthropic", "baseUrl": "https://api.anthropic.com",
-				"name": "claude-opus-5-5", "apiKeyRef": "model-api-key"},
-			"ego":   ego,
-			"tools": map[string]string{"web_fetch": "sha256:aa"},
-		},
-	})
+	var in configureRequest
+	in.RequestID, in.ExpectedRevision = requestID, strconv.Itoa(expected)
+	in.Profile.Name, in.Profile.Version = profile, 1
+	in.Configuration.Model.Provider = "anthropic"
+	in.Configuration.Model.BaseURL = "https://api.anthropic.com"
+	in.Configuration.Model.Name = "claude-opus-5-5"
+	in.Configuration.Model.APIKeyRef = "model-api-key"
+	in.Configuration.Ego = ego
+	in.Configuration.Tools = map[string]string{"web_fetch": "sha256:aa"}
+	b, err := json.Marshal(in)
 	if err != nil {
 		panic(err)
 	}

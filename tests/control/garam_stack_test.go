@@ -249,7 +249,9 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	var org struct {
 		GRN string `json:"grn"`
 	}
-	if err := s.browser(http.MethodPost, "/orgs", "", map[string]string{"name": "acme"}, http.StatusCreated, &org); err != nil {
+	if err := s.create(http.MethodPost, "/orgs", "", struct {
+		Name string `json:"name"`
+	}{Name: "acme"}, &org); err != nil {
 		return err
 	}
 	s.orgGRN = org.GRN
@@ -279,14 +281,18 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 		return err
 	}
 
-	delegation := map[string]any{
-		"requestId":   "e2e-delegation",
-		"controllers": []string{s.controllerGRN},
-		"operations":  []string{"agent:create", "agent:configure", "agent:activate"},
-		"expiresAt":   time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
+	delegation := struct {
+		RequestID   string   `json:"requestId"`
+		Controllers []string `json:"controllers"`
+		Operations  []string `json:"operations"`
+		ExpiresAt   string   `json:"expiresAt"`
+	}{
+		RequestID:   "e2e-delegation",
+		Controllers: []string{s.controllerGRN},
+		Operations:  []string{"agent:create", "agent:configure", "agent:activate"},
+		ExpiresAt:   time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 	}
-	return s.browser(http.MethodPut, "/orgs/"+s.orgID+"/operators/control/delegation",
-		garamContract, delegation, http.StatusCreated, nil)
+	return s.create(http.MethodPut, "/orgs/"+s.orgID+"/operators/control/delegation", garamContract, delegation, nil)
 }
 
 // enrolled is an operator garam signed a certificate for, over a key generated here.
@@ -308,8 +314,10 @@ func (s *garamStack) enroll(identifier string) (enrolled, error) {
 			Token string `json:"token"`
 		} `json:"enrollment"`
 	}
-	if err := s.browser(http.MethodPost, "/orgs/"+s.orgID+"/operators", "",
-		map[string]string{"identifier": identifier, "name": identifier}, http.StatusCreated, &registered); err != nil {
+	if err := s.create(http.MethodPost, "/orgs/"+s.orgID+"/operators", "", struct {
+		Identifier string `json:"identifier"`
+		Name       string `json:"name"`
+	}{Identifier: identifier, Name: identifier}, &registered); err != nil {
 		return enrolled{}, err
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -346,15 +354,20 @@ func (s *garamStack) enroll(identifier string) (enrolled, error) {
 
 // mintAuthority has garam mint, for the signed-in user, an authority handing this service
 // operation on target for requestID and the body whose digest is bodySHA256.
-func (s *garamStack) mintAuthority(operation, target, requestID, bodySHA256 string) (authority, operationRef string, err error) {
+func (s *garamStack) mintAuthority(operation, target, requestID, bodySHA256 string) (
+	authority, operationRef string, err error,
+) {
 	var minted struct {
 		Authority    string `json:"authority"`
 		OperationRef string `json:"operationRef"`
 	}
-	err = s.browser(http.MethodPost, "/orgs/"+s.orgID+"/operation-authorities", garamContract, map[string]string{
-		"audience": s.hosted, "operation": operation, "target": target,
-		"requestId": requestID, "bodySha256": bodySHA256,
-	}, http.StatusCreated, &minted)
+	err = s.create(http.MethodPost, "/orgs/"+s.orgID+"/operation-authorities", garamContract, struct {
+		Audience   string `json:"audience"`
+		Operation  string `json:"operation"`
+		Target     string `json:"target"`
+		RequestID  string `json:"requestId"`
+		BodySHA256 string `json:"bodySha256"`
+	}{s.hosted, operation, target, requestID, bodySHA256}, &minted)
 	return minted.Authority, minted.OperationRef, err
 }
 
@@ -372,12 +385,16 @@ func (s *garamStack) createAgent(requestID string) (agent, epoch string, err err
 		Epoch string `json:"epoch"`
 	}
 	err = s.machineCall(s.hostedTLS, http.MethodPost, "/operators/"+url.PathEscape(s.controllerGRN)+"/managed-agents",
-		enrollmentContract, map[string]string{"requestId": requestID, "operationRef": ref}, http.StatusCreated, &created)
+		enrollmentContract, struct {
+			RequestID    string `json:"requestId"`
+			OperationRef string `json:"operationRef"`
+		}{requestID, ref}, http.StatusCreated, &created)
 	return created.GRN, created.Epoch, err
 }
 
-func (s *garamStack) browser(method, path, contract string, in any, want int, out any) error {
-	return call(http.DefaultClient, method, s.apiURL+path, contract, s.session, in, want, out)
+// create calls the browser API as the fixture's signed-in user, refusing any answer but 201.
+func (s *garamStack) create(method, path, contract string, in any, out any) error {
+	return call(http.DefaultClient, method, s.apiURL+path, contract, s.session, in, http.StatusCreated, out)
 }
 
 func (s *garamStack) machineCall(client *http.Client, method, path, contract string, in any, want int, out any) error {
@@ -385,12 +402,12 @@ func (s *garamStack) machineCall(client *http.Client, method, path, contract str
 }
 
 // call sends in as JSON and decodes the answer into out, refusing any status but want.
-func call(client *http.Client, method, url, contract string, cookie *http.Cookie, in any, want int, out any) error {
+func call(client *http.Client, method, target, contract string, cookie *http.Cookie, in any, want int, out any) error {
 	body, err := json.Marshal(in)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(method, url, bytes.NewReader(body))
+	req, err := http.NewRequest(method, target, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -403,7 +420,7 @@ func call(client *http.Client, method, url, contract string, cookie *http.Cookie
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", method, url, err)
+		return fmt.Errorf("%s %s: %w", method, target, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	answer, err := io.ReadAll(resp.Body)
@@ -411,7 +428,7 @@ func call(client *http.Client, method, url, contract string, cookie *http.Cookie
 		return err
 	}
 	if resp.StatusCode != want {
-		return fmt.Errorf("%s %s answered %d, want %d: %s", method, url, resp.StatusCode, want, answer)
+		return fmt.Errorf("%s %s answered %d, want %d: %s", method, target, resp.StatusCode, want, answer)
 	}
 	if out == nil {
 		return nil
