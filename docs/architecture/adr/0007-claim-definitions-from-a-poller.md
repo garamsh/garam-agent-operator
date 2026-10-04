@@ -1,6 +1,6 @@
 # ADR 0007: Claim garam's definitions from a poller beside the reconciler
 
-> Status: accepted; composition held by garam superseded by ADR-0032
+> Status: accepted; composition held by garam superseded by ADR-0032; the GRN never written in `AgentSpec` superseded by ADR-0037
 > Date: 2026-08-24
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

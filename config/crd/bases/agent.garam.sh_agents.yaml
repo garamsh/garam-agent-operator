@@ -68,6 +68,31 @@ spec:
                   image's default.
                 minLength: 1
                 type: string
+              identity:
+                description: |-
+                  identity is who the agent is in garam: the GRN garam minted for it and
+                  the assignment epoch this operator was proved to hold it at. It is written
+                  by this operator when it constructs the agent, and the agent is started
+                  under it. Unset on an Agent a user wrote, which is started under its own
+                  metadata.name instead: a development identity, not a GRN. The GRN cannot
+                  be changed or removed once set.
+                properties:
+                  assignmentEpoch:
+                    description: |-
+                      assignmentEpoch is the assignment epoch garam held this agent at when
+                      this operator was proved to hold it, opaque and verbatim. Only the writer
+                      of identity changes it. Unset means unknown.
+                    minLength: 1
+                    type: string
+                  grn:
+                    description: |-
+                      grn is the garam resource name of the agent, which the agent serves its
+                      routes under. It is opaque here and passed to the agent verbatim.
+                    minLength: 1
+                    type: string
+                required:
+                - grn
+                type: object
               image:
                 description: |-
                   image is the container image the agent runs. It has no default: name the
@@ -256,6 +281,10 @@ spec:
             - image
             - storageSize
             type: object
+            x-kubernetes-validations:
+            - message: identity.grn cannot be changed or removed once set
+              rule: '!has(oldSelf.identity) || (has(self.identity) && self.identity.grn
+                == oldSelf.identity.grn)'
           status:
             description: status defines the observed state of Agent
             properties:

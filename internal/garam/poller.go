@@ -76,9 +76,11 @@ func (p *Poller) poll(ctx context.Context) {
 	}
 }
 
-// correct brings the image of an agent this operator already built to the one it
-// is configured with, so that a corrected configuration reaches the agents
-// constructed while it was wrong.
+// correct brings the spec of an agent this operator already built to what
+// construction writes: the image it is configured with, so that a corrected
+// configuration reaches the agents constructed while it was wrong, and the
+// identity an agent constructed before the spec carried one has only in its
+// status.
 //
 // It runs before the credential is looked at rather than beside the certificate,
 // because construction is what places a credential and the agents this repairs
@@ -86,13 +88,13 @@ func (p *Poller) poll(ctx context.Context) {
 func (p *Poller) correct(ctx context.Context, agent GRN) {
 	log := logf.FromContext(ctx).WithName("garam")
 
-	corrected, err := p.constructor.CorrectImage(ctx, agent)
+	corrected, err := p.constructor.CorrectSpec(ctx, agent)
 	if err != nil {
-		log.Error(err, "Failed to correct the image of an agent this operator constructed", "agent", agent)
+		log.Error(err, "Failed to correct the spec of an agent this operator constructed", "agent", agent)
 		return
 	}
 	if corrected {
-		log.Info("Corrected the image of an agent this operator constructed", "agent", agent)
+		log.Info("Corrected the spec of an agent this operator constructed", "agent", agent)
 	}
 }
 

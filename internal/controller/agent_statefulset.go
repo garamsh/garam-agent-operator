@@ -267,9 +267,7 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	// Written on every pass, so that an operator that stops naming an image
 	// stops pointing the agent at what the Pod no longer carries.
 	container.Env = []corev1.EnvVar{{Name: descriptor.memoryPathVariable, Value: descriptor.memoryPath()}}
-	// Written on every pass for the same reason: an Agent that stops declaring
-	// an ego leaves the image's own command arguments in place.
-	container.Args = nil
+	container.Args = descriptor.renderArgs(r.agentArgumentsFor(agent, descriptor))
 
 	// The key reaches the agent's container and no other, from the Secret the
 	// spec names. sherlock reads a key from a variable only
@@ -303,6 +301,29 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	r.applyWorkspace(statefulSet, descriptor)
 
 	return controllerutil.SetControllerReference(agent, statefulSet, r.Scheme)
+}
+
+// agentArgumentsFor is what an Agent's spec passes its agent on the command
+// line. It reads the spec alone: the identity an agent is started under is a
+// Pod input, so it is never taken from the Agent's status.
+func (r *AgentReconciler) agentArgumentsFor(agent *agentv1alpha1.Agent,
+	descriptor agentTypeDescriptor) agentArguments {
+	// An Agent a user wrote carries no identity and is started under its own
+	// name: a development identity, unique in its namespace, and not a GRN.
+	args := agentArguments{agentID: agent.Name}
+	if identity := agent.Spec.Identity; identity != nil {
+		args.agentID = identity.GRN
+		// Only where the deployment's agent image accepts the flag: one that
+		// does not refuses to start on it.
+		if r.RenderAssignmentEpoch {
+			args.assignmentEpoch = identity.AssignmentEpoch
+		}
+	}
+	if agent.Spec.Ego != "" {
+		args.egoFile = descriptor.egoFileIn(descriptor.configMountPath)
+	}
+
+	return args
 }
 
 // applyConfig builds the config file an Agent's declared tool set and model
@@ -355,7 +376,6 @@ func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *a
 	config.Env = []corev1.EnvVar{{Name: configContentVariable, Value: file}}
 	if ego {
 		config.Env = append(config.Env, corev1.EnvVar{Name: egoContentVariable, Value: agent.Spec.Ego})
-		container.Args = descriptor.egoArgs(descriptor.egoFileIn(descriptor.configMountPath))
 	}
 	config.SecurityContext = containerSecurityContext()
 	config.VolumeMounts = []corev1.VolumeMount{{Name: configVolumeName, MountPath: descriptor.configMountPath}}

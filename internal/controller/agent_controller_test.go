@@ -33,6 +33,9 @@ func credentialsSecretName(agent string) string {
 	return agent + "-credentials"
 }
 
+// testGRN is the GRN garam minted for an agent this operator constructed.
+const testGRN = "grn:acme:default:agent:9f2ac1b40d8e7a35"
+
 // modelKeySecretName is the Secret the model of a baseline Agent of that name
 // takes its key from.
 func modelKeySecretName(agent string) string {
@@ -121,13 +124,27 @@ func reconcileAgentWithWorkspace(name string) (reconcile.Result, error) {
 // reconcileAgentWith runs one reconcile for the named Agent, with the images
 // this operator's own configuration carries.
 func reconcileAgentWith(name, workspaceImage string) (reconcile.Result, error) {
-	reconciler := &AgentReconciler{
+	return runReconcile(name, &AgentReconciler{
 		Client:         k8sClient,
 		Scheme:         k8sClient.Scheme(),
 		CopyImage:      testCopyImage,
 		WorkspaceImage: workspaceImage,
-	}
+	})
+}
 
+// reconcileAgentRenderingEpoch runs one reconcile for the named Agent, with this
+// operator passing agents their assignment epoch.
+func reconcileAgentRenderingEpoch(name string) (reconcile.Result, error) {
+	return runReconcile(name, &AgentReconciler{
+		Client:                k8sClient,
+		Scheme:                k8sClient.Scheme(),
+		CopyImage:             testCopyImage,
+		RenderAssignmentEpoch: true,
+	})
+}
+
+// runReconcile runs one reconcile for the named Agent through reconciler.
+func runReconcile(name string, reconciler *AgentReconciler) (reconcile.Result, error) {
 	return reconciler.Reconcile(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: name, Namespace: agentNamespace},
 	})
@@ -209,6 +226,36 @@ var _ = Describe("Agent", func() {
 		rejected.Spec.Model = newModel(rejected.Name)
 		rejected.Spec.Model.BaseURL = ""
 		Expect(k8sClient.Create(ctx, rejected)).To(MatchError(ContainSubstring("spec.model.baseURL")))
+	})
+
+	It("refuses changing or removing an identity's GRN, and accepts setting one and moving its epoch", func() {
+		agent := newAgent("keeps-its-grn")
+		createAgent(agent)
+
+		By("setting an identity on an Agent carrying none, which is what the upgrade does")
+		withIdentity := readAgent(agent.Name)
+		withIdentity.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, AssignmentEpoch: "7"}
+		Expect(k8sClient.Update(ctx, withIdentity)).To(Succeed())
+
+		By("moving the epoch alone, which the writer of the identity does")
+		movedEpoch := readAgent(agent.Name)
+		movedEpoch.Spec.Identity.AssignmentEpoch = "8"
+		Expect(k8sClient.Update(ctx, movedEpoch)).To(Succeed())
+
+		By("changing the GRN")
+		changed := readAgent(agent.Name)
+		changed.Spec.Identity.GRN = "grn:acme:default:agent:0a1b2c3d4e5f6071"
+		Expect(k8sClient.Update(ctx, changed)).
+			To(MatchError(ContainSubstring("identity.grn cannot be changed or removed once set")))
+
+		By("removing the identity")
+		removed := readAgent(agent.Name)
+		removed.Spec.Identity = nil
+		Expect(k8sClient.Update(ctx, removed)).
+			To(MatchError(ContainSubstring("identity.grn cannot be changed or removed once set")))
+
+		Expect(readAgent(agent.Name).Spec.Identity).To(Equal(
+			&agentv1alpha1.AgentIdentity{GRN: testGRN, AssignmentEpoch: "8"}))
 	})
 
 	It("reconciles an Agent that is gone without returning an error", func() {

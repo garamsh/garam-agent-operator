@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -96,8 +97,8 @@ func (a *Agent) Construct(ctx context.Context, definition garam.Definition, epoc
 }
 
 // ensureAgent creates the Agent definition describes where the namespace does
-// not carry one, and reports the GRN it was constructed from and the epoch garam
-// holds it at on it.
+// not carry one, with the GRN it was constructed from and the epoch garam holds
+// it at as its identity, and reports both on it.
 //
 // The spec it writes is this operator's configuration and the definition's
 // declaration, and the two never overlap: what a definition declares is the tool
@@ -112,6 +113,7 @@ func (a *Agent) ensureAgent(ctx context.Context, definition garam.Definition,
 			CredentialsSecretName: Name(agent) + credentialsSecretSuffix,
 			StorageSize:           a.storageSize,
 			Tools:                 agentv1alpha1.ToolSet{Pins: definition.Tools.Pins},
+			Identity:              identityOf(agent, epoch),
 		},
 	}
 
@@ -127,9 +129,9 @@ func (a *Agent) ensureAgent(ctx context.Context, definition garam.Definition,
 	if constructed.Status.Agent == string(agent) && constructed.Status.Epoch == epoch {
 		return constructed, nil
 	}
-	// Reported rather than written in the spec: neither a GRN garam minted nor
-	// the epoch it holds the agent at is something a user writes, and garam is
-	// where a claim is durable.
+	// Reported as well as written in the spec: the spec is what the agent is
+	// started under, and the status is what this operator observed and reports
+	// to garam, where a claim is durable.
 	//
 	// The epoch is written here and read everywhere else. The caller reaches
 	// this only after garam's certificate route answered, and that route answers
@@ -181,18 +183,24 @@ func (a *Agent) placeCredential(ctx context.Context, constructed *agentv1alpha1.
 	return nil
 }
 
-// CorrectImage brings the image of the Agent constructed for agent to the one
-// this operator is configured with, and reports whether the field moved.
+// CorrectSpec brings the fields of the Agent constructed for agent that
+// construction writes to what they should be, and reports whether any moved:
+// the image to the one this operator is configured with, and the identity,
+// where the spec carries none, to the GRN and epoch the construction reported.
 //
-// Construction writes that field from this operator's configuration and nothing
+// Construction writes the image from this operator's configuration and nothing
 // else can, so an image corrected after an agent was built reaches it by no
 // other route: a definition is claimed once, and editing the spec by hand is the
-// defect one level down.
+// defect one level down. The identity is the same case met once: an Agent
+// constructed before the spec carried one has it only in its status, and
+// construction is not reached again for an agent whose credential is placed.
+// It is filled and never changed, so no GRN is minted or moved and the names
+// derived from it stay as they are.
 //
 // What it writes is bounded by status.agent naming the same agent. That field
 // carries the GRN a construction recorded and is empty on an Agent a user wrote,
 // whose spec is theirs.
-func (a *Agent) CorrectImage(ctx context.Context, agent garam.GRN) (bool, error) {
+func (a *Agent) CorrectSpec(ctx context.Context, agent garam.GRN) (bool, error) {
 	constructed := &agentv1alpha1.Agent{}
 	err := a.client.Get(ctx, client.ObjectKey{Namespace: a.namespace, Name: Name(agent)}, constructed)
 	if apierrors.IsNotFound(err) {
@@ -204,24 +212,42 @@ func (a *Agent) CorrectImage(ctx context.Context, agent garam.GRN) (bool, error)
 	if constructed.Status.Agent != string(agent) {
 		return false, nil
 	}
-	if constructed.Spec.Image == a.image {
+
+	corrections := map[string]any{}
+	if constructed.Spec.Image != a.image {
+		corrections["image"] = a.image
+	}
+	if constructed.Spec.Identity == nil {
+		corrections["identity"] = identityOf(agent, constructed.Status.Epoch)
+	}
+	if len(corrections) == 0 {
 		return false, nil
 	}
 
 	// A merge patch and not an update: an update carries the resource version
 	// this object was read at, so a status written between the read and the
-	// write refuses it. The patch names the one field this writer decided.
-	patch, err := json.Marshal(map[string]any{
-		"spec": map[string]any{"image": a.image},
-	})
+	// write refuses it. The patch names only the fields this writer decided.
+	patch, err := json.Marshal(map[string]any{"spec": corrections})
 	if err != nil {
-		return false, fmt.Errorf("render the image of %s: %w", agent, err)
+		return false, fmt.Errorf("render the corrections of %s: %w", agent, err)
 	}
 	if err := a.client.Patch(ctx, constructed,
 		client.RawPatch(types.MergePatchType, patch)); err != nil {
-		return false, fmt.Errorf("correct the image of the agent constructed for %s: %w", agent, err)
+		return false, fmt.Errorf("correct the spec of the agent constructed for %s: %w", agent, err)
 	}
 	return true, nil
+}
+
+// identityOf is the identity an agent is started under: its GRN, and the epoch
+// garam was proved to hold it at where one is known. Zero is no epoch: garam's
+// epochs start at one, and an agent constructed before epochs were recorded
+// carries none.
+func identityOf(agent garam.GRN, epoch int64) *agentv1alpha1.AgentIdentity {
+	identity := &agentv1alpha1.AgentIdentity{GRN: string(agent)}
+	if epoch > 0 {
+		identity.AssignmentEpoch = strconv.FormatInt(epoch, 10)
+	}
+	return identity
 }
 
 // credentialsKey names the Secret an agent's workload mounts its credential
