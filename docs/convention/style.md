@@ -6,7 +6,8 @@ Consistency in how code is written. A formatter owns layout; these rules own wha
 
 - **Same concept, same name.** Pick one term per domain concept and use it everywhere. Mixing `user` and `member` for one thing is a defect, not a choice.
 - **Same kind, same shape.** Functions doing similar work follow the same verb pattern (`getUser`, `getOrder` — not `getUser`, `fetchOrder`).
-- **Concrete naming forms** (casing, affixes, file naming) follow the project's stack convention file, not this document.
+- **Shared concept, named file.** When two helpers share a concept, give the concept a name and name their file for it. The path then says what the file does, not that it holds helpers.
+- **Concrete naming forms** (casing, affixes, a file name's spelling and the names a stack bans) follow the project's stack convention file, not this document.
 
 ## Pattern consistency
 

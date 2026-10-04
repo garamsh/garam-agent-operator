@@ -3,8 +3,9 @@
 > How a Go module is laid out and where each kind of code belongs:
 > directories, naming, errors, logging, comments, tests, imports.
 >
-> Checked against Go 1.21 and mockery 3. A claim below that names no
-> version holds for these.
+> Checked against go1.21.13, mockery v3.7.4, goimports
+> (golang.org/x/tools) v0.49.0 and golangci-lint v2.13.2. A claim below
+> that names no version holds for these.
 
 ## Contents
 - 0. Folder & file naming — strict
@@ -20,58 +21,68 @@
 
 ## 0. Folder & file naming — strict
 
-Names describe **what they own**. **Banned at any level:**
-`model.go`, `utils/`, `helpers/`, `common/`, `ext/`, `adapter/`,
-`driver/`, `platform/`, `infra/`, `kit/`, `repo/`.
+**Banned at any level:** `model.go`.
 
-If two helpers share a concept, **give the concept a name**:
-`password_hashing.go`, `format_currency.go`. The path tells you what
-the file does.
-
-(Standard practice in the Go community: package names after the
-concept they own, not the role they play — `auth` over
-`auth_utils`. `spf13/cobra` and `go-kit/kit` both follow this.)
+Files named for a concept: `password_hashing.go`, `format_currency.go`.
 
 ## 1. Directory layout
 
 See §0 for the banned-name list.
 
-### Layout A — small service (default)
+**What the module is decides which layout governs it**, not how large
+it is:
+
+- **Service layout** — the module ships a binary.
+- **Library layout** — the module ships no binary and exists for other
+  modules to import.
+
+A module keeps that layout at any size, and changes layout only by
+gaining or losing `cmd/<binary>/main.go` — a change to the tree, not a
+line count crossed unnoticed.
+
+### Service layout
 
 - `cmd/<binary>/main.go` — the binary's entry point.
 - `internal/<domain>/<domain>.go` — the aggregate: domain types, DTOs
   and sentinel errors (`User`, `CreateUserInput`, `ErrUserNotFound`).
 - `internal/<domain>/service.go` — what the domain offers: `type
   Service interface { ... }`, unexported `type service struct { ... }`,
-  `NewService(...) Service`.
+  `NewService(...) Service`. A domain owes one once it has behaviour of
+  its own to offer. Holding types and persisting them is not that, and
+  neither is translating a request, composing commands or wiring a
+  runtime.
 - `internal/<domain>/<name>.go` — one dependency interface the domain
   needs, named for it: `repository.go` declares `type Repository
-  interface`, `mailer.go` declares `type Mailer interface`.
-- `internal/<domain>/<verb>.go` — one file per verb (`create.go`,
-  `update.go`, `query.go`); method bodies split by responsibility.
+  interface`, `mailer.go` declares `type Mailer interface`. No
+  condition and no threshold — the side that needs the behaviour
+  declares the contract, and one file holds one contract.
+- `internal/<domain>/<group>.go` — the service's method bodies
+  (`create.go`, `update.go`, `lifecycle.go`).
 - `internal/<domain>/service_test.go` — the service's tests (§7).
-- `internal/<domain>/<name>/` — the implementations of that dependency
-  interface, one file each (`repository/postgres.go`,
-  `repository/memory.go`); the in-memory one serves tests and dev.
-- `internal/<crosscutting>/` — a concern at least three domains
-  share, named by what it is.
+- `internal/<domain>/<pkg>/` — the implementations of that dependency
+  interface (`repository/postgres.go` or `memory/repository.go`); the
+  in-memory one serves tests and dev.
+- `internal/<crosscutting>/` — a concern extracted below the domains,
+  named by what it is.
 - `go.mod`, `go.sum` — module root.
 
 **Rules for `internal/<domain>/`:**
 
-- Split into `<verb>.go` only when the service has more than one
-  verb. A single-method service keeps that method in `service.go`.
-- **Every dependency interface gets its own file**, named for the
-  interface: `internal/<domain>/repository.go` declares `type
-  Repository interface`. No condition and no threshold — the side that
-  needs the behaviour declares the contract, and one file holds one
-  contract.
-- **Its implementations go in `internal/<domain>/<name>/`**, a package
-  named for the interface rather than for the technology behind it.
-  Two implementations of one interface are two files in that one
-  package.
+- Split the method bodies out of `service.go` only when the service
+  has more than one verb; a single-method service keeps that method
+  in `service.go`. One file per verb, named for it (`create.go`,
+  `update.go`); where several verbs serve one responsibility they
+  share one file, named for the responsibility (`lifecycle.go` for
+  create/activate/deactivate).
+- **A dependency interface's implementations go in
+  `internal/<domain>/<pkg>/` where a neighbouring package can
+  construct the aggregate**, so a driver import (`pgx`, a vendor SDK)
+  stays out of the domain package's import graph and its tests; where
+  unexported fields close the aggregate, only its own package can
+  construct one, so the implementation stays beside it and this rule
+  does not reach that domain.
 
-**One file vs several** inside `internal/<domain>/<name>/`:
+**One file vs several** inside `internal/<domain>/<pkg>/`:
 
 - **One file per implementation** (`postgres.go`, `memory.go`) when it
   is ≤ ~300 LoC and has no private helpers worth isolating.
@@ -79,30 +90,7 @@ See §0 for the banned-name list.
   `postgres_queries.go`) when it is > ~300 LoC or owns private
   helpers / connection-pool / per-SQL constants.
 
-### Layout B — domain-rich service (5k–30k LoC)
-
-Layout A's shape, with verb files grouped by responsibility and impl
-packages split across several files:
-
-- `internal/<domain>/lifecycle.go`, `internal/<domain>/billing.go`,
-  `internal/<domain>/permissions.go` — method bodies grouped by
-  responsibility (create/activate/deactivate, charge/refund,
-  authorize/deny).
-- `internal/<domain>/repository/postgres.go`,
-  `internal/<domain>/repository/postgres_queries.go` — one
-  implementation too big for one file.
-- `internal/<domain>/repository/memory.go` — the in-memory
-  implementation, in the same package.
-- Every other domain repeats the shape.
-
-`service.go` is optional: a domain that is only types and persistence
-has none. It arrives with business behaviour that coordinates multiple
-dependencies.
-
-A cross-cutting concern moves to its own `internal/<thing>/` package
-past ~300 LoC.
-
-### Layout C — library
+### Library layout
 
 - `<pkg>.go`, `<pkg>_test.go`, `go.mod`, `README.md` — all at the
   module root. `command.go`, `args.go` — one file per thing it owns.
@@ -112,7 +100,7 @@ past ~300 LoC.
 A root-level file exists when the module has that concern, and it is
 named after the concern:
 
-- `errors.go` — sentinels shared across domains (§4).
+- `errors.go` — sentinels no single domain owns (§4).
 - `config.go` — the module's configuration type and its loading.
 - `logger.go` — only when logger setup goes past `slog.Default()`
   (§5). A project that calls `slog.Default()` directly has no
@@ -120,21 +108,17 @@ named after the concern:
 - `httpserver.go` — server construction and route wiring, when the
   module serves HTTP.
 
-Sizing, for each of them:
-
-- **Single file (`errors.go`, `logger.go`, `config.go`, …)** when ≤
-  ~300 LoC. Filename = what's inside.
-- **Promotion to `internal/<thing>/`** when > ~300 LoC or owns private
-  helpers. Folder name describes what's inside
-  (`internal/logger/`, `internal/httpserver/`, `internal/config/`);
-  the §0 banned-name list applies.
-
-Multiple root-level files are fine: `errors.go` + `logger.go` +
-`config.go`, each named after its concern.
+Multiple root-level files are fine: several concerns (`errors.go` +
+`logger.go` + `config.go`), or one concern across several files
+(`httpserver.go` + `httpserver_routes.go`), each named after what it
+holds. The root is one package, so a second file for a concern is a
+name and not a boundary.
 
 ### Project envelope
 
-- `cmd/<binary>/main.go` is the **only place** that constructs concrete types and passes them to interfaces. Keep it thin.
+- **The module has one composition site**: the place that constructs concrete types and passes them to interfaces, deciding which implementation each interface gets. Everything else takes what it depends on as an argument. Keep it thin.
+- **That site is `cmd/<binary>/main.go`, unless a test outside `cmd/<binary>/` has to reach it** — a suite in `tests/` (§7) among them. Only a test in its own directory can import a main package, so where such a test exercises the wired binary the site is in a package `main.go` calls, and `main.go` holds that call. A site a test cannot call is one the test copies instead, and the copy goes on passing after the shipped wiring breaks.
+- **A test constructs what it puts under test** — the unit and whatever stands in for its dependencies, or the server the test points its client at. That is the test's subject, not a second composition site. What a test does not do is assemble the shipped graph a second time: where that graph is the subject, the test calls the composition site.
 - `internal/` is enforced by the Go toolchain. Use it for everything not explicitly public.
 - `pkg/` is for code other modules import. Most services don't need it.
 
@@ -147,21 +131,13 @@ file declares and which depends.
   `internal/<domain>/<name>.go` declare the types, sentinels, `Service`
   interface and dependency interfaces the rest of the domain is written
   against.
-- `internal/<domain>/<verb>.go` and the implementations in
-  `internal/<domain>/<name>/` depend on those declarations.
+- `internal/<domain>/<group>.go` and the implementations in
+  `internal/<domain>/<pkg>/` depend on those declarations.
 - `mocks/` — generated by mockery (§7) from the interfaces those files
   declare.
-- **The implementation lives in a sub-package of the package that
-  declares the interface.** `internal/<domain>/<name>/` may import
+- **The import goes one way.** `internal/<domain>/<pkg>/` may import
   `internal/<domain>` for the types in the interface's signatures; the
   reverse import never happens.
-- **A consumer imports the producer's interface, not its concrete
-  type.** `order` imports `billing.Charger`; the compiler does not
-  enforce this, so it is a review matter.
-- Within a domain and across domains those two rules point opposite
-  ways, for a reason: a domain declares the behaviour it needs and
-  publishes the behaviour it offers, so a need is declared beside its
-  consumer and an offer beside its producer.
 - Go rejects an import cycle at compile time but does not detect a
   `type → struct → type` cycle. Those are found by reading.
 
@@ -177,8 +153,9 @@ file declares and which depends.
   `Session`; a `Model` does not become a `Modeller`. Where that name is
   also one of the domain's verbs, the agent form breaks the tie: a
   `Store` verb, a `Storer` interface, one file each (§1).
-- **Functions / methods:** `MixedCaps`, verb-noun (`GetUser`,
-  `ParseToken`).
+- **Functions / methods:** `MixedCaps`, verb-noun for one that does
+  work (`GetUser`, `ParseToken`). A method that only returns a field
+  is named after the field: `Name()`, never `GetName()`.
 - **Constants:** `MixedCaps` (not `MAX_SIZE`). Group in `const ( ... )`.
 - **Variables:** short in small scopes, `MixedCaps` for package-level.
 - **Acronyms:** all-caps for the common form, consistent case
@@ -273,9 +250,7 @@ project says otherwise).
   unit under test through its exported API. **Default to this.**
 - **Internal tests** (`package user`): same directory and package as
   the code under test. Use only when you genuinely need a white-box
-  seam (uncommon), or when the package cannot be imported — `package
-  main` cannot, so a test of one is internal by necessity rather than
-  by choice.
+  seam (uncommon).
 - **`tests/` at module root:** integration / E2E tests that wire
   multiple domains. Separate binary.
 - **In-process integration test client:** `httptest.NewServer`.
@@ -300,19 +275,17 @@ Where the project generates mocks, generate them with
   which mockery reads equally. One or the other, not both. It declares
   which interfaces to mock, output directory, package names,
   per-interface overrides.
-- **Generated location:** declared in that file via `outdir` per
-  `interface:` block. Default: `mocks/<package>/<Interface>.go` at
-  module root. A dependency interface is scoped to the one domain that
-  declares it, so `outdir: internal/<domain>/mocks/` fits it too. Pick
+- **Generated location:** declared in that file by `dir`, the output
+  directory, with `filename` for the file itself — at the top level,
+  or per interface in that interface's `config:` block under
+  `interfaces:`. Default: `mocks/<package>/<Interface>.go` at module
+  root. A dependency interface is scoped to the one domain that
+  declares it, so `dir: internal/<domain>/mocks/` fits it too. Pick
   one convention per project.
 - **Generation:** `mockery` (reads config) or `go generate ./...`
   when interfaces carry `//go:generate mockery` directives. Pick one.
 - **In tests:** the generated mock satisfies the interface; pass it
   as a constructor argument (`NewService(repo, mailer, logger)`).
-
-When a top-level domain depends on another top-level's interface, the
-test for the consumer uses the consumer-side mock (generated from the
-interface declared in the **producer's** top level).
 
 ## 8. Imports & dependencies
 

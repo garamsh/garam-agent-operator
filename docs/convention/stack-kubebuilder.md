@@ -32,9 +32,9 @@ The scaffold owns the top-level shape. `cmd/`, `api/`, `internal/`, `config/`,
 CLI; do not rename or relocate them, because the CLI writes into those exact
 paths on the next `create api` or `create webhook`.
 
-`test/utils/` is the one exception to the banned-name list. It is scaffolded ground, rewritten by the
-CLI, and renaming it desynchronizes the scaffold; leave it and do not read it
-as licence for a new `utils` elsewhere.
+`test/utils/` is scaffolded ground that the CLI rewrites, so its name is the framework's and not a folder
+named for its role by choice. Renaming it desynchronizes the scaffold; leave it, and do not read it as
+licence for a new `utils` elsewhere.
 
 ## 1. Directory layout
 

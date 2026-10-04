@@ -13,23 +13,21 @@ Current architecture of the system and the decisions behind it. This file is the
 2. **ADRs are append-only.** Once merged, the body is frozen. Exceptions: updating the status field (`accepted` → `superseded by ADR-XXXX`), fixing typos or broken links, and appending a dated entry under `## Errata` when the decision stands but a fact supporting it was wrong — the erratum names what falsified it, and the original text stays intact. A changed decision means a new ADR that supersedes the old one — never an edit.
 3. **Decisions land in pairs.** A PR that adds or supersedes an ADR must update the affected responsibility documents in the same PR. A PR with only one of the two is rejected — the final state must always live in the responsibility documents.
 4. Keep this index current: every responsibility document and every ADR is listed here. An ADR covers a decision that changes a project rule — a settled choice that does not affect the rules does not earn one.
-5. **Every domain or concern has a responsibility document.** The PR that introduces one adds its document; the PR that removes one deletes it. A system with no code yet has none, and that is the correct state.
+5. **Every domain or concern has a responsibility document.** The PR that introduces one adds its document; the PR that removes one deletes it. A system with no code yet has no more than `structure.md` (rule 6), and that is the correct state.
+6. **Structural rules live in `structure.md`.** The shape chosen at bootstrap imposes rules — what the unit is, what may reference what, when a new one is earned — and they belong in the responsibility document for that concern, where a reviewer cites one by line and a correction is an ordinary edit. Not the ADR: rule 2 freezes that body, so superseding the choice of shape would be the price of fixing a rule's wording.
+7. **A point the structural rules leave to the project is settled in an ADR** — the one recording the shape where the question is met at bootstrap, a later one where it is met later. Which side is taken decides what counts as a defect, so it is a decision under rule 4, and the ADR still holds the record after bootstrap. Nothing obliges a project to settle a question it has not met: until then the point waits under `structure.md`'s open questions, where it binds nothing, and moves into that document's current decisions when the project takes a side.
+8. **Structural rules yield only to what a framework imposes.** Where `structure.md` and a convention file decide the same case differently, `structure.md` governs, unless the stack-specific file that applies decides it as its framework imposes it — the alternative fails to build or run, so the project cannot restate it. A stack file's spelling of a structural rule is not that: the rule it spells is `structure.md`'s. The shape chosen at bootstrap is this project's own refinement of what a stack-neutral file states for every project. A project with no `structure.md` meets no such conflict, and this rule asks nothing of it.
 
-### What this file does not take from the template's §Rules
+### What this file does not take from the template
 
-The template's §Rules holds eight rules; this file holds five. That difference is decided, not stale. Every clause below names `structure.md` or `structures/`, artefacts this project does not have, so each fails the first ground in [ADR 0011](adr/0011-the-conventions-template-is-the-frame.md): the template's text describes a shape this project does not have.
+`structure.md` landed in #222, so the template's rules 5 to 8 are taken here. The refusal recorded in PR #68, and re-examined on 2026-08-31, applied to a project with no `structure.md`, and that ground is gone. Two clauses are still not taken. Both name the template's `structures/` folder, which this project chose from (ADR 0038) and never holds:
 
 | Not taken | Template commit | Why it cannot be true here |
 |---|---|---|
-| Rule 4's `structures/` sentence | `d2675ce` (`convention-driven-project#276`) | Names a directory this project never had, past a bootstrap it has already run. |
-| Rule 5's `structure.md` clause | `65523e6` (`convention-driven-project#287`) | Cites a rule 6 this file does not have, so taking it lands a dangling cross-reference. |
-| Rule 6, structural rules live in `structure.md` | `65523e6` (`convention-driven-project#287`) | Its subject is a file this project does not have. |
-| Rule 7, a point the structural rules leave to the project | `65523e6` (`convention-driven-project#287`) | Same subject. |
-| Rule 8, structural rules rank between the convention tiers | `214546f` (`convention-driven-project#300`) | Its operative clauses govern `structure.md` against the convention tiers; the only sentence that holds here is the one saying the rule asks nothing of a project without that file. |
+| §Structure's `structures/` bullet | `d2675ce`, `65523e6` | Describes a folder this repository does not have. |
+| Rule 4's `structures/` sentence | `d2675ce` (`convention-driven-project#276`) | Same folder. |
 
-Rules 4 to 7 were refused in PR #68 on that ground. ADR 0011 postdates that PR and supplies a test it did not have, so the refusal was re-examined clause by clause against the test on 2026-08-31 and it stands. Rule 8 is not a re-examination: it landed upstream after `c7d9353`, the template commit #68 synced to, so it was never in front of that PR and is refused here for the first time. The same two commits also add and then revise §Structure's `structures/` bullet, which is not taken either, on the ground PR #68 gives for not taking the folder it describes.
-
-Before a delta between this file and the template is called stale, read it against this list and against this project's merged pull requests for the path. The template's log alone cannot tell a change refused here from one never seen: an adapted file with unadopted upstream commits behind it looks the same either way.
+Before a delta between this file and the template is called stale, read it against this list and against this project's merged pull requests for the path.
 
 ## Index
 
@@ -41,6 +39,7 @@ Before a delta between this file and the template is called stale, read it again
 | `configuration.md` | How this operator's deployment is configured, and which repository owns each value |
 | `control.md` | The control service's desired state: definitions and revisions, templates, profiles, creation requests, and their store |
 | `delivery.md` | The images this project publishes, the reference a deployment uses, and where its output lands in a cluster |
+| `structure.md` | What a unit of this code is, what may reference what, and when a new unit is earned |
 | `integration.md` | How a change reaches `dev` and then `main`, and which checks run at each step |
 
 ### ADRs
@@ -84,3 +83,4 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0035-carry-an-agents-model-and-ego-in-its-spec-and-render-them-through-its-types-descriptor.md` | Carry an agent's model and ego in its spec, and render them into the Pod through its type's descriptor | accepted |
 | `adr/0036-persist-the-control-services-desired-state-in-its-own-postgresql-database.md` | Persist the control service's desired state in its own PostgreSQL database, through pgx v5 | accepted |
 | `adr/0037-carry-an-agents-identity-in-its-spec-and-start-the-agent-under-it.md` | Carry an agent's identity in its spec, and start the agent under it | accepted |
+| `adr/0038-partition-the-code-by-domain.md` | Partition the code by domain, and let a domain depend on a sibling through its surface in one direction | accepted |

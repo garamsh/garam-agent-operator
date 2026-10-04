@@ -3,8 +3,10 @@
 What an image is built from and what it may carry. Applies to every
 OCI image the project builds, whatever builds it.
 
-> Checked against the `docker/dockerfile:1` frontend. A claim below
-> that names no version holds for it.
+> Checked against the Dockerfile frontend
+> `docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e`,
+> run by BuildKit v0.33.1. A claim below that names no version holds
+> for these.
 
 - **`FROM <image>@sha256:…`.** A tag is a name that can be moved to
   different content; a digest is the content. Two builds a month apart
