@@ -37,7 +37,7 @@ Before a delta between this file and the template is called stale, read it again
 |---|---|
 | `agent.md` | The `agent.garam.sh` API group, the `Agent` kind, and its controller |
 | `configuration.md` | How this operator's deployment is configured, and which repository owns each value |
-| `control.md` | The control service's desired state: definitions and revisions, templates, profiles, creation requests, and their store |
+| `control.md` | The control service: definitions and revisions, templates, profiles, creation and configure requests, their store, and the console API that changes them |
 | `delivery.md` | The images this project publishes, the reference a deployment uses, and where its output lands in a cluster |
 | `structure.md` | What a unit of this code is, what may reference what, and when a new unit is earned |
 | `integration.md` | How a change reaches `dev` and then `main`, and which checks run at each step |
@@ -84,3 +84,4 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0036-persist-the-control-services-desired-state-in-its-own-postgresql-database.md` | Persist the control service's desired state in its own PostgreSQL database, through pgx v5 | accepted |
 | `adr/0037-carry-an-agents-identity-in-its-spec-and-start-the-agent-under-it.md` | Carry an agent's identity in its spec, and start the agent under it | accepted |
 | `adr/0038-partition-the-code-by-domain.md` | Partition the code by domain, and let a domain depend on a sibling through its surface in one direction | accepted |
+| `adr/0039-serve-the-consoles-mutations-from-a-console-domain-over-the-definition-domains-surface.md` | Serve the console's mutations from a console domain over the definition domain's surface, and keep the request record with the revision it produced | accepted |
