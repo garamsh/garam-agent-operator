@@ -59,7 +59,7 @@ type AgentReconciler struct {
 // +kubebuilder:rbac:groups=agent.garam.sh,resources=agents,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=agent.garam.sh,resources=agents/status,verbs=patch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get

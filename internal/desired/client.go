@@ -19,8 +19,9 @@ import (
 // The routes a refusal is counted against, which is the value of the route
 // label on refusalsTotal.
 const (
-	routeDesired = "desired"
-	routeStatus  = "status"
+	routeDesired             = "desired"
+	routeStatus              = "status"
+	routeCertificateRequests = "certificate_requests"
 )
 
 // requestMargin is how long past a long poll's wait a request may take before
@@ -78,6 +79,19 @@ type (
 	wireStatus struct {
 		ObservedRevision string `json:"observedRevision"`
 		RenderedRevision string `json:"renderedRevision"`
+	}
+	wireCertificateRequest struct {
+		RequestID             string `json:"requestId"`
+		Epoch                 string `json:"epoch"`
+		CertificateRequestPEM string `json:"certificateRequestPem"`
+	}
+	wireCertificate struct {
+		Agent          string    `json:"agent"`
+		Epoch          string    `json:"epoch"`
+		CertificatePEM string    `json:"certificatePem"`
+		IssuerPEM      string    `json:"issuerPem"`
+		ServerRootPEM  string    `json:"serverRootPem"`
+		NotAfter       time.Time `json:"notAfter"`
 	}
 	wireError struct {
 		Kind    string `json:"kind"`
@@ -152,8 +166,43 @@ func (c *Client) ReportStatus(ctx context.Context, agent, observed, rendered str
 	return c.do(request, routeStatus, nil)
 }
 
-// do sends request and decodes a 200 into answer where answer is not nil. A 4xx
-// is counted and returned as a *RefusalError.
+// RequestCertificate asks the control service to have garam sign a managed
+// agent's first certificate over the key csrPEM names (#218). requestID and
+// epoch identify the request: the same three again answer the stored result. A
+// 4xx answer is a *RefusalError, its Kind "epoch_superseded" where the epoch is
+// no longer the agent's.
+func (c *Client) RequestCertificate(ctx context.Context, agent, requestID, epoch string, csrPEM []byte) (Certificate, error) {
+	body, err := json.Marshal(wireCertificateRequest{
+		RequestID: requestID, Epoch: epoch, CertificateRequestPEM: string(csrPEM),
+	})
+	if err != nil {
+		return Certificate{}, fmt.Errorf("render the certificate request of %s: %w", agent, err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, requestMargin)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"https://"+c.address+"/v1/operators/self/agents/"+url.PathEscape(agent)+"/certificate-requests",
+		bytes.NewReader(body))
+	if err != nil {
+		return Certificate{}, fmt.Errorf("build the certificate request of %s: %w", agent, err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	var answer wireCertificate
+	if err := c.do(request, routeCertificateRequests, &answer); err != nil {
+		return Certificate{}, err
+	}
+
+	return Certificate{
+		Agent: answer.Agent, Epoch: answer.Epoch,
+		CertificatePEM: []byte(answer.CertificatePEM), IssuerPEM: []byte(answer.IssuerPEM),
+		ServerRootPEM: []byte(answer.ServerRootPEM), NotAfter: answer.NotAfter,
+	}, nil
+}
+
+// do sends request and decodes a 200 or 201 into answer where answer is not
+// nil. A 4xx is counted and returned as a *RefusalError.
 func (c *Client) do(request *http.Request, route string, answer any) error {
 	response, err := c.http.Do(request)
 	if err != nil {
@@ -171,7 +220,7 @@ func (c *Client) do(request *http.Request, route string, answer any) error {
 
 		return refusal
 	}
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
 		return fmt.Errorf("the control service's %s route answered %d", route, response.StatusCode)
 	}
 	if answer == nil {

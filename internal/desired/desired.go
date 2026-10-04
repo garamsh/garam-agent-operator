@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -54,6 +55,18 @@ type Model struct {
 	BaseURL   string
 	Name      string
 	APIKeyRef string
+}
+
+// Certificate is a managed agent's first certificate as the control service
+// answers it: the certificate, the authority that signed it, and the root garam's
+// listener is verified against. Its private key never leaves this operator.
+type Certificate struct {
+	Agent          string
+	Epoch          string
+	CertificatePEM []byte
+	IssuerPEM      []byte
+	ServerRootPEM  []byte
+	NotAfter       time.Time
 }
 
 // Renderer writes an agent's desired state into the Agent this operator builds

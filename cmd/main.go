@@ -27,6 +27,7 @@ import (
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 	"github.com/garamsh/garam-agent-operator/internal/controller"
 	"github.com/garamsh/garam-agent-operator/internal/desired"
+	"github.com/garamsh/garam-agent-operator/internal/desired/credential"
 	"github.com/garamsh/garam-agent-operator/internal/desired/renderer"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
@@ -386,10 +387,18 @@ func main() {
 				"Failed to render agents")
 			os.Exit(1)
 		}
-		puller := desired.NewPuller(desired.NewClient(controlAddress, tlsConfig),
-			renderer.NewAgent(mgr.GetClient(), namespace, agentImage))
+		controlClient := desired.NewClient(controlAddress, tlsConfig)
+		puller := desired.NewPuller(controlClient, renderer.NewAgent(mgr.GetClient(), namespace, agentImage))
 		if err := mgr.Add(puller); err != nil {
 			setupLog.Error(err, "Failed to add the desired-state puller", "address", controlAddress)
+			os.Exit(1)
+		}
+		// A managed agent's first certificate is requested through the control
+		// service over a key generated and persisted here first (#218).
+		issuer := desired.NewIssuer(controlClient,
+			credential.NewSecrets(mgr.GetClient(), mgr.GetAPIReader(), mgr.GetScheme(), namespace))
+		if err := mgr.Add(issuer); err != nil {
+			setupLog.Error(err, "Failed to add the managed-credential issuer", "address", controlAddress)
 			os.Exit(1)
 		}
 	} else {
