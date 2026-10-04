@@ -92,22 +92,26 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		return nil
 	}
 
-	credentials := client.ObjectKey{Namespace: agent.Namespace, Name: agent.Spec.CredentialsSecretName}
-	if err := r.credentialsExist(ctx, credentials); err != nil {
-		if apierrors.IsNotFound(err) {
-			// Creating the Secret is not a spec edit and wakes nothing on its
-			// own; the watch on Secrets is what brings this Agent back.
-			setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonCredentialsSecretMissing,
-				fmt.Sprintf("Secret %q does not exist, and the workload is not built until it does", credentials.Name))
-			// Unknown and not False: this reconcile read no workload, and a
-			// Secret deleted after one was built leaves that workload running.
-			setAvailable(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonWorkloadNotObserved,
-				"The workload was not reconciled, so its readiness was not observed. The Synced condition says why")
+	// Each Secret the workload reads is one whose absence leaves the Pod unable
+	// to start, so each is waited for the same way.
+	for _, required := range secretsRequiredBy(agent) {
+		key := client.ObjectKey{Namespace: agent.Namespace, Name: required.name}
+		if err := r.secretExists(ctx, key); err != nil {
+			if apierrors.IsNotFound(err) {
+				// Creating the Secret is not a spec edit and wakes nothing on its
+				// own; the watch on Secrets is what brings this Agent back.
+				setSynced(agent, metav1.ConditionFalse, required.missingReason,
+					fmt.Sprintf("Secret %q does not exist, and the workload is not built until it does", key.Name))
+				// Unknown and not False: this reconcile read no workload, and a
+				// Secret deleted after one was built leaves that workload running.
+				setAvailable(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonWorkloadNotObserved,
+					"The workload was not reconciled, so its readiness was not observed. The Synced condition says why")
 
-			return nil
+				return nil
+			}
+
+			return fmt.Errorf("get secret %q: %w", key.Name, err)
 		}
-
-		return fmt.Errorf("get credentials secret: %w", err)
 	}
 
 	statefulSet, err := r.reconcileStatefulSet(ctx, agent, descriptor)
@@ -140,10 +144,32 @@ func effectiveType(specType string) string {
 	return specType
 }
 
-// credentialsExist reads the metadata of the Secret an Agent names, and nothing
-// else of it. The agent reads its credentials as mounted files, so no part of
-// this operator — its cache included — holds the key material.
-func (r *AgentReconciler) credentialsExist(ctx context.Context, key client.ObjectKey) error {
+// requiredSecret is a Secret an Agent's workload reads, and the Synced reason
+// its absence is reported under.
+type requiredSecret struct {
+	name          string
+	missingReason string
+}
+
+// secretsRequiredBy lists the Secrets an Agent's workload cannot start without.
+func secretsRequiredBy(agent *agentv1alpha1.Agent) []requiredSecret {
+	required := []requiredSecret{{
+		name: agent.Spec.CredentialsSecretName, missingReason: agentv1alpha1.ReasonCredentialsSecretMissing,
+	}}
+	if agent.Spec.Model != nil {
+		required = append(required, requiredSecret{
+			name: agent.Spec.Model.APIKeySecretRef.Name, missingReason: agentv1alpha1.ReasonModelKeySecretMissing,
+		})
+	}
+
+	return required
+}
+
+// secretExists reads the metadata of a Secret an Agent names, and nothing else
+// of it. The agent reads its credentials as mounted files and its model's key
+// from its environment, so no part of this operator — its cache included —
+// holds the key material.
+func (r *AgentReconciler) secretExists(ctx context.Context, key client.ObjectKey) error {
 	secret := &metav1.PartialObjectMetadata{}
 	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
 
@@ -172,8 +198,12 @@ func (r *AgentReconciler) agentsNamingSecret(ctx context.Context, secret client.
 
 	var requests []reconcile.Request
 	for i := range agents.Items {
-		if agents.Items[i].Spec.CredentialsSecretName == secret.GetName() {
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&agents.Items[i])})
+		for _, required := range secretsRequiredBy(&agents.Items[i]) {
+			if required.name == secret.GetName() {
+				requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&agents.Items[i])})
+
+				break
+			}
 		}
 	}
 

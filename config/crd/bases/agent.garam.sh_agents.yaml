@@ -59,6 +59,15 @@ spec:
                   operator, and its keys are mounted into the agent as files.
                 minLength: 1
                 type: string
+              ego:
+                description: |-
+                  ego is the organisation's own statement the agent's instructions open
+                  with, in place of the default the agent's image embeds. It is the only
+                  part of the instructions this field reaches: the agent appends its own
+                  contract to it, and that contract is not configurable. Unset leaves the
+                  image's default.
+                minLength: 1
+                type: string
               image:
                 description: |-
                   image is the container image the agent runs. It has no default: name the
@@ -76,6 +85,55 @@ spec:
                   admits and grants none of the three.
                 minLength: 1
                 type: string
+              model:
+                description: |-
+                  model is the chat model the agent answers with. Unset leaves the agent on
+                  its own default, which for sherlock is a scripted mock that answers
+                  nothing. The settings are delivered to the agent in its config file, and
+                  the key is delivered from the Secret apiKeySecretRef names, as an
+                  environment variable of the agent's container only.
+                properties:
+                  apiKeySecretRef:
+                    description: |-
+                      apiKeySecretRef names the key of a Secret in the Agent's namespace that
+                      holds the endpoint's API key. The key is referenced, never carried: this
+                      operator does not read it, and the agent's workload is not built until the
+                      Secret exists. Agents on one endpoint can name one Secret.
+                    properties:
+                      key:
+                        description: key is the key within the Secret.
+                        minLength: 1
+                        type: string
+                      name:
+                        description: name is the name of the Secret.
+                        minLength: 1
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  baseURL:
+                    description: baseURL is the endpoint's API root, which is what
+                      chooses the vendor.
+                    minLength: 1
+                    type: string
+                  name:
+                    description: name is the model name passed to the endpoint.
+                    minLength: 1
+                    type: string
+                  provider:
+                    description: |-
+                      provider is the wire protocol the endpoint speaks, in the agent's own
+                      words: for sherlock, openai-compatible or anthropic-compatible. It is
+                      delivered to the agent and read nowhere here.
+                    minLength: 1
+                    type: string
+                required:
+                - apiKeySecretRef
+                - baseURL
+                - name
+                - provider
+                type: object
               resources:
                 description: |-
                   resources are the compute resources the agent container requests and is
@@ -216,9 +274,9 @@ spec:
                   are set, and they answer different questions:
 
                   - "Synced": True when the cluster carries the workload this Agent's spec
-                    asks for. False when the Secret named by credentialsSecretName does not
-                    exist, and False when the spec was edited in a way the running workload
-                    cannot take. The reason says which.
+                    asks for. False when the Secret named by credentialsSecretName or by
+                    model.apiKeySecretRef does not exist, and False when the spec was edited
+                    in a way the running workload cannot take. The reason says which.
 
                   - "Available": True when the workload reports a ready replica. False when
                     it reports none, which covers a replica still starting as much as one
