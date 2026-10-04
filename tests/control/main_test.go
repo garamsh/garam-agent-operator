@@ -1,7 +1,7 @@
 //go:build e2e
 
 // Package control_test runs the built control binary against a PostgreSQL container
-// and exercises the store it opened.
+// and reads the database it set up.
 package control_test
 
 import (
@@ -91,13 +91,7 @@ func run(m *testing.M) (int, error) {
 		return 0, err
 	}
 
-	poolConfig, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		return 0, err
-	}
-	// One connection per racing caller, so a race is not serialized by the pool.
-	poolConfig.MaxConns = concurrency
-	pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
+	pool, err = pgxpool.New(ctx, databaseURL)
 	if err != nil {
 		return 0, err
 	}

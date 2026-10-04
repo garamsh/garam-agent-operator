@@ -16,15 +16,17 @@ The control service's desired state: agents' execution definitions and their rev
 - **A creation is identified by its actor, organization and request id, and ends at most once.** It is stored `Pending` before garam is asked, then becomes `Registered` with the GRN garam minted or `Failed` with garam's refusal. A repeated request returns the stored outcome and never stores a second creation. One still `Pending` asks garam again, which `Registrar` requires to answer one key with one GRN. An error that is not a refusal leaves the outcome unknown, so the creation stays `Pending`. A repeated key naming a different template is refused with `ErrRequestReused`.
 - **garam's registration is the `Registrar` interface, with no implementation yet.** Its wire contract is still being agreed (`garamsh/garam#1155` §2).
 - **The store is `Repository`, and each rule's atomicity is the store's.** Appending a revision checks the latest in the same write, a creation is inserted or the stored one returned in one step, and a registration stores the creation's outcome and revision 1 together. `internal/definition/repository/memory.go` holds it in process for tests and development.
-- **The persistent store is a PostgreSQL database of the control service's own, through pgx v5.** `internal/definition/repository/postgres.go` implements `Repository`.
-  - **Schema.** `schema.sql` beside the implementation is embedded in the binary and applied at every start. Every statement in it only creates what is missing.
-  - **Stale revision.** The key on (agent, revision) refuses a second revision under one number, so of two updates based on one revision, one is stored and the other is refused as stale.
-  - **Duplicate creation.** The key on (actor, organization, request id) leaves one creation per request; an insert that meets it stores nothing.
-  - **Registration.** It locks the creation's row and stores the outcome and revision 1 in one transaction.
-  - **Publication.** A profile or template publication locks its table, so two publications cannot take one version number.
-  - **Errors.** The driver's errors do not leave the implementation: a missing row is `ErrNotFound`, a duplicate revision is `ErrStaleRevision`, and anything else is opaque.
+- **The persistent store is a PostgreSQL database of the control service's own, through pgx v5. Its schema is built and its data methods are not.**
+  - **Schema.** `internal/definition/repository/schema.sql` is embedded in the binary, which applies it at every start through `Postgres.ApplySchema`. Every statement in it only creates what is missing.
+  - **Constraints.** A second revision under one (agent, revision) is refused by that key, and a second creation under one (actor, organization, request id) by that one. These are the constraints the stale-revision and duplicate-creation rules rest on.
+  - **Data methods.** The PostgreSQL implementation of `Repository` lands with issue #211's first slice, where the binary serves the routes that create and update. Its code waits on the branch `feat/control-store-data`.
 - **Domain behaviour is tested on the in-memory store**, in `internal/definition/*_test.go`. `testing.md` keeps a real database out of the integration layer.
-- **The PostgreSQL store is tested at the e2e layer**, in `tests/control/`. It builds `cmd/control` and runs it against a PostgreSQL container that testcontainers-go starts. It then exercises the store on the schema the binary applied: a stale revision refused, one of several concurrent updates on one revision stored, a repeated creation returning the first outcome, and concurrent repeats of one creation storing one. `make test-e2e-control` runs it, and `make test-e2e` runs it first.
+- **What the e2e layer verifies of the store today is what the built binary produced.** `tests/control/` builds `cmd/control`, runs it against a PostgreSQL container that testcontainers-go starts, and reads the database the binary set up:
+  - the schema's tables exist once `/readyz` answers;
+  - a second revision under one number is refused beside an accepted first;
+  - a second creation under one key is refused beside an accepted first and a different key.
+  - `make test-e2e-control` runs it, and `make test-e2e` runs it first.
+- **The behaviours the in-memory store's tests cover arrive at the e2e layer with #211**, tested through the binary's routes: a stale revision refused, concurrent updates on one revision storing one, a repeated creation returning the first outcome, and concurrent repeats of one creation storing one.
 
 ## Rationale
 
