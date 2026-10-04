@@ -39,6 +39,7 @@ Before a delta between this file and the template is called stale, read it again
 |---|---|
 | `agent.md` | The `agent.garam.sh` API group, the `Agent` kind, and its controller |
 | `configuration.md` | How this operator's deployment is configured, and which repository owns each value |
+| `control.md` | The control service's desired state: definitions and revisions, templates, profiles, creation requests, and their store |
 | `delivery.md` | The images this project publishes, the reference a deployment uses, and where its output lands in a cluster |
 | `integration.md` | How a change reaches `dev` and then `main`, and which checks run at each step |
 
@@ -78,3 +79,4 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0030-carry-the-operators-certificate-expiry-and-garams-refusals-as-metrics.md` | Carry the operator's certificate expiry and garam's refusals as metrics, under names an alert can depend on | accepted |
 | `adr/0031-support-agents-declared-in-garam-on-one-cluster-of-the-sherlock-type.md` | Support agents declared in garam, on one cluster, of the sherlock type, and keep a hand-written `Agent` to development | accepted |
 | `adr/0033-publish-the-control-service-as-a-second-image-to-its-own-repository.md` | Publish the control service as a second image, to a repository of its own, under the rules every image here follows | accepted |
+| `adr/0036-persist-the-control-services-desired-state-in-its-own-postgresql-database.md` | Persist the control service's desired state in its own PostgreSQL database, through pgx v5 | accepted |
