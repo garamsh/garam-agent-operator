@@ -62,7 +62,12 @@ type agentTypeDescriptor struct {
 	// workspaceAddress is where the workspace listens and the agent dials.
 	workspaceAddress string
 
-	// listenAddressVariable is the workspace's own listen address;
+	// gatewayAddress is where the agent's gateway listens and garam's adapter
+	// dials it.
+	gatewayAddress string
+
+	// listenAddressVariable is the listen address of the process it is set on:
+	// the workspace's, and the agent's gateway where the adapter is built;
 	// workspaceAddressVariable is the agent's address for the workspace. They
 	// are the two ends of one link.
 	listenAddressVariable    string
@@ -124,6 +129,12 @@ var agentTypeSherlock = agentTypeDescriptor{
 	// loopback, which is the only bind sherlock's unauthenticated listener
 	// accepts (sherlock@8218189:docs/architecture/deployment.md:45-53).
 	workspaceAddress: "127.0.0.1:8081",
+
+	// sherlock's own default for addr, and loopback for the reason
+	// workspaceAddress is (sherlock@ecf4621:internal/config/config.go:25,167).
+	// It is written to the agent where the adapter is built, so the two ends of
+	// that link are one value this operator chose.
+	gatewayAddress: "127.0.0.1:8080",
 
 	// sherlock's settings addr, workspace-addr, workspace and exec-uid, under the
 	// SHERLOCK_ prefix and the dash-to-underscore mapping every one of its

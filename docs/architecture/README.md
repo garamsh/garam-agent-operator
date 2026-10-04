@@ -80,6 +80,7 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0031-support-agents-declared-in-garam-on-one-cluster-of-the-sherlock-type.md` | Support agents declared in garam, on one cluster, of the sherlock type, and keep a hand-written `Agent` to development | accepted; §1 superseded by ADR-0032 |
 | `adr/0032-own-an-agents-desired-definition-in-this-projects-control-service.md` | Own an agent's desired definition in this project's control service, and render every `Agent` carrying a GRN from it | accepted |
 | `adr/0033-publish-the-control-service-as-a-second-image-to-its-own-repository.md` | Publish the control service as a second image, to a repository of its own, under the rules every image here follows | accepted |
+| `adr/0034-place-garams-adapter-as-a-native-sidecar-beside-every-agent-this-operator-constructed.md` | Place garam's adapter as a native sidecar beside every agent this operator constructed, and own its placement only | accepted |
 | `adr/0035-carry-an-agents-model-and-ego-in-its-spec-and-render-them-through-its-types-descriptor.md` | Carry an agent's model and ego in its spec, and render them into the Pod through its type's descriptor | accepted |
 | `adr/0036-persist-the-control-services-desired-state-in-its-own-postgresql-database.md` | Persist the control service's desired state in its own PostgreSQL database, through pgx v5 | accepted |
 | `adr/0037-carry-an-agents-identity-in-its-spec-and-start-the-agent-under-it.md` | Carry an agent's identity in its spec, and start the agent under it | accepted |

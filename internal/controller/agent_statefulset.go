@@ -16,6 +16,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
 )
 
 const (
@@ -35,6 +36,17 @@ const (
 	// and reaches this process over the Pod's loopback interface, at the address
 	// the agent type's descriptor names.
 	workspaceContainerName = "workspace"
+
+	// adapterContainerName is garam's adapter: the process carrying messages
+	// between garam and the agent's gateway. It is a native sidecar, an init
+	// container that keeps running, because it has to outlive the agent while
+	// the Pod shuts down (garam@fdfb76d:docs/architecture/adapter.md:28-33).
+	adapterContainerName = "adapter"
+
+	// adapterCredentialsMountPath is where the adapter reads the agent's
+	// credential. It is this operator's path for garam's process, the same
+	// for every agent type, so it is not the descriptor's.
+	adapterCredentialsMountPath = "/run/garam/credentials"
 
 	credentialsVolumeName       = "credentials"
 	credentialsSecretVolumeName = "credentials-secret"
@@ -292,9 +304,19 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 			corev1.EnvVar{Name: descriptor.workspaceAddressVariable, Value: descriptor.workspaceAddress})
 	}
 
+	// The agent's end of the adapter's link, written only where the adapter is
+	// built, as the workspace's address is.
+	if r.adapterBuilt(agent) {
+		container.Env = append(container.Env,
+			corev1.EnvVar{Name: descriptor.listenAddressVariable, Value: descriptor.gatewayAddress})
+	}
+
 	if err := r.applyConfig(agent, statefulSet, container, descriptor); err != nil {
 		return err
 	}
+	// After the config container, so that the init containers that run to
+	// completion come first; nothing the adapter reads depends on the order.
+	r.applyAdapter(agent, statefulSet, descriptor)
 
 	// Last, because appending to the container slice can move it and leave
 	// every pointer taken out of it above stale.
@@ -424,6 +446,72 @@ func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet, descri
 	// mounted here — the workspace reads no credential, and every container
 	// mounting it is one more that can.
 	workspace.VolumeMounts = []corev1.VolumeMount{{Name: stateVolumeName, MountPath: descriptor.stateMountPath}}
+}
+
+// adapterBuilt reports whether an Agent's Pod carries garam's adapter. It needs
+// an image to run, the listener to claim from, and the GRN it carries messages
+// for, which garam refuses to start without; an Agent a user wrote carries no
+// GRN, and garam does not know it.
+func (r *AgentReconciler) adapterBuilt(agent *agentv1alpha1.Agent) bool {
+	return r.AdapterImage != "" && r.GaramAddress != "" && agent.Spec.Identity != nil
+}
+
+// applyAdapter builds garam's adapter as a native sidecar of the agent's Pod,
+// and removes it again where adapterBuilt says the Pod carries none — so that an
+// operator that stops naming an adapter image builds the workload it built
+// before one could be named. This operator places the adapter and configures
+// it; what it does with messages is garam's.
+//
+// Every setting is one garam reads at garam@fdfb76d:internal/cli/cli.go:64-81,
+// 172-178. The adapter is the agent to garam and dials the agent's gateway over
+// loopback, so both identifiers are the agent's GRN: the gateway serves the
+// agent under the ID it was started with, which is that GRN (ADR 0037).
+func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
+	descriptor agentTypeDescriptor) {
+	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
+	if !r.adapterBuilt(agent) {
+		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
+			return initContainer.Name == adapterContainerName
+		})
+
+		return
+	}
+
+	grn := agent.Spec.Identity.GRN
+	adapter := containerNamed(initContainers, adapterContainerName)
+	adapter.Image = r.AdapterImage
+	// Pulled at every start on the ground the agent's image is.
+	adapter.ImagePullPolicy = corev1.PullAlways
+	adapter.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+	// garam's image runs garam (garam@fdfb76d:deploy/local/Dockerfile:58), and
+	// the adapter is its subcommand. No probe: the adapter listens on nothing
+	// (garam@fdfb76d:docs/architecture/deployment-contract.md:473-477).
+	adapter.Args = []string{"adapter"}
+	adapter.SecurityContext = containerSecurityContext()
+	adapter.Env = []corev1.EnvVar{
+		{Name: "GARAM_ADAPTER_AGENT", Value: grn},
+		{Name: "GARAM_ADAPTER_MACHINE_URL", Value: "https://" + r.GaramAddress},
+		{Name: "GARAM_ADAPTER_GATEWAY_URL", Value: "http://" + descriptor.gatewayAddress},
+		{Name: "GARAM_ADAPTER_GATEWAY_AGENT", Value: grn},
+		{Name: "GARAM_ADAPTER_TLS_CERT_FILE", Value: adapterCredentialsMountPath + "/" + constructor.CertificateKey},
+		{Name: "GARAM_ADAPTER_TLS_KEY_FILE", Value: adapterCredentialsMountPath + "/" + constructor.KeyKey},
+		{Name: "GARAM_ADAPTER_SERVER_ROOT_FILE", Value: adapterCredentialsMountPath + "/" + constructor.ServerRootKey},
+	}
+	adapter.VolumeMounts = adapterVolumeMounts()
+}
+
+// adapterVolumeMounts is what the adapter reads, and nothing the agent alone
+// does: the copy of the agent's credential, read-only, because the adapter is
+// the agent to garam and reads the same key file the agent renews. It owns that
+// copy for the reason the agent does — every container runs as the Pod's user.
+//
+// Two mounts are to join here and are not built: the placement token Secret
+// (#212), which the adapter alone reads, and the agent's outbox
+// (/var/lib/sherlock/memory/outbox on the state volume,
+// sherlock@ecf4621:internal/gateway/outbox.go:18-26), which waits for the
+// adapter setting that names it (garam#1169).
+func adapterVolumeMounts() []corev1.VolumeMount {
+	return []corev1.VolumeMount{{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true}}
 }
 
 // containerNamed returns the container called name out of containers, appending

@@ -469,6 +469,167 @@ var _ = Describe("Agent workload", func() {
 			To(MatchError(ContainSubstring(`violates PodSecurity "restricted:latest"`)))
 	})
 
+	It("places garam's adapter as a native sidecar that reaches garam as the agent and its gateway on loopback", func() {
+		name := "places-the-adapter"
+		createSecret(credentialsSecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(agent)
+
+		_, err := reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+		pod := statefulSetFor(name).Spec.Template.Spec
+		adapter := initContainerOf(pod, adapterContainerName)
+
+		By("running garam's adapter subcommand as a sidecar that keeps running, answering no probe")
+		Expect(adapter.Image).To(Equal(testAdapterImage))
+		Expect(adapter.ImagePullPolicy).To(Equal(corev1.PullAlways))
+		Expect(adapter.RestartPolicy).To(HaveValue(Equal(corev1.ContainerRestartPolicyAlways)))
+		Expect(adapter.Command).To(BeEmpty())
+		Expect(adapter.Args).To(Equal([]string{"adapter"}))
+		Expect(adapter.LivenessProbe).To(BeNil())
+		Expect(adapter.ReadinessProbe).To(BeNil())
+		Expect(adapter.StartupProbe).To(BeNil())
+
+		By("starting after the credential it reads has been copied")
+		names := make([]string, 0, len(pod.InitContainers))
+		for _, initContainer := range pod.InitContainers {
+			names = append(names, initContainer.Name)
+		}
+		Expect(slices.Index(names, adapterContainerName)).
+			To(BeNumerically(">", slices.Index(names, credentialsContainerName)))
+
+		By("configuring it as the agent, against garam's listener and the agent's gateway")
+		gatewayAddress := agentTypeSherlock.gatewayAddress
+		Expect(environmentOf(adapter)).To(Equal(map[string]string{
+			"GARAM_ADAPTER_AGENT":            testGRN,
+			"GARAM_ADAPTER_MACHINE_URL":      "https://" + testGaramAddress,
+			"GARAM_ADAPTER_GATEWAY_URL":      "http://" + gatewayAddress,
+			"GARAM_ADAPTER_GATEWAY_AGENT":    testGRN,
+			"GARAM_ADAPTER_TLS_CERT_FILE":    adapterCredentialsMountPath + "/certificate.pem",
+			"GARAM_ADAPTER_TLS_KEY_FILE":     adapterCredentialsMountPath + "/key.pem",
+			"GARAM_ADAPTER_SERVER_ROOT_FILE": adapterCredentialsMountPath + "/server-root.pem",
+		}))
+
+		By("mounting the agent's credential copy read-only, and nothing else")
+		Expect(adapter.VolumeMounts).To(ConsistOf(corev1.VolumeMount{
+			Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true,
+		}))
+
+		By("telling the agent's gateway to listen where the adapter dials, and mounting nothing new on the agent")
+		agentContainer := containerOf(pod, agentContainerName)
+		Expect(environmentOf(agentContainer)).To(HaveKeyWithValue(agentTypeSherlock.listenAddressVariable, gatewayAddress))
+		for _, mount := range agentContainer.VolumeMounts {
+			Expect(mount.MountPath).NotTo(Equal(adapterCredentialsMountPath))
+		}
+	})
+
+	It("builds the Pod it built before an adapter existed where this operator names no adapter image", func() {
+		shared := "shared-adapter-credentials"
+		createSecret(shared)
+
+		By("reconciling an Agent while this operator names an adapter image")
+		named := "adapter-image-named"
+		withAdapter := newAgent(named)
+		withAdapter.Spec.CredentialsSecretName = shared
+		withAdapter.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(withAdapter)
+		_, err := reconcileAgentWithAdapter(named)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("reconciling an Agent identical to it while this operator names none")
+		unnamed := "adapter-image-unset"
+		withoutAdapterImage := newAgent(unnamed)
+		withoutAdapterImage.Spec.CredentialsSecretName = shared
+		withoutAdapterImage.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(withoutAdapterImage)
+		_, err = reconcileAgent(unnamed)
+		Expect(err).NotTo(HaveOccurred())
+
+		set := statefulSetFor(named).Spec.Template.Spec
+		unset := statefulSetFor(unnamed).Spec.Template.Spec
+
+		By("differing from the Pod built with one, which is what leaves the comparison below something to isolate")
+		Expect(set).NotTo(Equal(unset))
+
+		By("differing from it in the sidecar and the gateway's address and in nothing else")
+		Expect(withoutAdapter(set)).To(Equal(unset))
+	})
+
+	It("places no adapter beside an Agent with no GRN, or where no garam listener is configured", func() {
+		name := "adapter-without-grn"
+		createSecret(credentialsSecretName(name))
+		createAgent(newAgent(name))
+
+		By("reconciling an Agent a user wrote while this operator names an adapter image")
+		_, err := reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+		pod := statefulSetFor(name).Spec.Template.Spec
+		Expect(pod.InitContainers).To(HaveLen(1))
+		Expect(environmentOf(containerOf(pod, agentContainerName))).
+			NotTo(HaveKey(agentTypeSherlock.listenAddressVariable))
+
+		By("reconciling an Agent with a GRN while this operator names an image and no garam listener")
+		withGRN := "adapter-without-listener"
+		createSecret(credentialsSecretName(withGRN))
+		agent := newAgent(withGRN)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(agent)
+		_, err = runReconcile(withGRN, &AgentReconciler{
+			Client: k8sClient, Scheme: k8sClient.Scheme(), CopyImage: testCopyImage, AdapterImage: testAdapterImage,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(statefulSetFor(withGRN).Spec.Template.Spec.InitContainers).To(HaveLen(1))
+	})
+
+	It("takes the adapter back out when this operator stops naming an image for it", func() {
+		name := "drops-the-adapter"
+		createSecret(credentialsSecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(agent)
+
+		_, err := reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(statefulSetFor(name).Spec.Template.Spec.InitContainers).To(HaveLen(2))
+
+		_, err = reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		pod := statefulSetFor(name).Spec.Template.Spec
+		Expect(pod.InitContainers).To(HaveLen(1))
+		Expect(pod.InitContainers[0].Name).To(Equal(credentialsContainerName))
+		Expect(environmentOf(containerOf(pod, agentContainerName))).
+			NotTo(HaveKey(agentTypeSherlock.listenAddressVariable))
+	})
+
+	It("builds a Pod carrying the adapter that a namespace enforcing PodSecurity restricted admits", func() {
+		name := "adapter-satisfies-restricted"
+		createSecret(credentialsSecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(agent)
+
+		_, err := reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+		namespace := restrictedNamespace("psa-" + name)
+
+		By("creating the Pod the StatefulSet describes, which carries the adapter and which is admitted")
+		admitted := podOf(statefulSetFor(name), namespace)
+		Expect(admitted.Spec.InitContainers).To(HaveLen(2))
+		Expect(k8sClient.Create(ctx, admitted)).To(Succeed())
+
+		By("creating the same Pod with the adapter allowed to escalate its privileges, which it refuses")
+		refused := podOf(statefulSetFor(name), namespace)
+		refused.Name += "-escalating"
+		at := slices.IndexFunc(refused.Spec.InitContainers, func(container corev1.Container) bool {
+			return container.Name == adapterContainerName
+		})
+		Expect(at).To(BeNumerically(">=", 0))
+		refused.Spec.InitContainers[at].SecurityContext.AllowPrivilegeEscalation = ptr.To(true)
+		Expect(k8sClient.Create(ctx, refused)).
+			To(MatchError(ContainSubstring(`violates PodSecurity "restricted:latest"`)))
+	})
+
 	It("writes the tool set an Agent declares into a file the agent reads, and points the agent at it", func() {
 		name := "declares-a-tool-set"
 		createSecret(credentialsSecretName(name))
@@ -940,6 +1101,23 @@ func withoutWorkspace(pod corev1.PodSpec) corev1.PodSpec {
 		if len(stripped.Containers[i].Env) == 0 {
 			stripped.Containers[i].Env = nil
 		}
+	}
+
+	return stripped
+}
+
+// withoutAdapter returns the Pod spec with the adapter's sidecar and the
+// gateway address it dials removed. What is left is what this operator builds
+// where it names no adapter image, so the two being equal is what says the
+// unset flag adds nothing anywhere else.
+func withoutAdapter(pod corev1.PodSpec) corev1.PodSpec {
+	stripped := *pod.DeepCopy()
+	stripped.InitContainers = slices.DeleteFunc(stripped.InitContainers, func(container corev1.Container) bool {
+		return container.Name == adapterContainerName
+	})
+	for i := range stripped.Containers {
+		stripped.Containers[i].Env = slices.DeleteFunc(stripped.Containers[i].Env,
+			func(variable corev1.EnvVar) bool { return variable.Name == agentTypeSherlock.listenAddressVariable })
 	}
 
 	return stripped

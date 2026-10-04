@@ -34,6 +34,14 @@ type AgentReconciler struct {
 	// executes. Empty builds the Pod with no workspace at all.
 	WorkspaceImage string
 
+	// AdapterImage is the image garam's adapter runs from, beside every agent
+	// this operator constructed. Empty builds the Pod with no adapter at all.
+	AdapterImage string
+
+	// GaramAddress is the host and port of garam's machine listener, which the
+	// adapter claims an agent's messages from.
+	GaramAddress string
+
 	// RenderAssignmentEpoch passes an agent its assignment epoch on the command
 	// line. It is off until the agent image the deployment runs accepts the flag,
 	// because one that does not refuses to start on it.
