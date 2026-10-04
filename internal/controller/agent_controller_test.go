@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -301,6 +302,53 @@ var _ = Describe("Agent", func() {
 
 		Expect(readAgent(agent.Name).Spec.Identity).To(Equal(
 			&agentv1alpha1.AgentIdentity{GRN: testGRN, AssignmentEpoch: "8"}))
+	})
+
+	It("lets an identity's source move from Garam to Control and never back", func() {
+		agent := newAgent("moves-its-source")
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceGaram}
+		createAgent(agent)
+
+		By("the control: switching from Garam to Control, which the #1171 switch does")
+		switched := readAgent(agent.Name)
+		switched.Spec.Identity.Source = agentv1alpha1.DesiredSourceControl
+		Expect(k8sClient.Update(ctx, switched)).To(Succeed())
+
+		By("moving back to Garam")
+		back := readAgent(agent.Name)
+		back.Spec.Identity.Source = agentv1alpha1.DesiredSourceGaram
+		Expect(k8sClient.Update(ctx, back)).To(MatchError(ContainSubstring("identity.source cannot leave Control once set")))
+
+		By("clearing it, which would read as Garam")
+		cleared := readAgent(agent.Name)
+		cleared.Spec.Identity.Source = ""
+		Expect(k8sClient.Update(ctx, cleared)).To(MatchError(ContainSubstring("identity.source cannot leave Control once set")))
+
+		Expect(readAgent(agent.Name).Spec.Identity.Source).To(Equal(agentv1alpha1.DesiredSourceControl))
+	})
+
+	It("reports a storage class the claimed volume cannot change to, beside an unchanged one", func() {
+		name := "changes-its-storage-class"
+		createSecret(credentialsSecretName(name))
+		createAgent(newAgent(name))
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("the control: the class the volume was claimed with")
+		synced := meta.FindStatusCondition(readAgent(name).Status.Conditions, agentv1alpha1.ConditionSynced)
+		Expect(synced.Reason).To(Equal(agentv1alpha1.ReasonWorkloadReconciled))
+
+		By("asking for another class")
+		edited := readAgent(name)
+		edited.Spec.StorageClassName = ptr.To("fast")
+		Expect(k8sClient.Update(ctx, edited)).To(Succeed())
+		_, err = reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		synced = meta.FindStatusCondition(readAgent(name).Status.Conditions, agentv1alpha1.ConditionSynced)
+		Expect(synced.Status).To(Equal(metav1.ConditionFalse))
+		Expect(synced.Reason).To(Equal(agentv1alpha1.ReasonStorageClassImmutable))
+		Expect(statefulSetFor(name).Spec.VolumeClaimTemplates[0].Spec.StorageClassName).To(BeNil())
 	})
 
 	It("reconciles an Agent that is gone without returning an error", func() {

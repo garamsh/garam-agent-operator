@@ -9,6 +9,7 @@ import (
 
 // AgentSpec defines the desired state of Agent
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || (has(self.identity) && self.identity.grn == oldSelf.identity.grn)",message="identity.grn cannot be changed or removed once set"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || !has(oldSelf.identity.source) || oldSelf.identity.source != 'Control' || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="identity.source cannot leave Control once set"
 type AgentSpec struct {
 	// type names the agent binary the workload carries. Today three are admitted
 	// — sherlock, claude-code and codex — and each maps to a different
@@ -112,7 +113,29 @@ type AgentIdentity struct {
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	AssignmentEpoch string `json:"assignmentEpoch,omitempty"`
+
+	// source is where this agent's desired state comes from. Garam is a garam
+	// definition, read once when the agent is constructed. Control is the
+	// control service's desired feed, which every new revision is rendered from.
+	// Absent is Garam, which is every agent constructed before this field
+	// existed. One source holds a GRN at a time, and Control is never left once
+	// set.
+	// +optional
+	// +kubebuilder:validation:Enum=Garam;Control
+	Source DesiredSource `json:"source,omitempty"`
 }
+
+// DesiredSource names where an agent's desired state comes from.
+type DesiredSource string
+
+// The sources an agent's desired state can come from.
+const (
+	// DesiredSourceGaram is a garam definition.
+	DesiredSourceGaram DesiredSource = "Garam"
+
+	// DesiredSourceControl is the control service's desired feed.
+	DesiredSourceControl DesiredSource = "Control"
+)
 
 // ModelSpec is the chat model an Agent answers with. Every field is required,
 // because a field left out would fall back to the agent's own default for it —
@@ -318,6 +341,10 @@ const (
 	// ReasonStorageSizeImmutable is set when the spec asks for a volume size the
 	// workload cannot be changed to.
 	ReasonStorageSizeImmutable = "StorageSizeImmutable"
+
+	// ReasonStorageClassImmutable is set when the spec asks for a storage class
+	// the workload's volume cannot be changed to.
+	ReasonStorageClassImmutable = "StorageClassImmutable"
 
 	// ReasonTypeUnimplemented is set when the spec names an admitted type the
 	// controller has not yet learned to build. The workload is not built until

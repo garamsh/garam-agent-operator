@@ -26,6 +26,8 @@ import (
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 	"github.com/garamsh/garam-agent-operator/internal/controller"
+	"github.com/garamsh/garam-agent-operator/internal/desired"
+	"github.com/garamsh/garam-agent-operator/internal/desired/renderer"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
 	"github.com/garamsh/garam-agent-operator/internal/garam/credentialstore"
@@ -64,6 +66,7 @@ func main() {
 	var enableHTTP2 bool
 	var garamAddress, garamCertificateFile, garamKeyFile, garamTrustFile string
 	var garamCredentialSecret, garamEnrollmentTokenFile string
+	var controlAddress, controlTrustFile string
 	var agentImage, agentStorageSize, agentCopyImage, agentWorkspaceImage, agentAdapterImage string
 	var garamPollInterval, garamRenewalInterval, garamReportInterval time.Duration
 	var tlsOpts []func(*tls.Config)
@@ -93,6 +96,12 @@ func main() {
 	flag.StringVar(&garamTrustFile, "garam-trust-file", "",
 		"The file holding what garam's machine listener is verified against. This is not the organization "+
 			"issuer an operator's own certificate arrives with.")
+	flag.StringVar(&controlAddress, "control-address", "",
+		"The host and port of the control service's API listener, which this operator pulls the desired state "+
+			"of the agents it controls from. Unset pulls nothing from it.")
+	flag.StringVar(&controlTrustFile, "control-trust-file", "",
+		"The file holding the root the control service's serving certificate is verified against. "+
+			"Required where control-address is set.")
 	flag.DurationVar(&garamPollInterval, "garam-poll-interval", time.Minute,
 		"How often this operator reads the definitions garam holds for it.")
 	flag.DurationVar(&garamReportInterval, "garam-report-interval", time.Minute,
@@ -355,6 +364,36 @@ func main() {
 		}
 	} else {
 		setupLog.Info("Reading no definitions and reporting nothing: garam-address is unset")
+	}
+
+	if controlAddress != "" {
+		// This operator is the controller its own certificate names, the same
+		// pair it presents to garam and reads at each handshake; only the root
+		// its peer is verified against differs (ADR 0043).
+		tlsConfig, err := garam.MutualTLS(garamCertificateFile, garamKeyFile, controlTrustFile)
+		if err != nil {
+			setupLog.Error(err, "Failed to configure the connection to the control service")
+			os.Exit(1)
+		}
+		namespace := os.Getenv(podNamespaceVariable)
+		if namespace == "" {
+			setupLog.Error(errors.New(podNamespaceVariable+" is unset"),
+				"Failed to name the namespace this operator writes in")
+			os.Exit(1)
+		}
+		if agentImage == "" {
+			setupLog.Error(errors.New("agent-image is required where control-address is set"),
+				"Failed to render agents")
+			os.Exit(1)
+		}
+		puller := desired.NewPuller(desired.NewClient(controlAddress, tlsConfig),
+			renderer.NewAgent(mgr.GetClient(), namespace, agentImage))
+		if err := mgr.Add(puller); err != nil {
+			setupLog.Error(err, "Failed to add the desired-state puller", "address", controlAddress)
+			os.Exit(1)
+		}
+	} else {
+		setupLog.Info("Pulling no desired state: control-address is unset")
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

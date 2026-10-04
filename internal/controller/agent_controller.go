@@ -9,6 +9,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -226,6 +227,10 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageSizeImmutable,
 			fmt.Sprintf("The volume was claimed at %s and spec.storageSize now asks for %s, which a StatefulSet's claim template cannot be changed to",
 				claimed.String(), agent.Spec.StorageSize.String()))
+	} else if claimedClass := claimedStorageClass(statefulSet); !ptr.Equal(claimedClass, agent.Spec.StorageClassName) {
+		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageClassImmutable,
+			fmt.Sprintf("The volume was claimed from storage class %s and spec.storageClassName now asks for %s, which a StatefulSet's claim template cannot be changed to",
+				describeStorageClass(claimedClass), describeStorageClass(agent.Spec.StorageClassName)))
 	} else {
 		setSynced(agent, metav1.ConditionTrue, agentv1alpha1.ReasonWorkloadReconciled,
 			fmt.Sprintf("StatefulSet %q carries what this Agent's spec asks for", statefulSet.Name))

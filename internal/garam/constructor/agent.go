@@ -5,8 +5,6 @@ package constructor
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -21,13 +19,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/agentname"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
-
-// credentialsSecretSuffix is what an agent's credential Secret is named after
-// the Agent it belongs to. The operator names it because nothing else can: the
-// Agent is constructed here and the definition carries no name for it.
-const credentialsSecretSuffix = "-credentials"
 
 // Agent constructs the agents garam assigned this operator, keeps the image it
 // wrote for them current, and observes the ones it has constructed.
@@ -98,7 +92,7 @@ func (a *Agent) ensureAgent(ctx context.Context, definition garam.Definition,
 		ObjectMeta: metav1.ObjectMeta{Name: Name(agent), Namespace: a.namespace},
 		Spec: agentv1alpha1.AgentSpec{
 			Image:                 a.image,
-			CredentialsSecretName: Name(agent) + credentialsSecretSuffix,
+			CredentialsSecretName: agentname.CredentialsSecret(string(agent)),
 			StorageSize:           a.storageSize,
 			Tools:                 agentv1alpha1.ToolSet{Pins: definition.Tools.Pins},
 			Identity:              identityOf(agent, epoch),
@@ -231,7 +225,9 @@ func (a *Agent) CorrectSpec(ctx context.Context, agent garam.GRN) (bool, error) 
 // epochs start at one, and an agent constructed before epochs were recorded
 // carries none.
 func identityOf(agent garam.GRN, epoch int64) *agentv1alpha1.AgentIdentity {
-	identity := &agentv1alpha1.AgentIdentity{GRN: string(agent)}
+	// A garam definition is this agent's source: an agent the control service
+	// created never reaches the poller (ADR 0043).
+	identity := &agentv1alpha1.AgentIdentity{GRN: string(agent), Source: agentv1alpha1.DesiredSourceGaram}
 	if epoch > 0 {
 		identity.AssignmentEpoch = strconv.FormatInt(epoch, 10)
 	}
@@ -241,14 +237,10 @@ func identityOf(agent garam.GRN, epoch int64) *agentv1alpha1.AgentIdentity {
 // credentialsKey names the Secret an agent's workload mounts its credential
 // from.
 func (a *Agent) credentialsKey(agent garam.GRN) client.ObjectKey {
-	return client.ObjectKey{Namespace: a.namespace, Name: Name(agent) + credentialsSecretSuffix}
+	return client.ObjectKey{Namespace: a.namespace, Name: agentname.CredentialsSecret(string(agent))}
 }
 
-// Name is what the Agent constructed for a GRN is called. It is the digest of
-// the whole GRN rather than a part of it: what a GRN's segments mean is garam's,
-// and a name cut out of one moves when garam's format does, orphaning every
-// object already built under the old shape.
+// Name is what the Agent constructed for a GRN is called (agentname.Agent).
 func Name(agent garam.GRN) string {
-	digest := sha256.Sum256([]byte(agent))
-	return "agent-" + hex.EncodeToString(digest[:8])
+	return agentname.Agent(string(agent))
 }

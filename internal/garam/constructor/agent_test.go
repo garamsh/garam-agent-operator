@@ -163,7 +163,7 @@ func TestConstructWritesTheIdentityTheCertificateRouteProvedIntoTheSpec(t *testi
 	g.Expect(err).NotTo(HaveOccurred())
 
 	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{
-		GRN: string(sampleAgent), AssignmentEpoch: "7",
+		GRN: string(sampleAgent), AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceGaram,
 	}))
 }
 
@@ -519,7 +519,7 @@ func TestCorrectSpecLeavesTheSpecOfAnAgentThisOperatorDidNotConstructAlone(t *te
 	g.Expect(accepted).To(BeTrue())
 	g.Expect(imageOf(t, c, otherAgent)).To(Equal(laterImage))
 	g.Expect(identityOf(t, c, otherAgent)).To(Equal(&agentv1alpha1.AgentIdentity{
-		GRN: string(otherAgent), AssignmentEpoch: "7",
+		GRN: string(otherAgent), AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceGaram,
 	}))
 }
 
@@ -576,7 +576,7 @@ func TestCorrectSpecFillsTheIdentityOfAnAgentConstructedBeforeTheSpecCarriedOne(
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(corrected).To(BeTrue())
 	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{
-		GRN: string(sampleAgent), AssignmentEpoch: "7",
+		GRN: string(sampleAgent), AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceGaram,
 	}))
 
 	secondPass := "a second pass, which finds the identity filled and writes nothing"
@@ -597,7 +597,7 @@ func TestCorrectSpecFillsNoEpochWhereTheConstructionRecordedNone(t *testing.T) {
 	_, err := newCorrector(t, scheme, c).CorrectSpec(context.Background(), sampleAgent)
 
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{GRN: string(sampleAgent)}))
+	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{GRN: string(sampleAgent), Source: agentv1alpha1.DesiredSourceGaram}))
 }
 
 // TestCorrectSpecCorrectsNothingWhereNoAgentIsBuilt says a pass that reaches a
