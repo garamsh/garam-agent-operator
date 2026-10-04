@@ -17,6 +17,12 @@ import (
 	"time"
 )
 
+// pemCertificate and pemECKey are the PEM block types the binary's certificate flags read.
+const (
+	pemCertificate = "CERTIFICATE"
+	pemECKey       = "EC PRIVATE KEY"
+)
+
 // operatorGRN is the operator GRN the binary reads from its certificate as its audience.
 const operatorGRN = "grn:root:default:operator:control-e2e"
 
@@ -107,11 +113,11 @@ func writeIdentity(dir string) (identity, error) {
 	}
 	id.roots.AddCert(rootCert)
 	for path, block := range map[string]*pem.Block{
-		id.serverRoot:         {Type: "CERTIFICATE", Bytes: rootDER},
-		id.certificate:        {Type: "CERTIFICATE", Bytes: leafDER},
-		id.key:                {Type: "EC PRIVATE KEY", Bytes: keyDER},
-		id.servingCertificate: {Type: "CERTIFICATE", Bytes: servingDER},
-		id.servingKey:         {Type: "EC PRIVATE KEY", Bytes: servingKeyDER},
+		id.serverRoot:         {Type: pemCertificate, Bytes: rootDER},
+		id.certificate:        {Type: pemCertificate, Bytes: leafDER},
+		id.key:                {Type: pemECKey, Bytes: keyDER},
+		id.servingCertificate: {Type: pemCertificate, Bytes: servingDER},
+		id.servingKey:         {Type: pemECKey, Bytes: servingKeyDER},
 	} {
 		if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
 			return identity{}, err
