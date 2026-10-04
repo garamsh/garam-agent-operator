@@ -61,16 +61,17 @@ func TestGaram_CreatesTheManagedAgent(t *testing.T) {
 
 func TestGaram_RefusalsAreTold(t *testing.T) {
 	tests := []struct {
+		name   string
 		status int
 		want   error
 	}{
-		{http.StatusForbidden, definition.ErrRegistrationRefused},
-		{http.StatusNotFound, definition.ErrRegistrationRefused},
-		{http.StatusConflict, definition.ErrRegistrationConflict},
-		{http.StatusServiceUnavailable, definition.ErrRegistrationUndecided},
+		{"403 is a refusal", http.StatusForbidden, definition.ErrRegistrationRefused},
+		{"404 is a refusal", http.StatusNotFound, definition.ErrRegistrationRefused},
+		{"409 is a conflict", http.StatusConflict, definition.ErrRegistrationConflict},
+		{"503 on every attempt is undecided", http.StatusServiceUnavailable, definition.ErrRegistrationUndecided},
 	}
 	for _, tt := range tests {
-		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			_, _, err := register(t, tt.status, `{"message":"refused"}`)
 			require.ErrorIs(t, err, tt.want)
 		})
