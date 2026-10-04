@@ -292,6 +292,46 @@ var _ = Describe("Agent workload", Ordered, func() {
 		Expect(strings.TrimSpace(written)).To(Equal("written-by-" + strings.TrimSpace(uid)))
 	})
 
+	It("creates no replacement for a force-deleted Pod until the fence is released on its writers' evidence", func() {
+		waitForAgentPod()
+		oldUID, err := kubectlIn("get", "pod", agentPod, "-o", "jsonpath={.metadata.uid}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(oldUID).NotTo(BeEmpty())
+
+		// No grace: the API server waits for no kubelet, so only the writer fence
+		// keeps the StatefulSet from creating the next Pod on the same volume
+		// while the old containers may still be running.
+		By("force-deleting the Pod while its containers run")
+		_, err = kubectlIn("delete", "pod", agentPod, "--force", "--grace-period=0", "--wait=false")
+		Expect(err).NotTo(HaveOccurred())
+
+		By("waiting for the evidence the fence was released on, which names the old Pod")
+		var observedAt time.Time
+		Eventually(func(g Gomega) {
+			uid, err := kubectlIn("get", "agent", agentUnderTest, "-o", "jsonpath={.status.writerStopped.podUID}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(uid).To(Equal(oldUID))
+			at, err := kubectlIn("get", "agent", agentUnderTest, "-o", "jsonpath={.status.writerStopped.observedAt}")
+			g.Expect(err).NotTo(HaveOccurred())
+			observedAt, err = time.Parse(time.RFC3339, at)
+			g.Expect(err).NotTo(HaveOccurred())
+		}, 3*time.Minute, time.Second).Should(Succeed())
+
+		By("reading the replacement, which the StatefulSet created only after that")
+		waitForAgentPod()
+		newUID, err := kubectlIn("get", "pod", agentPod, "-o", "jsonpath={.metadata.uid}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(newUID).NotTo(Equal(oldUID))
+		created, err := kubectlIn("get", "pod", agentPod, "-o", "jsonpath={.metadata.creationTimestamp}")
+		Expect(err).NotTo(HaveOccurred())
+		createdAt, err := time.Parse(time.RFC3339, created)
+		Expect(err).NotTo(HaveOccurred())
+		// Both times are whole seconds, so the replacement may share the
+		// evidence's second but never precede it.
+		Expect(createdAt.Before(observedAt.Truncate(time.Second))).To(BeFalse(),
+			"the replacement was created at %s, before the evidence was read at %s", createdAt, observedAt)
+	})
+
 	It("removes the StatefulSet and its Pod when the Agent is deleted", func() {
 		// Without this the workload might not exist yet, and a spec that asserts
 		// its absence would pass having never seen it.

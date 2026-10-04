@@ -39,6 +39,18 @@ func setAvailable(agent *agentv1alpha1.Agent, status metav1.ConditionStatus, rea
 	})
 }
 
+// setWriterFence records on the Agent the controller's decision on its deleting
+// Pod's fence.
+func setWriterFence(agent *agentv1alpha1.Agent, status metav1.ConditionStatus, reason, message string) {
+	meta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{
+		Type:               agentv1alpha1.ConditionWriterFence,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: agent.Generation,
+	})
+}
+
 // setAvailableFromWorkload reads the readiness of the StatefulSet this reconcile
 // already holds. The message bounds what a ready replica is worth: the workload
 // carries no readiness probe, so a container that started is ready whatever it

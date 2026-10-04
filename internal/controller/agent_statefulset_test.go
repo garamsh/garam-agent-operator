@@ -511,10 +511,11 @@ var _ = Describe("Agent workload", func() {
 			"GARAM_ADAPTER_SERVER_ROOT_FILE": adapterCredentialsMountPath + "/server-root.pem",
 		}))
 
-		By("mounting the agent's credential copy read-only, and nothing else")
-		Expect(adapter.VolumeMounts).To(ConsistOf(corev1.VolumeMount{
-			Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true,
-		}))
+		By("mounting the agent's credential copy and the placement token's copy read-only, and nothing else")
+		Expect(adapter.VolumeMounts).To(ConsistOf(
+			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true},
+			corev1.VolumeMount{Name: placementVolumeName, MountPath: placementMountPath, ReadOnly: true},
+		))
 
 		By("telling the agent's gateway to listen where the adapter dials, and mounting nothing new on the agent")
 		agentContainer := containerOf(pod, agentContainerName)
@@ -1190,6 +1191,16 @@ func withoutWorkspace(pod corev1.PodSpec) corev1.PodSpec {
 // flag adds nothing anywhere else.
 func withoutAdapter(pod corev1.PodSpec) corev1.PodSpec {
 	stripped := withoutToolPins(pod)
+	isPlacement := func(name string) bool { return name == placementVolumeName || name == placementSecretVolumeName }
+	stripped.Volumes = slices.DeleteFunc(stripped.Volumes, func(volume corev1.Volume) bool { return isPlacement(volume.Name) })
+	for i := range stripped.InitContainers {
+		if stripped.InitContainers[i].Name != credentialsContainerName {
+			continue
+		}
+		stripped.InitContainers[i].VolumeMounts = slices.DeleteFunc(stripped.InitContainers[i].VolumeMounts,
+			func(mount corev1.VolumeMount) bool { return isPlacement(mount.Name) })
+		stripped.InitContainers[i].Command = copyCredentialsCommand(agentTypeSherlock, false)
+	}
 	for i := range stripped.Containers {
 		if at := slices.Index(stripped.Containers[i].Args, sherlockEgoFileFlag); at >= 0 {
 			stripped.Containers[i].Args = slices.Delete(stripped.Containers[i].Args, at, at+2)

@@ -262,6 +262,7 @@ func main() {
 	if err := (&controller.AgentReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
+		APIReader:      mgr.GetAPIReader(),
 		CopyImage:      agentCopyImage,
 		WorkspaceImage: agentWorkspaceImage,
 		AdapterImage:   agentAdapterImage,

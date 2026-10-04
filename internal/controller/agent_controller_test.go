@@ -93,6 +93,9 @@ func createAgent(agent *agentv1alpha1.Agent) {
 
 	Expect(k8sClient.Create(ctx, agent)).To(Succeed())
 	DeferCleanup(func() {
+		// No controller runs here to release the Agent's workload fence, so the
+		// spec releases it to let the Agent go.
+		releaseFinalizers(agent)
 		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, agent))).To(Succeed())
 
 		workload := &appsv1.StatefulSet{
@@ -108,6 +111,22 @@ const testCopyImage = "example.com/copy:v0.1.0"
 // testWorkspaceImage is the image the specs expect an agent's workspace
 // container to run, where this operator names one.
 const testWorkspaceImage = "example.com/workspace:v0.1.0"
+
+// releaseFinalizers removes every finalizer from obj as the API server now holds
+// it, where it still exists.
+func releaseFinalizers(obj client.Object) {
+	GinkgoHelper()
+
+	current := obj.DeepCopyObject().(client.Object)
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(obj), current); err != nil {
+		Expect(client.IgnoreNotFound(err)).To(Succeed())
+
+		return
+	}
+	released := current.DeepCopyObject().(client.Object)
+	released.SetFinalizers(nil)
+	Expect(client.IgnoreNotFound(k8sClient.Patch(ctx, released, client.MergeFrom(current)))).To(Succeed())
+}
 
 // reconcileAgent runs one reconcile for the named Agent, with this operator
 // naming no workspace image.
@@ -165,6 +184,12 @@ func reconcileAgentRenderingEpoch(name string) (reconcile.Result, error) {
 
 // runReconcile runs one reconcile for the named Agent through reconciler.
 func runReconcile(name string, reconciler *AgentReconciler) (reconcile.Result, error) {
+	// envtest's client reads straight from the API server, which is what the
+	// manager's API reader does.
+	if reconciler.APIReader == nil {
+		reconciler.APIReader = k8sClient
+	}
+
 	return reconciler.Reconcile(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: name, Namespace: agentNamespace},
 	})
