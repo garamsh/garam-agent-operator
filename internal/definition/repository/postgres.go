@@ -204,8 +204,9 @@ func (p *Postgres) Configure(ctx context.Context, r definition.Request, d defini
 func appendDefinitionIn(ctx context.Context, tx pgx.Tx, d definition.Definition, raw []byte) (bool, error) {
 	var applied bool
 	err := pgx.BeginFunc(ctx, tx, func(savepoint pgx.Tx) error {
+		operator, epoch := assignmentColumns(d.Assignment)
 		tag, err := savepoint.Exec(ctx, appendDefinition,
-			string(d.Agent), int64(d.Revision), d.Profile.Name, int64(d.Profile.Version), raw)
+			string(d.Agent), int64(d.Revision), d.Profile.Name, int64(d.Profile.Version), raw, operator, epoch)
 		applied = err == nil && tag.RowsAffected() == 1
 		return err
 	})
@@ -213,6 +214,109 @@ func appendDefinitionIn(ctx context.Context, tx pgx.Tx, d definition.Definition,
 		return false, nil
 	}
 	return applied, err
+}
+
+// assignmentColumns is a recorded assignment as its two nullable columns.
+func assignmentColumns(a *definition.Assignment) (operator, epoch *string) {
+	if a == nil {
+		return nil, nil
+	}
+	return &a.Operator, &a.Epoch
+}
+
+// assignmentOf is the assignment two nullable columns record, or nil.
+func assignmentOf(operator, epoch *string) *definition.Assignment {
+	if operator == nil || epoch == nil {
+		return nil
+	}
+	return &definition.Assignment{Operator: *operator, Epoch: *epoch}
+}
+
+func (p *Postgres) Position(ctx context.Context) (definition.Position, error) {
+	var position int64
+	if err := p.pool.QueryRow(ctx, getPosition).Scan(&position); err != nil {
+		return 0, storeError("position", err)
+	}
+	return definition.Position(position), nil
+}
+
+func (p *Postgres) Desired(ctx context.Context, operator string, limit int) (definition.DesiredPage, error) {
+	var page definition.DesiredPage
+	// One snapshot for both reads: the position read accounts for exactly the revisions read.
+	err := pgx.BeginTxFunc(ctx, p.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly},
+		func(tx pgx.Tx) error {
+			var position int64
+			if err := tx.QueryRow(ctx, getPosition).Scan(&position); err != nil {
+				return err
+			}
+			page.Position = definition.Position(position)
+			rows, err := tx.Query(ctx, desired, operator, limit)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				r, err := scanDesired(rows, operator)
+				if err != nil {
+					return err
+				}
+				page.Revisions = append(page.Revisions, r)
+			}
+			return rows.Err()
+		})
+	if err != nil {
+		return definition.DesiredPage{}, storeError("desired", err)
+	}
+	return page, nil
+}
+
+func scanDesired(row pgx.Row, operator string) (definition.DesiredRevision, error) {
+	var (
+		agent                 string
+		revision, profileVers int64
+		profileName           string
+		config, settings      []byte
+		epoch                 string
+	)
+	if err := row.Scan(&agent, &revision, &profileName, &profileVers, &config, &epoch, &settings); err != nil {
+		return definition.DesiredRevision{}, err
+	}
+	c, err := decodeConfig(config)
+	if err != nil {
+		return definition.DesiredRevision{}, err
+	}
+	var s settingsColumn
+	if err := json.Unmarshal(settings, &s); err != nil {
+		return definition.DesiredRevision{}, fmt.Errorf("decode settings: %v", err)
+	}
+	return definition.DesiredRevision{
+		Definition: definition.Definition{
+			Agent:      definition.GRN(agent),
+			Revision:   definition.Revision(revision),
+			Profile:    definition.ProfileRef{Name: profileName, Version: definition.Version(profileVers)},
+			Config:     c,
+			Assignment: &definition.Assignment{Operator: operator, Epoch: epoch},
+		},
+		Settings: definition.ExecutionSettings(s),
+	}, nil
+}
+
+func (p *Postgres) RecordStatus(ctx context.Context, agent definition.GRN, s definition.Status) (definition.Status, error) {
+	var (
+		observed, rendered int64
+		applied            *int64
+	)
+	err := p.pool.QueryRow(ctx, recordStatus, string(agent), int64(s.Observed), int64(s.Rendered)).
+		Scan(&observed, &rendered, &applied)
+	if err != nil {
+		return definition.Status{}, storeError("record status", err)
+	}
+	stored := definition.Status{Observed: definition.Revision(observed), Rendered: definition.Revision(rendered)}
+	if applied != nil {
+		r := definition.Revision(*applied)
+		stored.Applied = &r
+	}
+	return stored, nil
 }
 
 // scanRequest reads one configure request row, the outcome from its outcome column.
@@ -244,12 +348,14 @@ func scanRequest(row pgx.Row, key definition.RequestKey) (definition.Request, er
 
 func (p *Postgres) GetDefinition(ctx context.Context, agent definition.GRN) (definition.Definition, error) {
 	var (
-		revision       int64
-		profileName    string
-		profileVersion int64
-		raw            []byte
+		revision        int64
+		profileName     string
+		profileVersion  int64
+		raw             []byte
+		operator, epoch *string
 	)
-	err := p.pool.QueryRow(ctx, getDefinition, string(agent)).Scan(&revision, &profileName, &profileVersion, &raw)
+	err := p.pool.QueryRow(ctx, getDefinition, string(agent)).
+		Scan(&revision, &profileName, &profileVersion, &raw, &operator, &epoch)
 	if err != nil {
 		return definition.Definition{}, notFound("get definition", err)
 	}
@@ -258,10 +364,11 @@ func (p *Postgres) GetDefinition(ctx context.Context, agent definition.GRN) (def
 		return definition.Definition{}, err
 	}
 	return definition.Definition{
-		Agent:    agent,
-		Revision: definition.Revision(revision),
-		Profile:  definition.ProfileRef{Name: profileName, Version: definition.Version(profileVersion)},
-		Config:   config,
+		Agent:      agent,
+		Revision:   definition.Revision(revision),
+		Profile:    definition.ProfileRef{Name: profileName, Version: definition.Version(profileVersion)},
+		Config:     config,
+		Assignment: assignmentOf(operator, epoch),
 	}, nil
 }
 
@@ -288,7 +395,9 @@ func (p *Postgres) RegisterCreation(ctx context.Context, key definition.RequestK
 		if _, pending := c.Outcome.(definition.Pending); !pending {
 			return nil
 		}
-		_, err = tx.Exec(ctx, insertFirstDefinition, string(d.Agent), d.Profile.Name, int64(d.Profile.Version), raw)
+		operator, epoch := assignmentColumns(d.Assignment)
+		_, err = tx.Exec(ctx, insertFirstDefinition, string(d.Agent), d.Profile.Name, int64(d.Profile.Version), raw,
+			operator, epoch)
 		if isUniqueViolation(err) {
 			return definition.ErrStaleRevision
 		}

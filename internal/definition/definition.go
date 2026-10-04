@@ -2,6 +2,8 @@ package definition
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -12,6 +14,24 @@ type GRN string
 
 // Revision numbers an agent's definitions; the first is 1 and each change adds one.
 type Revision int64
+
+// String is the revision as every wire carries it: a canonical decimal string.
+func (r Revision) String() string {
+	return strconv.FormatInt(int64(r), 10)
+}
+
+// ParseRevision reads a revision from its canonical decimal string: digits only, no sign, no
+// leading zero, at least 1. Anything else is ErrInvalidRevision.
+func ParseRevision(s string) (Revision, error) {
+	if s == "" || s[0] == '0' || strings.TrimLeft(s, "0123456789") != "" {
+		return 0, ErrInvalidRevision
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, ErrInvalidRevision
+	}
+	return Revision(n), nil
+}
 
 // Version numbers a template's or a profile's published versions; the first is 1.
 type Version int64
@@ -78,6 +98,34 @@ type Definition struct {
 	Revision Revision
 	Profile  ProfileRef
 	Config   Configuration
+	// Assignment is where the agent ran when this revision was authorized, or nil when
+	// none was recorded with it. A controller is released only a revision recorded for it.
+	Assignment *Assignment
+}
+
+// Position orders every stored revision by when it was stored; a later one has a greater one.
+type Position int64
+
+// DesiredRevision is a controller's view of an agent's latest revision: the definition, and
+// the settings of the profile version it names.
+type DesiredRevision struct {
+	Definition Definition
+	Settings   ExecutionSettings
+}
+
+// DesiredPage is a controller's whole candidate set: the latest revision of each agent recorded
+// for it, and the position the set was read at.
+type DesiredPage struct {
+	Position  Position
+	Revisions []DesiredRevision
+}
+
+// Status is what controllers reported of an agent: the latest revision observed and rendered,
+// and the revision the runtime applied, which no controller report sets.
+type Status struct {
+	Observed Revision
+	Rendered Revision
+	Applied  *Revision
 }
 
 // RequestKey identifies one console request: a repeat of the same key is the same request.
@@ -180,6 +228,12 @@ var (
 	// ErrRequestReused is returned when a request key arrives again for a different request:
 	// another actor, operation, target, body or template.
 	ErrRequestReused = errors.New("request id reused for a different request")
+
+	// ErrInvalidRevision is returned for a revision that is not a canonical decimal string of 1 or more.
+	ErrInvalidRevision = errors.New("revision is not a canonical decimal string of 1 or more")
+
+	// ErrInvalidStatus is returned for a status naming a revision the agent does not have.
+	ErrInvalidStatus = errors.New("status names a revision the agent does not have")
 
 	// ErrRegistrationRefused is wrapped by a Registrar whose registration garam refused.
 	ErrRegistrationRefused = errors.New("registration refused")

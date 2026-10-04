@@ -19,10 +19,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/garamsh/garam-agent-operator/internal/certificate"
 	"github.com/garamsh/garam-agent-operator/internal/console"
 	"github.com/garamsh/garam-agent-operator/internal/console/introspector"
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 	"github.com/garamsh/garam-agent-operator/internal/definition/repository"
+	"github.com/garamsh/garam-agent-operator/internal/distribution"
+	"github.com/garamsh/garam-agent-operator/internal/distribution/prover"
+	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
 // databaseURLVariable names the environment variable holding the store's connection URL,
@@ -34,6 +38,16 @@ const shutdownTimeout = 5 * time.Second
 
 // garamTimeout bounds one call to garam's machine listener.
 const garamTimeout = 10 * time.Second
+
+// feedPollInterval is how often a waiting request for the desired feed reads the position again.
+const feedPollInterval = time.Second
+
+// feedMaxAgents bounds the candidate agents one answer of the desired feed carries, and so the
+// agent proofs one answer asks garam for.
+const feedMaxAgents = 500
+
+// apiWriteTimeout bounds writing one answer, above the desired feed's longest wait.
+const apiWriteTimeout = 45 * time.Second
 
 type options struct {
 	probeAddr       string
@@ -96,13 +110,22 @@ func run(ctx context.Context, o options, databaseURL string) error {
 
 	// No route creates an agent yet, so no Registrar is wired (issue #211).
 	definitions := definition.NewService(store, nil)
-	api := console.NewHandler(console.Config{
+	garam := garammachine.New(o.garamURL, machine)
+	api := http.NewServeMux()
+	api.Handle("/v1/orgs/", console.NewHandler(console.Config{
 		Definitions:  definitions,
-		Introspector: introspector.NewGaram(o.garamURL, machine),
+		Introspector: introspector.NewGaram(garam),
 		Audience:     audience,
 		Now:          time.Now,
 		Logger:       slog.Default(),
-	})
+	}))
+	api.Handle("/v1/operators/", distribution.NewHandler(distribution.Config{
+		Definitions:  definitions,
+		Prover:       prover.NewGaram(garam),
+		PollInterval: feedPollInterval,
+		MaxAgents:    feedMaxAgents,
+		Logger:       slog.Default(),
+	}))
 
 	health := http.NewServeMux()
 	health.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -118,7 +141,10 @@ func run(ctx context.Context, o options, databaseURL string) error {
 
 	healthServer := &http.Server{Addr: o.probeAddr, Handler: health, ReadHeaderTimeout: 5 * time.Second}
 	// Every console request carries a bearer operation authority, so its routes are served over TLS only.
-	apiServer := &http.Server{Addr: o.apiAddr, Handler: api, TLSConfig: apiTLS, ReadHeaderTimeout: 5 * time.Second}
+	apiServer := &http.Server{
+		Addr: o.apiAddr, Handler: api, TLSConfig: apiTLS,
+		ReadHeaderTimeout: 5 * time.Second, WriteTimeout: apiWriteTimeout,
+	}
 	servers := []*http.Server{healthServer, apiServer}
 	served := make(chan error, len(servers))
 	go func() { served <- fmt.Errorf("serve %s: %w", healthServer.Addr, healthServer.ListenAndServe()) }()
@@ -140,17 +166,22 @@ func run(ctx context.Context, o options, databaseURL string) error {
 	return nil
 }
 
-// apiTLSConfig loads the certificate the console's routes are served under, and refuses to
-// go on without one.
+// apiTLSConfig serves the API's certificate, read again whenever its files change, and refuses
+// to go on without one. A client certificate is requested and not verified here: a controller
+// route has garam prove the leaf a controller presents, and a console route reads none.
 func apiTLSConfig(o options) (*tls.Config, error) {
 	if o.apiCertificate == "" || o.apiKey == "" {
 		return nil, errors.New("--api-certificate-file and --api-key-file are both required")
 	}
-	pair, err := tls.LoadX509KeyPair(o.apiCertificate, o.apiKey)
+	reloader, err := certificate.NewReloader(o.apiCertificate, o.apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("load api certificate: %w", err)
 	}
-	return &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}, nil
+	return &tls.Config{
+		GetCertificate: reloader.GetCertificate,
+		ClientAuth:     tls.RequestClientCert,
+		MinVersion:     tls.VersionTLS13,
+	}, nil
 }
 
 // garamClient builds the mutual-TLS client garam's machine listener requires, and reads this

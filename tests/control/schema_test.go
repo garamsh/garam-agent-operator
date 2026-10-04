@@ -32,7 +32,8 @@ func TestBinary_ServesHealthOnTheSchemaItApplied(t *testing.T) {
 	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	for _, table := range []string{"profiles", "templates", "definitions", "creations", "requests"} {
+	tables := []string{"positions", "profiles", "templates", "definitions", "creations", "requests", "agent_status"}
+	for _, table := range tables {
 		var exists bool
 		require.NoError(t, pool.QueryRow(context.Background(), "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists))
 		assert.True(t, exists, "table %s", table)
@@ -43,8 +44,9 @@ func TestSchema_SecondRevisionUnderOneNumberRefused(t *testing.T) {
 	profile := publishProfile(t)
 	agent := name(t, "agent")
 	insert := func(revision int) error {
-		return execute(t, `INSERT INTO definitions (agent, revision, profile_name, profile_version, config)
-VALUES ($1, $2, $3, 1, '{}')`, agent, revision, profile)
+		return execute(t, `WITH next AS (UPDATE positions SET position = position + 1 RETURNING position)
+INSERT INTO definitions (agent, revision, profile_name, profile_version, config, position)
+SELECT $1::text, $2::bigint, $3::text, 1, '{}', (SELECT position FROM next)`, agent, revision, profile)
 	}
 
 	// Control: the first revision under each number is accepted.

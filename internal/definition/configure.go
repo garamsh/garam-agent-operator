@@ -13,7 +13,14 @@ func (s *service) Configure(ctx context.Context, in ConfigureInput) (Applied, er
 		return Applied{}, fmt.Errorf("profile %s version %d: %w", in.Profile.Name, in.Profile.Version, err)
 	}
 	request := Request{Key: in.Request, Binding: in.Binding, Agent: in.Agent}
-	d := Definition{Agent: in.Agent, Revision: in.ExpectedRevision + 1, Profile: in.Profile, Config: in.Config}
+	assignment := in.Binding.Assignment
+	d := Definition{
+		Agent:      in.Agent,
+		Revision:   in.ExpectedRevision + 1,
+		Profile:    in.Profile,
+		Config:     in.Config,
+		Assignment: &assignment,
+	}
 	stored, err := s.repository.Configure(ctx, request, d)
 	if err != nil {
 		return Applied{}, err

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -24,6 +25,8 @@ type garam interface {
 	agent() string
 	// mint has garam mint an agent:configure authority for requestID and the exact body.
 	mint(t *testing.T, requestID string, body []byte) string
+	// controllerClient presents the certificate garam issued the controller the agent is assigned to.
+	controllerClient() *http.Client
 }
 
 // requireGaram returns the garam this suite runs against, or skips the test. garam offers no
@@ -42,15 +45,16 @@ func requireGaram(t *testing.T) garam {
 func seedRevision(t *testing.T, g garam) string {
 	t.Helper()
 	profile := publishProfile(t)
-	require.NoError(t, execute(t, `INSERT INTO definitions (agent, revision, profile_name, profile_version, config)
-VALUES ($1, 1, $2, 1, '{}')`, g.agent(), profile))
+	require.NoError(t, execute(t, `WITH next AS (UPDATE positions SET position = position + 1 RETURNING position)
+INSERT INTO definitions (agent, revision, profile_name, profile_version, config, position)
+SELECT $1::text, 1, $2::text, 1, '{}', (SELECT position FROM next)`, g.agent(), profile))
 	return profile
 }
 
 func configureBody(requestID, profile, ego string, expected int) []byte {
 	b, err := json.Marshal(map[string]any{
 		"requestId":        requestID,
-		"expectedRevision": expected,
+		"expectedRevision": strconv.Itoa(expected),
 		"profile":          map[string]any{"name": profile, "version": 1},
 		"configuration": map[string]any{
 			"model": map[string]string{"provider": "anthropic", "baseUrl": "https://api.anthropic.com",
@@ -158,4 +162,29 @@ func revisionCount(t *testing.T, agent string) int {
 	require.NoError(t, pool.QueryRow(context.Background(),
 		"SELECT count(*) FROM definitions WHERE agent = $1", agent).Scan(&n))
 	return n
+}
+
+func TestDesired_ReleasesAConfiguredAgentToItsController(t *testing.T) {
+	g := requireGaram(t)
+	profile := seedRevision(t, g)
+	requestID := name(t, "request")
+	body := configureBody(requestID, profile, "edited", 1)
+	status, err := sendConfigure(g, g.mint(t, requestID, body), body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+
+	// The controller garam assigned the agent to is released the revision just stored.
+	resp, err := g.controllerClient().Get(apiURL + "/v1/operators/self/desired")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	var feed struct {
+		Agents []struct {
+			Agent    string `json:"agent"`
+			Revision string `json:"revision"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&feed))
+	require.Len(t, feed.Agents, 1)
+	assert.Equal(t, g.agent(), feed.Agents[0].Agent)
+	assert.Equal(t, "2", feed.Agents[0].Revision)
 }

@@ -16,7 +16,7 @@ func TestConfigure_StaleRevisionRefused(t *testing.T) {
 	first := e.body("c1", "edited by one", 1)
 	accepted := e.configure(t, e.authorize("c1", first, nil), first)
 	require.Equal(t, 200, accepted.status, accepted.message)
-	assert.Equal(t, int64(2), accepted.revision)
+	assert.Equal(t, "2", accepted.revision)
 
 	second := e.body("c2", "edited by two", 1)
 	refused := e.configure(t, e.authorize("c2", second, nil), second)
@@ -102,12 +102,12 @@ func TestConfigure_RepeatUnderRefusedAuthorityRevealsNothing(t *testing.T) {
 
 	refused := e.configure(t, "never-minted", body)
 	assert.Equal(t, 401, refused.status, refused.message)
-	assert.Equal(t, int64(0), refused.revision)
+	assert.Empty(t, refused.revision)
 
 	// Control: the same repeat under a current authority is answered the stored outcome.
 	repeat := e.configure(t, e.authorize("c1", body, nil), body)
 	assert.Equal(t, 200, repeat.status, repeat.message)
-	assert.Equal(t, int64(2), repeat.revision)
+	assert.Equal(t, "2", repeat.revision)
 }
 
 func TestConfigure_BoundFieldMismatchRefused(t *testing.T) {
@@ -152,4 +152,22 @@ func TestConfigure_BodyDigestMismatchRefused(t *testing.T) {
 	// Control: an authority binding this body's digest is accepted.
 	accepted := e.configure(t, e.authorize("c1", body, nil), body)
 	assert.Equal(t, 200, accepted.status, accepted.message)
+}
+
+func TestConfigure_RefusesARevisionThatIsNotACanonicalString(t *testing.T) {
+	for _, expected := range []string{`1`, `"01"`, `"0"`, `"one"`} {
+		t.Run(expected, func(t *testing.T) {
+			e := newEnv(t)
+			body := []byte(`{"requestId":"c1","expectedRevision":` + expected +
+				`,"profile":{"name":"small","version":1},"configuration":{"model":{},"ego":"","tools":{}}}`)
+			refused := e.configure(t, e.authorize("c1", body, nil), body)
+			assert.Equal(t, 400, refused.status, refused.message)
+
+			// Control: the same body with a canonical expected revision is accepted.
+			good := []byte(`{"requestId":"c1","expectedRevision":"1"` +
+				`,"profile":{"name":"small","version":1},"configuration":{"model":{},"ego":"","tools":{}}}`)
+			accepted := e.configure(t, e.authorize("c1", good, nil), good)
+			assert.Equal(t, 200, accepted.status, accepted.message)
+		})
+	}
 }
