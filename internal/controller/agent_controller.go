@@ -33,6 +33,11 @@ type AgentReconciler struct {
 	// process serving the files an agent reads and writes and the commands it
 	// executes. Empty builds the Pod with no workspace at all.
 	WorkspaceImage string
+
+	// RenderAssignmentEpoch passes an agent its assignment epoch on the command
+	// line. It is off until the agent image the deployment runs accepts the flag,
+	// because one that does not refuses to start on it.
+	RenderAssignmentEpoch bool
 }
 
 // +kubebuilder:rbac:groups=agent.garam.sh,resources=agents,verbs=get;list;watch

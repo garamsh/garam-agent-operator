@@ -1,6 +1,6 @@
 # ADR 0016: Report to garam what this operator observed, stay silent where it observed nothing, and carry the epoch on the Agent it was proved at
 
-> Status: accepted
+> Status: accepted; the epoch held in Status and not Spec superseded in part by ADR-0037
 > Date: 2026-09-02
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

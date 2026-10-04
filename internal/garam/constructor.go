@@ -32,13 +32,15 @@ type Constructor interface {
 	// stands, and a claim is not repeatable.
 	Construct(ctx context.Context, definition Definition, epoch int64, credential AgentCredential) error
 
-	// CorrectImage brings the image of an agent this operator already
-	// constructed to the one this operator is configured with, and reports
-	// whether the field moved. Construction is the only writer of that field,
-	// so an operator that wrote it once and left it there leaves a corrected
-	// configuration reaching every agent but the ones already built.
+	// CorrectSpec brings the fields construction writes on an agent this
+	// operator already constructed to what they should be, and reports whether
+	// any moved: the image to the one this operator is configured with, and the
+	// identity, where the spec carries none, to the one its status reports.
+	// Construction is the only writer of those fields, so an operator that wrote
+	// them once and left them there leaves a corrected configuration reaching
+	// every agent but the ones already built.
 	//
 	// An Agent this operator did not construct is left alone: its spec is its
 	// author's.
-	CorrectImage(ctx context.Context, agent GRN) (bool, error)
+	CorrectSpec(ctx context.Context, agent GRN) (bool, error)
 }

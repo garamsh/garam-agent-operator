@@ -21,22 +21,6 @@ var (
 	shouldCleanupCertManager = false
 )
 
-// agentImage is what the Agent under test runs, and is not the agent's own,
-// because no sherlock image exists to run. What the suite needs of it is an
-// entrypoint that stays up without being given a command — the operator sets
-// none — a shell that can read the mounted credentials, and a uid that is not
-// root. The last one is not a detail: an image that keeps root reads a
-// root-owned credential file whatever mode it carries, which is how #31 stayed
-// invisible through every layer.
-//
-// The reference is a registry's and is pinned by digest: the operator pulls
-// every container of an agent's Pod at every start, so an image the suite put on
-// the node would leave the Pod reaching for a registry that does not serve it,
-// and the digest is what keeps the pull from bringing some other nginx. This one
-// runs as uid 101.
-const agentImage = "nginxinc/nginx-unprivileged@sha256:" +
-	"0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6"
-
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
 // The default setup requires Kind and CertManager.
 //
@@ -67,6 +51,8 @@ var _ = BeforeSuite(func() {
 	err = utils.LoadImageToKindClusterWithName(managerImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
 
+	serveAgentImage()
+
 	configureKubectlKubeRC()
 	setupCertManager()
 	deployOperator()
@@ -75,6 +61,7 @@ var _ = BeforeSuite(func() {
 var _ = AfterSuite(func() {
 	undeployOperator()
 	teardownCertManager()
+	removeAgentImageRegistry()
 })
 
 // deployOperator installs the CRDs and the manager, once for every container in

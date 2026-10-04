@@ -169,6 +169,16 @@ var _ = Describe("Agent workload", Ordered, func() {
 		By("waiting for the Pod to reach Running")
 		waitForAgentPod()
 
+		// The stand-in refuses to start without an agent ID, as sherlock does,
+		// so a running Pod already says one was passed; the log says which. An
+		// Agent a user wrote is started under its own name.
+		By("reading the agent ID the agent was started under")
+		Eventually(func(g Gomega) {
+			logs, err := kubectlIn("logs", agentPod, "-c", "agent")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(logs).To(ContainSubstring("agent-stand-in: serving " + agentUnderTest))
+		}, time.Minute, time.Second).Should(Succeed())
+
 		By("reading the Synced condition the operator wrote")
 		Eventually(func(g Gomega) {
 			status, err := agentCondition(agentUnderTest, agentv1alpha1.ConditionSynced, "status")

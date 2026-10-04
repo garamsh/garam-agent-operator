@@ -8,6 +8,7 @@ import (
 )
 
 // AgentSpec defines the desired state of Agent
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || (has(self.identity) && self.identity.grn == oldSelf.identity.grn)",message="identity.grn cannot be changed or removed once set"
 type AgentSpec struct {
 	// type names the agent binary the workload carries. Today three are admitted
 	// — sherlock, claude-code and codex — and each maps to a different
@@ -85,6 +86,32 @@ type AgentSpec struct {
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	Ego string `json:"ego,omitempty"`
+
+	// identity is who the agent is in garam: the GRN garam minted for it and
+	// the assignment epoch this operator was proved to hold it at. It is written
+	// by this operator when it constructs the agent, and the agent is started
+	// under it. Unset on an Agent a user wrote, which is started under its own
+	// metadata.name instead: a development identity, not a GRN. The GRN cannot
+	// be changed or removed once set.
+	// +optional
+	Identity *AgentIdentity `json:"identity,omitempty"`
+}
+
+// AgentIdentity is an agent's identity in garam, as this operator renders it
+// into the agent's Pod.
+type AgentIdentity struct {
+	// grn is the garam resource name of the agent, which the agent serves its
+	// routes under. It is opaque here and passed to the agent verbatim.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	GRN string `json:"grn"`
+
+	// assignmentEpoch is the assignment epoch garam held this agent at when
+	// this operator was proved to hold it, opaque and verbatim. Only the writer
+	// of identity changes it. Unset means unknown.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	AssignmentEpoch string `json:"assignmentEpoch,omitempty"`
 }
 
 // ModelSpec is the chat model an Agent answers with. Every field is required,

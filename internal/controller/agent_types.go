@@ -55,9 +55,9 @@ type agentTypeDescriptor struct {
 	// egoFile is the ego file's path relative to configMountPath.
 	egoFile string
 
-	// egoArgs are the container's arguments that point the agent at the ego
-	// file at path.
-	egoArgs func(path string) []string
+	// renderArgs are the agent container's arguments for what the Pod builder
+	// decided to pass it.
+	renderArgs func(agentArguments) []string
 
 	// workspaceAddress is where the workspace listens and the agent dials.
 	workspaceAddress string
@@ -116,14 +116,7 @@ var agentTypeSherlock = agentTypeDescriptor{
 	// layout of sherlock's names an ego file; only the flag does.
 	egoFile: "sherlock/ego.md",
 
-	// The ego file is reached only by a flag, read off the flag rather than
-	// through the layer the SHERLOCK_ prefix binds
-	// (sherlock@07aa5c4:internal/config/config.go:165,
-	// sherlock@07aa5c4:internal/config/ego.go:15), so the container's arguments
-	// carry it. Arguments replace the image's CMD, so they restate the image's
-	// subcommand ahead of the flag (sherlock@07aa5c4:build/agent.Dockerfile,
-	// ENTRYPOINT ["/sherlock"] and CMD ["agent"]).
-	egoArgs: func(path string) []string { return []string{"agent", "--ego-file", path} },
+	renderArgs: renderSherlockArgs,
 
 	// Both images default to it (sherlock@9b0e399:internal/config/config.go:34),
 	// and it is written to both containers rather than left to them: two
@@ -143,6 +136,48 @@ var agentTypeSherlock = agentTypeDescriptor{
 	// isolated exec otherwise
 	// (sherlock@9b0e399:internal/workspace/shell/process_linux.go:131).
 	execUserVariable: "SHERLOCK_EXEC_UID",
+}
+
+// agentArguments is what the Pod builder passes the agent on its command line.
+// An empty field is not passed.
+type agentArguments struct {
+	// agentID is the identity the agent serves under.
+	agentID string
+
+	// egoFile is the absolute path of the agent's ego file.
+	egoFile string
+
+	// assignmentEpoch is the assignment epoch the agent is told it runs at.
+	assignmentEpoch string
+}
+
+// sherlock's subcommand and the flags renderSherlockArgs passes it.
+const (
+	sherlockAgentCommand        = "agent"
+	sherlockAgentIDFlag         = "--agent-id"
+	sherlockEgoFileFlag         = "--ego-file"
+	sherlockAssignmentEpochFlag = "--assignment-epoch"
+)
+
+// renderSherlockArgs is sherlock's command line for args.
+//
+// All three are flags read off the flag and through no other layer: the agent
+// ID and the epoch at sherlock@0ced773:cmd/sherlock/agent.go:71-72,99-102, the
+// ego file at sherlock@07aa5c4:internal/config/ego.go:15. Arguments replace the
+// image's CMD, so they restate the image's subcommand ahead of the flags
+// (sherlock@0ced773:build/agent.Dockerfile, ENTRYPOINT ["/sherlock"] and
+// CMD ["agent"]). The agent ID is always passed, because sherlock refuses to
+// start without one (sherlock@0ced773:cmd/sherlock/agent.go:79).
+func renderSherlockArgs(args agentArguments) []string {
+	rendered := []string{sherlockAgentCommand, sherlockAgentIDFlag, args.agentID}
+	if args.egoFile != "" {
+		rendered = append(rendered, sherlockEgoFileFlag, args.egoFile)
+	}
+	if args.assignmentEpoch != "" {
+		rendered = append(rendered, sherlockAssignmentEpochFlag, args.assignmentEpoch)
+	}
+
+	return rendered
 }
 
 // sherlockModelKeyVariable is the variable sherlock's container is given the

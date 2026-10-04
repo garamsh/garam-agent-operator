@@ -58,7 +58,7 @@ func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
-	var enableLeaderElection bool
+	var enableLeaderElection, agentAssignmentEpoch bool
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
@@ -125,6 +125,10 @@ func main() {
 			"agent reads and writes and the commands it runs. It needs a shell, and the agent's own image "+
 			"does not carry one. Unset builds agents' Pods carrying no workspace at all, which is an agent "+
 			"that starts and reports itself available and fails every file and exec call.")
+	flag.BoolVar(&agentAssignmentEpoch, "agent-assignment-epoch", false,
+		"Pass every agent this operator constructed its assignment epoch on the command line, as "+
+			"--assignment-epoch. Off by default: set it only once the agent image this deployment runs "+
+			"accepts the flag, because an image that does not refuses to start on it.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -248,6 +252,8 @@ func main() {
 		Scheme:         mgr.GetScheme(),
 		CopyImage:      agentCopyImage,
 		WorkspaceImage: agentWorkspaceImage,
+
+		RenderAssignmentEpoch: agentAssignmentEpoch,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)

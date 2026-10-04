@@ -394,6 +394,9 @@ var _ = Describe("Agent workload", func() {
 		named := "workspace-image-named"
 		withWorkspace := newAgent(named)
 		withWorkspace.Spec.CredentialsSecretName = shared
+		// One identity for both, so that the agent ID the two are started under
+		// is not a difference between them.
+		withWorkspace.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
 		createAgent(withWorkspace)
 		_, err := reconcileAgentWithWorkspace(named)
 		Expect(err).NotTo(HaveOccurred())
@@ -402,6 +405,7 @@ var _ = Describe("Agent workload", func() {
 		unnamed := "workspace-image-unset"
 		withoutWorkspaceImage := newAgent(unnamed)
 		withoutWorkspaceImage.Spec.CredentialsSecretName = shared
+		withoutWorkspaceImage.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
 		createAgent(withoutWorkspaceImage)
 		_, err = reconcileAgent(unnamed)
 		Expect(err).NotTo(HaveOccurred())
@@ -653,7 +657,7 @@ var _ = Describe("Agent workload", func() {
 		egoFile := agentTypeSherlock.egoFileIn(agentTypeSherlock.configMountPath)
 		Expect(environmentOf(config)).To(HaveKeyWithValue(egoContentVariable, testEgo))
 		Expect(strings.Join(config.Command, " ")).To(ContainSubstring(egoFile))
-		Expect(agentContainer.Args).To(Equal([]string{"agent", "--ego-file", egoFile}))
+		Expect(agentContainer.Args).To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, name, sherlockEgoFileFlag, egoFile}))
 		Expect(environmentOf(agentContainer)).NotTo(HaveKey(egoContentVariable))
 		Expect(agentContainer.Command).To(BeEmpty())
 	})
@@ -740,6 +744,74 @@ var _ = Describe("Agent workload", func() {
 
 		pod := podOf(statefulSetFor(name), restrictedNamespace("admits-the-model"))
 		Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+	})
+
+	It("starts the agent under the GRN its spec carries, and an Agent a user wrote under its own name", func() {
+		constructed := "starts-under-its-grn"
+		createSecret(credentialsSecretName(constructed))
+		agent := newAgent(constructed)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, AssignmentEpoch: "7"}
+		createAgent(agent)
+
+		// The control: an Agent carrying no identity, reconciled the same way.
+		written := "starts-under-its-name"
+		createSecret(credentialsSecretName(written))
+		createAgent(newAgent(written))
+
+		for _, name := range []string{constructed, written} {
+			_, err := reconcileAgent(name)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		Expect(containerOf(statefulSetFor(constructed).Spec.Template.Spec, agentContainerName).Args).
+			To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, testGRN}))
+		Expect(containerOf(statefulSetFor(written).Spec.Template.Spec, agentContainerName).Args).
+			To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, written}))
+	})
+
+	It("passes the assignment epoch only where this operator is told the agent image accepts it", func() {
+		name := "told-its-epoch"
+		createSecret(credentialsSecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, AssignmentEpoch: "7"}
+		createAgent(agent)
+
+		By("reconciling with the switch off, as every deployment starts")
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(containerOf(statefulSetFor(name).Spec.Template.Spec, agentContainerName).Args).
+			NotTo(ContainElement(sherlockAssignmentEpochFlag))
+
+		By("reconciling with it on")
+		_, err = reconcileAgentRenderingEpoch(name)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(containerOf(statefulSetFor(name).Spec.Template.Spec, agentContainerName).Args).
+			To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, testGRN, sherlockAssignmentEpochFlag, "7"}))
+	})
+
+	It("keeps the workload of an Agent whose identity is filled in after it was built", func() {
+		name := "fills-its-identity"
+		createSecret(credentialsSecretName(name))
+		createAgent(newAgent(name))
+
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		before := statefulSetFor(name)
+
+		filled := readAgent(name)
+		filled.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		Expect(k8sClient.Update(ctx, filled)).To(Succeed())
+		_, err = reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		after := statefulSetFor(name)
+
+		By("starting the agent under the GRN, which is what moved")
+		Expect(containerOf(after.Spec.Template.Spec, agentContainerName).Args).
+			To(Equal([]string{sherlockAgentCommand, sherlockAgentIDFlag, testGRN}))
+
+		By("on the same StatefulSet and the same volume claim, not a new workload")
+		Expect(after.UID).To(Equal(before.UID))
+		Expect(after.Spec.VolumeClaimTemplates).To(Equal(before.Spec.VolumeClaimTemplates))
 	})
 
 	It("leaves the root filesystem of every container writable, which restricted does not ask for", func() {

@@ -91,7 +91,7 @@ func (c *recordingConstructor) Construct(_ context.Context, definition garam.Def
 	return nil
 }
 
-func (c *recordingConstructor) CorrectImage(_ context.Context, agent garam.GRN) (bool, error) {
+func (c *recordingConstructor) CorrectSpec(_ context.Context, agent garam.GRN) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.stale[agent] {

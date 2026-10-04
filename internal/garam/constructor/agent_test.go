@@ -151,6 +151,22 @@ func TestConstructRecordsTheEpochGaramHoldsTheAgentAt(t *testing.T) {
 	g.Expect(constructed.Status.Epoch).To(Equal(sampleEpoch))
 }
 
+// TestConstructWritesTheIdentityTheCertificateRouteProvedIntoTheSpec is what the
+// agent is started under: the GRN and the epoch reach the Pod from the spec,
+// because the reconciler reads no status to build it.
+func TestConstructWritesTheIdentityTheCertificateRouteProvedIntoTheSpec(t *testing.T) {
+	g := NewWithT(t)
+	scheme := newScheme(t)
+	c := newClient(scheme)
+
+	err := newConstructor(t, scheme, c).Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{
+		GRN: string(sampleAgent), AssignmentEpoch: "7",
+	}))
+}
+
 // TestConstructPlacesEveryPartOfTheCredentialUnderItsOwnKey is what keeps the
 // issuer and the server root apart. They are different certificates and an
 // agent that verifies garam by the issuer cannot reach it at all, so each is
@@ -383,11 +399,11 @@ func imageOf(t *testing.T, c client.Client, agent garam.GRN) string {
 	return constructed.Spec.Image
 }
 
-// TestCorrectImageBringsAConstructedAgentToTheOperatorsConfiguration is the
+// TestCorrectSpecBringsAConstructedAgentToTheOperatorsConfiguration is the
 // whole of what a corrected --agent-image is worth to an agent already built. A
 // definition is claimed once, so re-construction is not a route back, and the
 // only other one is editing a spec this operator authored by hand.
-func TestCorrectImageBringsAConstructedAgentToTheOperatorsConfiguration(t *testing.T) {
+func TestCorrectSpecBringsAConstructedAgentToTheOperatorsConfiguration(t *testing.T) {
 	g := NewWithT(t)
 	scheme := newScheme(t)
 	c := newClient(scheme)
@@ -396,18 +412,18 @@ func TestCorrectImageBringsAConstructedAgentToTheOperatorsConfiguration(t *testi
 		Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
 	g.Expect(imageOf(t, c, sampleAgent)).To(Equal(image))
 
-	corrected, err := newCorrector(t, scheme, c).CorrectImage(context.Background(), sampleAgent)
+	corrected, err := newCorrector(t, scheme, c).CorrectSpec(context.Background(), sampleAgent)
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(corrected).To(BeTrue())
 	g.Expect(imageOf(t, c, sampleAgent)).To(Equal(laterImage))
 }
 
-// TestCorrectImageWritesNothingWhereTheImageIsAlreadyCurrent keeps a pass that
+// TestCorrectSpecWritesNothingWhereTheImageIsAlreadyCurrent keeps a pass that
 // changes nothing from rolling the agent's Pod: the reconciler builds the
 // workload from spec.image, and a write on every poll would restart an agent
 // every interval.
-func TestCorrectImageWritesNothingWhereTheImageIsAlreadyCurrent(t *testing.T) {
+func TestCorrectSpecWritesNothingWhereTheImageIsAlreadyCurrent(t *testing.T) {
 	g := NewWithT(t)
 	scheme := newScheme(t)
 	c := newClient(scheme)
@@ -418,24 +434,24 @@ func TestCorrectImageWritesNothingWhereTheImageIsAlreadyCurrent(t *testing.T) {
 
 	// The first correction, so that the answer below is an image already current
 	// and not one this operator declined to write at all.
-	corrected, err := correcting.CorrectImage(context.Background(), sampleAgent)
+	corrected, err := correcting.CorrectSpec(context.Background(), sampleAgent)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(corrected).To(BeTrue())
 
-	corrected, err = correcting.CorrectImage(context.Background(), sampleAgent)
+	corrected, err = correcting.CorrectSpec(context.Background(), sampleAgent)
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(corrected).To(BeFalse())
 	g.Expect(imageOf(t, c, sampleAgent)).To(Equal(laterImage))
 }
 
-// TestCorrectImageLeavesTheSpecOfAnAgentThisOperatorDidNotConstructAlone says
+// TestCorrectSpecLeavesTheSpecOfAnAgentThisOperatorDidNotConstructAlone says
 // what tells the two apart is status.agent and not the name. An Agent standing
 // at the name a GRN digests to, carrying no GRN of its own, is one a user wrote,
 // and its spec is theirs; the agent beside it is the control, constructed and
 // corrected through the same call, so the refusal is the guard rather than a
 // correction that never ran.
-func TestCorrectImageLeavesTheSpecOfAnAgentThisOperatorDidNotConstructAlone(t *testing.T) {
+func TestCorrectSpecLeavesTheSpecOfAnAgentThisOperatorDidNotConstructAlone(t *testing.T) {
 	g := NewWithT(t)
 	scheme := newScheme(t)
 	c := newClient(scheme)
@@ -453,27 +469,108 @@ func TestCorrectImageLeavesTheSpecOfAnAgentThisOperatorDidNotConstructAlone(t *t
 	g.Expect(newConstructor(t, scheme, c).
 		Construct(context.Background(), definitionOf(otherAgent), sampleEpoch, sampleCredential)).To(Succeed())
 
-	refused, err := correcting.CorrectImage(context.Background(), sampleAgent)
+	refused, err := correcting.CorrectSpec(context.Background(), sampleAgent)
 	g.Expect(err).NotTo(HaveOccurred())
-	accepted, err := correcting.CorrectImage(context.Background(), otherAgent)
+	accepted, err := correcting.CorrectSpec(context.Background(), otherAgent)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	g.Expect(refused).To(BeFalse())
 	g.Expect(imageOf(t, c, sampleAgent)).To(Equal("registry.example/an-image-its-author-chose:0.1.0"))
+	g.Expect(identityOf(t, c, sampleAgent)).To(BeNil())
 	g.Expect(accepted).To(BeTrue())
 	g.Expect(imageOf(t, c, otherAgent)).To(Equal(laterImage))
+	g.Expect(identityOf(t, c, otherAgent)).To(Equal(&agentv1alpha1.AgentIdentity{
+		GRN: string(otherAgent), AssignmentEpoch: "7",
+	}))
 }
 
-// TestCorrectImageCorrectsNothingWhereNoAgentIsBuilt says a pass that reaches a
+// identityOf is the identity the cluster carries in the spec of the Agent
+// constructed for agent.
+func identityOf(t *testing.T, c client.Client, agent garam.GRN) *agentv1alpha1.AgentIdentity {
+	t.Helper()
+
+	constructed := &agentv1alpha1.Agent{}
+	if err := c.Get(context.Background(),
+		client.ObjectKey{Namespace: namespace, Name: constructor.Name(agent)}, constructed); err != nil {
+		t.Fatalf("read the agent constructed for %s: %v", agent, err)
+	}
+	return constructed.Spec.Identity
+}
+
+// constructedBeforeIdentity creates the Agent an operator that wrote no identity
+// into the spec built for agent: the GRN and the epoch in its status alone, and
+// the image already current, so that the identity is the only thing a
+// correction can move.
+func constructedBeforeIdentity(t *testing.T, c client.Client, agent garam.GRN, epoch int64) {
+	t.Helper()
+
+	older := &agentv1alpha1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: constructor.Name(agent), Namespace: namespace},
+		Spec: agentv1alpha1.AgentSpec{
+			Image:                 laterImage,
+			CredentialsSecretName: constructor.Name(agent) + "-credentials",
+			StorageSize:           resource.MustParse(storageSize),
+		},
+	}
+	if err := c.Create(context.Background(), older); err != nil {
+		t.Fatalf("create the agent constructed for %s: %v", agent, err)
+	}
+	older.Status = agentv1alpha1.AgentStatus{Agent: string(agent), Epoch: epoch}
+	if err := c.Status().Update(context.Background(), older); err != nil {
+		t.Fatalf("report %s on the agent constructed for it: %v", agent, err)
+	}
+}
+
+// TestCorrectSpecFillsTheIdentityOfAnAgentConstructedBeforeTheSpecCarriedOne is
+// the upgrade: such an agent has its GRN only in its status, and construction is
+// not reached again for it, so this is the one route its identity reaches the
+// spec by. It is filled once, under the name the Agent already has.
+func TestCorrectSpecFillsTheIdentityOfAnAgentConstructedBeforeTheSpecCarriedOne(t *testing.T) {
+	g := NewWithT(t)
+	scheme := newScheme(t)
+	c := newClient(scheme)
+	correcting := newCorrector(t, scheme, c)
+	constructedBeforeIdentity(t, c, sampleAgent, sampleEpoch)
+
+	corrected, err := correcting.CorrectSpec(context.Background(), sampleAgent)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(corrected).To(BeTrue())
+	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{
+		GRN: string(sampleAgent), AssignmentEpoch: "7",
+	}))
+
+	secondPass := "a second pass, which finds the identity filled and writes nothing"
+	corrected, err = correcting.CorrectSpec(context.Background(), sampleAgent)
+	g.Expect(err).NotTo(HaveOccurred(), secondPass)
+	g.Expect(corrected).To(BeFalse(), secondPass)
+}
+
+// TestCorrectSpecFillsNoEpochWhereTheConstructionRecordedNone says an agent
+// built before epochs were recorded is started under its GRN and no epoch,
+// rather than under a zero garam never holds an assignment at.
+func TestCorrectSpecFillsNoEpochWhereTheConstructionRecordedNone(t *testing.T) {
+	g := NewWithT(t)
+	scheme := newScheme(t)
+	c := newClient(scheme)
+	constructedBeforeIdentity(t, c, sampleAgent, 0)
+
+	_, err := newCorrector(t, scheme, c).CorrectSpec(context.Background(), sampleAgent)
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{GRN: string(sampleAgent)}))
+}
+
+// TestCorrectSpecCorrectsNothingWhereNoAgentIsBuilt says a pass that reaches a
 // definition before its agent exists is not a failure: the construction below it
 // in the same pass is what builds one, with the configuration this would have
 // written.
-func TestCorrectImageCorrectsNothingWhereNoAgentIsBuilt(t *testing.T) {
+func TestCorrectSpecCorrectsNothingWhereNoAgentIsBuilt(t *testing.T) {
 	g := NewWithT(t)
 	scheme := newScheme(t)
 	c := newClient(scheme)
 
-	corrected, err := newCorrector(t, scheme, c).CorrectImage(context.Background(), sampleAgent)
+	corrected, err := newCorrector(t, scheme, c).CorrectSpec(context.Background(), sampleAgent)
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(corrected).To(BeFalse())

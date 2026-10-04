@@ -53,7 +53,7 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0004-extend-stack-go.md` | Extend `stack-go.md` instead of replacing it | accepted |
 | `adr/0005-statefulset-of-one.md` | Run an agent as a StatefulSet of one replica | accepted |
 | `adr/0006-credential-group.md` | Carry credential access on a group, not on a user | accepted |
-| `adr/0007-claim-definitions-from-a-poller.md` | Claim garam's definitions from a poller beside the reconciler | accepted; composition held by garam superseded by ADR-0032 |
+| `adr/0007-claim-definitions-from-a-poller.md` | Claim garam's definitions from a poller beside the reconciler | accepted; composition held by garam superseded by ADR-0032; GRN never in spec superseded by ADR-0037 |
 | `adr/0008-renew-the-operator-credential-into-the-secret-it-is-read-from.md` | Renew the operator's credential into the Secret it is read from | accepted |
 | `adr/0009-construct-a-claimed-agent-from-the-operators-own-configuration.md` | Construct a claimed agent from the operator's own configuration, and place the credential the claim admits it to | accepted |
 | `adr/0010-copy-an-agents-credential-into-a-memory-volume-the-pods-own-user-owns.md` | Copy an agent's credential into a memory volume the Pod's own user owns | accepted |
@@ -62,7 +62,7 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0013-the-base-carries-what-every-deployment-shares.md` | Carry what every deployment shares in the base, and an environment's values where that environment is reconciled | superseded by ADR-0017 |
 | `adr/0014-the-image-repository-is-immutable-and-a-deployment-references-a-digest.md` | Keep the image repository immutable with a tag naming one commit, and reference the image by digest with the tag beside it | accepted |
 | `adr/0015-run-the-e2e-suite-where-a-change-lands-and-advance-main-only-by-a-human-promotion.md` | Run the e2e suite where a change lands and not on every pull request, and advance `main` only by a human promotion | accepted; trigger decisions superseded by ADR-0028 |
-| `adr/0016-report-what-the-operator-observed-and-stay-silent-where-it-observed-nothing.md` | Report to `garam` what this operator observed, stay silent where it observed nothing, and carry the epoch on the `Agent` it was proved at | accepted |
+| `adr/0016-report-what-the-operator-observed-and-stay-silent-where-it-observed-nothing.md` | Report to `garam` what this operator observed, stay silent where it observed nothing, and carry the epoch on the `Agent` it was proved at | accepted; epoch held in Status only superseded in part by ADR-0037 |
 | `adr/0017-an-unreconciled-environments-values-live-in-an-overlay-here.md` | Keep an environment's values where that environment is reconciled, and in an overlay here where nothing reconciles it | accepted |
 | `adr/0018-keep-the-image-of-an-agent-this-operator-constructed-current-with-its-own-configuration.md` | Keep the image of an agent this operator constructed current with its own configuration | accepted |
 | `adr/0019-mount-an-agents-tool-tree-from-an-image-this-operator-names.md` | Mount an agent's tool tree from an image this operator names, and point the agent at it | superseded by ADR-0027 |
@@ -82,3 +82,4 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0033-publish-the-control-service-as-a-second-image-to-its-own-repository.md` | Publish the control service as a second image, to a repository of its own, under the rules every image here follows | accepted |
 | `adr/0035-carry-an-agents-model-and-ego-in-its-spec-and-render-them-through-its-types-descriptor.md` | Carry an agent's model and ego in its spec, and render them into the Pod through its type's descriptor | accepted |
 | `adr/0036-persist-the-control-services-desired-state-in-its-own-postgresql-database.md` | Persist the control service's desired state in its own PostgreSQL database, through pgx v5 | accepted |
+| `adr/0037-carry-an-agents-identity-in-its-spec-and-start-the-agent-under-it.md` | Carry an agent's identity in its spec, and start the agent under it | accepted |
