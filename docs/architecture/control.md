@@ -38,7 +38,6 @@ A creation stays `Pending` on an unknown outcome rather than failing, because a 
 
 ## Open questions
 
-- **What moves the Go module pins.** `.github/dependabot.yml` has no `gomod` entry, so neither pgx, testcontainers-go nor any other module in `go.mod` has the mover `ci.md` §Verify a pinned dependency requires. Issue #215 adds it.
 - **What moves the e2e suite's PostgreSQL image.** It is pinned by digest in `tests/control/main_test.go`, which no Dependabot ecosystem reads, so it is moved by hand.
 - **How the schema changes once a table holds rows.** `schema.sql` creates what is missing and alters nothing, so a change to an existing table needs a migration that no part of the binary performs yet.
 - **What configuration the domain refuses.** It stores any configuration it is given, including an empty tool-pin set, which `agent.md` records `sherlock` refusing. Where that check belongs waits on the boundary that parses a request, which is not built.
