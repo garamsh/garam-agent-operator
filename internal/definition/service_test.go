@@ -57,6 +57,7 @@ type fixture struct {
 	service    definition.Service
 	repository *repository.Memory
 	registrar  *registrar
+	issuer     *issuer
 	profile    definition.ProfileRef
 	template   definition.TemplateRef
 }
@@ -83,7 +84,8 @@ func newFixture(t *testing.T, answers ...registration) fixture {
 	ctx := context.Background()
 	repo := repository.NewMemory()
 	reg := &registrar{answers: answers}
-	svc := definition.NewService(repo, reg)
+	iss := &issuer{}
+	svc := definition.NewService(repo, reg, iss)
 
 	p, err := svc.PublishProfile(ctx, org, "small", settings("500m", "1Gi"))
 	require.NoError(t, err)
@@ -100,6 +102,7 @@ func newFixture(t *testing.T, answers ...registration) fixture {
 		service:    svc,
 		repository: repo,
 		registrar:  reg,
+		issuer:     iss,
 		profile:    profile,
 		template:   definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
 	}

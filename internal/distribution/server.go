@@ -36,6 +36,7 @@ type server struct {
 //
 //	GET  /v1/operators/self/desired                the desired feed, long-polled
 //	POST /v1/operators/self/agents/{agent}/status  a report of what the controller observed and rendered
+//	POST /v1/operators/self/agents/{agent}/certificate-requests  a request for the agent's first certificate
 func NewHandler(c Config) http.Handler {
 	s := &server{
 		definitions: c.Definitions, prover: c.Prover, pollInterval: c.PollInterval, maxAgents: c.MaxAgents, logger: c.Logger,
@@ -43,6 +44,7 @@ func NewHandler(c Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/operators/self/desired", s.desired)
 	mux.HandleFunc("POST /v1/operators/self/agents/{agent}/status", s.status)
+	mux.HandleFunc("POST /v1/operators/self/agents/{agent}/certificate-requests", s.requestCertificate)
 	return s.recoverPanics(mux)
 }
 

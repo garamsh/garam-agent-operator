@@ -99,4 +99,27 @@ WHERE organization = $1 AND request_id = $2`
 SELECT actor, operation, target, body_sha256, operation_ref, assignment_operator, assignment_epoch,
     agent, outcome, revision
 FROM requests WHERE organization = $1 AND request_id = $2`
+
+	creationOfAgent = `
+SELECT organization, request_id FROM creations WHERE agent = $1 AND state = 'registered'`
+
+	beginCertificate = `
+INSERT INTO initial_certificates (agent, request_id, epoch, certificate_request_pem, state)
+VALUES ($1, $2, $3, $4, 'pending')
+ON CONFLICT DO NOTHING`
+
+	getCertificate = `
+SELECT request_id, epoch, certificate_request_pem, state, certificate_pem, issuer_pem, server_root_pem, not_after
+FROM initial_certificates WHERE agent = $1`
+
+	lockCertificate = getCertificate + ` FOR UPDATE`
+
+	issueCertificate = `
+UPDATE initial_certificates
+SET state = 'issued', certificate_pem = $2, issuer_pem = $3, server_root_pem = $4, not_after = $5
+WHERE agent = $1`
+
+	clearCertificate = `
+DELETE FROM initial_certificates
+WHERE agent = $1 AND state = 'pending' AND request_id = $2 AND epoch = $3 AND certificate_request_pem = $4`
 )

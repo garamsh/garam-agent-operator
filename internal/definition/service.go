@@ -12,14 +12,17 @@ type Service interface {
 	Position(ctx context.Context) (Position, error)
 	Desired(ctx context.Context, operator string, limit int) (DesiredPage, error)
 	RecordStatus(ctx context.Context, agent GRN, observed, rendered Revision) (Status, error)
+	RequestInitialCertificate(ctx context.Context, in InitialCertificateInput) (c InitialCertificate, first bool, err error)
 }
 
 type service struct {
 	repository Repository
 	registrar  Registrar
+	issuer     Issuer
 }
 
-// NewService returns a Service storing in repository and registering agents through registrar.
-func NewService(repository Repository, registrar Registrar) Service {
-	return &service{repository: repository, registrar: registrar}
+// NewService returns a Service storing in repository, registering agents through registrar and
+// asking for their first certificates through issuer.
+func NewService(repository Repository, registrar Registrar, issuer Issuer) Service {
+	return &service{repository: repository, registrar: registrar, issuer: issuer}
 }

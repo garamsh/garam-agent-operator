@@ -102,3 +102,22 @@ CREATE TABLE IF NOT EXISTS agent_status (
     rendered_revision bigint NOT NULL CHECK (rendered_revision >= 1),
     applied_revision  bigint
 );
+
+-- A creation's agent names one creation, which a first-certificate request is sent under.
+CREATE UNIQUE INDEX IF NOT EXISTS creations_agent ON creations (agent);
+
+-- One first-certificate request per agent, as its controller sent it, and the public result garam
+-- answered. A row is pending while the outcome is unknown; a refusal removes it.
+CREATE TABLE IF NOT EXISTS initial_certificates (
+    agent                   text PRIMARY KEY REFERENCES creations (agent),
+    request_id              text NOT NULL,
+    epoch                   text NOT NULL,
+    certificate_request_pem text NOT NULL,
+    state                   text NOT NULL CHECK (state IN ('pending', 'issued')),
+    certificate_pem         text,
+    issuer_pem              text,
+    server_root_pem         text,
+    not_after               timestamptz,
+    CHECK ((state = 'issued') = (certificate_pem IS NOT NULL AND issuer_pem IS NOT NULL
+        AND server_root_pem IS NOT NULL AND not_after IS NOT NULL))
+);
