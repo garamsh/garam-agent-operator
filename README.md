@@ -35,7 +35,7 @@ The Makefile downloads controller-gen, kustomize, setup-envtest, and golangci-li
 
 `make ci` runs the whole check set — lint, format, test, build. It is what CI invokes, and what to run before pushing. `make help` lists every target.
 
-End-to-end tests need a cluster and are not part of that set: `make test-e2e` creates a Kind cluster, runs them, and tears it down.
+End-to-end tests need Docker and a cluster and are not part of that set: `make test-e2e` runs the control service's suite against a PostgreSQL container (`make test-e2e-control` alone), then creates a Kind cluster, runs the manager's, and tears it down.
 
 CI runs neither on `dev`: a pull request into `dev` gets no automated check, and both run only on the promotion of `dev` to `main`. So run `make ci` and `make test-e2e` before pushing, and report what ran in the pull request — that report is what a reviewer reads. `docs/architecture/integration.md` states which checks run where.
 

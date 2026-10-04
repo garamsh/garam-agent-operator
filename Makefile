@@ -101,8 +101,14 @@ setup-test-e2e: kind ## Set up a Kind cluster for e2e tests if it does not exist
 			"$(KIND)" create cluster --name $(KIND_CLUSTER) --kubeconfig "$(KUBECONFIG_E2E)" ;; \
 	esac
 
+# Builds cmd/control and runs it against a PostgreSQL container testcontainers-go
+# starts on the Docker daemon DOCKER_HOST names; it needs no cluster.
+.PHONY: test-e2e-control
+test-e2e-control: ## Run the control service's e2e tests: the built binary against a PostgreSQL container.
+	go test -tags=e2e ./tests/control/ -v -count=1
+
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
+test-e2e: test-e2e-control setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	KUBECONFIG="$(KUBECONFIG_E2E)" KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
@@ -236,8 +242,9 @@ ci: lint-config lint fmt test build verify-pins ## Run the whole check set — l
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
+build: manifests generate fmt vet ## Build the manager and control binaries.
 	go build -o bin/manager cmd/main.go
+	go build -o bin/control ./cmd/control
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
@@ -252,6 +259,14 @@ run: manifests generate fmt vet ## Run a controller from your host.
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build --build-arg REVISION=$$(git rev-parse HEAD) -t ${IMG} .
+
+# The control service's image, from build/control.Dockerfile with the repository root
+# as context; REVISION is passed as docker-build passes it to the manager's.
+CONTROL_IMG ?= control:latest
+
+.PHONY: docker-build-control
+docker-build-control: ## Build docker image with the control service.
+	$(CONTAINER_TOOL) build --build-arg REVISION=$$(git rev-parse HEAD) -f build/control.Dockerfile -t ${CONTROL_IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
