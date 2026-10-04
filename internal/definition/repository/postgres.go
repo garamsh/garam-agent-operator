@@ -478,10 +478,7 @@ func (p *Postgres) CreationOf(ctx context.Context, agent definition.GRN) (defini
 func (p *Postgres) BeginInitialCertificate(
 	ctx context.Context, agent definition.GRN, r definition.CertificateRequest,
 ) (definition.InitialCertificate, error) {
-	if _, err := p.pool.Exec(ctx, beginCertificate, string(agent), r.RequestID, r.Epoch, r.CSRPEM); err != nil {
-		return definition.InitialCertificate{}, storeError("begin initial certificate", err)
-	}
-	c, err := scanCertificate(p.pool.QueryRow(ctx, getCertificate, string(agent)), agent)
+	c, err := scanCertificate(p.pool.QueryRow(ctx, beginCertificate, string(agent), r.RequestID, r.Epoch, r.CSRPEM), agent)
 	if err != nil {
 		return definition.InitialCertificate{}, storeError("begin initial certificate", err)
 	}

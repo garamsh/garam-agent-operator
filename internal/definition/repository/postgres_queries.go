@@ -103,10 +103,13 @@ FROM requests WHERE organization = $1 AND request_id = $2`
 	creationOfAgent = `
 SELECT organization, request_id FROM creations WHERE agent = $1 AND state = 'registered'`
 
+	// beginCertificate inserts the pending request or returns the stored one in one statement, so
+	// a row a refusal removes between an insert and a read is never read as missing.
 	beginCertificate = `
 INSERT INTO initial_certificates (agent, request_id, epoch, certificate_request_pem, state)
 VALUES ($1, $2, $3, $4, 'pending')
-ON CONFLICT DO NOTHING`
+ON CONFLICT (agent) DO UPDATE SET agent = EXCLUDED.agent
+RETURNING request_id, epoch, certificate_request_pem, state, certificate_pem, issuer_pem, server_root_pem, not_after`
 
 	getCertificate = `
 SELECT request_id, epoch, certificate_request_pem, state, certificate_pem, issuer_pem, server_root_pem, not_after
