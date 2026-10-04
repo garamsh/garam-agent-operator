@@ -72,7 +72,7 @@ The control service: agents' execution definitions and their revisions, template
     - **Long poll.** The cursor only says when to ask. A request after it reads the position every second until the position moves past it or `waitSeconds` passes, then answers the whole set.
     - **Withheld.** An agent garam does not prove here, or proves under another epoch, is absent from that answer and decided again on the next. A refusal that ends releases the agent without a newer revision.
     - **A moved agent.** It gets nothing until it is reconfigured under its new assignment, as garam refuses a configuration change for an agent that has moved.
-    - **Bound.** One answer carries at most 500 candidates, one proof each. A controller with more is refused with 500 rather than answered in part.
+    - **Capacity limit.** One answer carries at most 500 candidates, one proof each. A controller with more is refused with 422 and the kind `too_many_agents`, rather than answered in part. That status is definite and not one to retry: garam's ADR-0050, which a client of this service follows, treats a 500 as transient, and retrying cannot clear the condition.
   - **`POST /v1/operators/self/agents/{agent}/status`.** It takes `{observedRevision, renderedRevision}`, each a canonical decimal string. Each is parsed, range-checked from 1 to the agent's latest revision, and raised with `GREATEST`. It answers `{agent, observedRevision, renderedRevision, appliedRevision: null}` as stored, and a lower report changes nothing.
 - **Each controller-route refusal has one status**, chosen in `internal/distribution/respond.go`:
 
@@ -84,7 +84,7 @@ The control service: agents' execution definitions and their revisions, template
 | garam stays undecided on any proof the answer needs | 503, with the cursor unmoved |
 | A malformed or future cursor, `waitSeconds` outside 0–30, a report that is not one, a revision that is not a canonical decimal string, or a revision the agent does not have | 400 |
 | The agent has no revision | 404 |
-| More candidate agents than one answer carries (500) | 500, naming the bound |
+| More candidate agents than one answer carries (500) | 422, `{"kind": "too_many_agents"}` |
 
 - **Domain behaviour is tested on the in-memory store**, in `internal/definition/*_test.go`. The console's pipeline is tested in `internal/console/*_test.go` through `httptest`, with a test double standing in for `Introspector`. The controller routes are tested in `internal/distribution/*_test.go` through a TLS `httptest` server that requests client certificates, with a test double standing in for `Prover`. `testing.md` keeps a real database out of the integration layer.
 - **The e2e layer runs the built binary**, in `tests/control/`, against a PostgreSQL container that testcontainers-go starts. `make test-e2e-control` runs it, and `make test-e2e` runs it first.
@@ -115,3 +115,4 @@ A creation stays `Pending` on an unknown outcome rather than failing, because a 
 - **What activation re-reads.** The stored operation reference and `{operator, epoch}` snapshot are what a revision's first activation is to recheck through `GET /operation-references/{ref}`. Activation is not built.
 - **Who may publish a profile or a template.** `garamsh/garam#1155` D4 makes editing a profile a high-trust action; nothing here checks an actor yet.
 - **What placing an agent elsewhere does.** An agent moved away from a controller is absent from its next answer, and is released to its new controller once reconfigured there. The placement itself is issue #218.
+- **How a controller with more than 500 agents is served.** The feed answers the whole releasable set or nothing, so 500 candidates is a capacity limit of the C2 wire. Paginating the set without letting the manager read a page as the rest withdrawn is not designed.

@@ -167,7 +167,8 @@ func TestDesired_RefusesMoreAgentsThanOneAnswerCarries(t *testing.T) {
 
 	e.configure(t, agentC, controller, 2)
 	refused := e.desired(t, e.withCert, "")
-	assert.Equal(t, 500, refused.status)
+	assert.Equal(t, 422, refused.status)
+	assert.Equal(t, "too_many_agents", refused.kind)
 	assert.Contains(t, refused.message, "more agents than one desired answer carries")
 	assert.Empty(t, refused.agents)
 }

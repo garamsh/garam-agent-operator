@@ -10,9 +10,15 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
+// errorBody is every refusal's answer. Kind is set where a caller has to tell one refusal from
+// the others under the same status.
 type errorBody struct {
+	Kind    string `json:"kind,omitempty"`
 	Message string `json:"message"`
 }
+
+// kindTooManyAgents names the refusal of a controller with more candidates than one answer carries.
+const kindTooManyAgents = "too_many_agents"
 
 // respondError translates err to its status. It is the only place a controller route chooses a
 // status for an error, and the only place one is logged.
@@ -29,8 +35,8 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 	case errors.Is(err, definition.ErrNotFound):
 		writeMessage(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, errTooManyAgents):
-		s.logger.Error("controller request refused", "trace_id", newTraceID(), "error", err)
-		writeMessage(w, http.StatusInternalServerError, err.Error())
+		// A capacity limit that retrying cannot clear, so not a 5xx a caller retries.
+		writeJSON(w, http.StatusUnprocessableEntity, errorBody{Kind: kindTooManyAgents, Message: err.Error()})
 	default:
 		s.logger.Error("controller request failed", "trace_id", newTraceID(), "error", err)
 		writeMessage(w, http.StatusInternalServerError, "internal error")

@@ -206,6 +206,7 @@ type feed struct {
 	status  int
 	cursor  string
 	agents  map[string]string
+	kind    string
 	message string
 }
 
@@ -220,10 +221,11 @@ func (e *env) desired(t *testing.T, client *http.Client, query string) feed {
 			Agent    string `json:"agent"`
 			Revision string `json:"revision"`
 		} `json:"agents"`
+		Kind    string `json:"kind"`
 		Message string `json:"message"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	f := feed{status: resp.StatusCode, cursor: out.Cursor, agents: map[string]string{}, message: out.Message}
+	f := feed{status: resp.StatusCode, cursor: out.Cursor, agents: map[string]string{}, kind: out.Kind, message: out.Message}
 	for _, a := range out.Agents {
 		f.agents[a.Agent] = a.Revision
 	}
