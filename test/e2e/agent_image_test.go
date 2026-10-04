@@ -41,7 +41,9 @@ const agentImageRegistry = "localhost:5000"
 const agentImageRegistryNamespace = "e2e-agent-image-registry"
 
 // agentImageRegistryManifest is the registry the node pulls agentImage from. Its
-// image is pinned to the multi-platform index.
+// image is pinned to the multi-platform index, and moved by hand, because no file
+// Dependabot reads holds it. The PM moves it and reviews it at each promotion to
+// main.
 var agentImageRegistryManifest = fmt.Sprintf(`
 apiVersion: v1
 kind: Pod

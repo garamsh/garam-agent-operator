@@ -373,7 +373,7 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 ## Tool Versions
 # The PM moves the three pins below and reviews them when the Kubernetes
 # libraries move. No bot proposes a bump: `.github/dependabot.yml` configures
-# github-actions and docker, neither ecosystem reads a Makefile variable, and
+# github-actions, docker and gomod, none of them reads a Makefile variable, and
 # none of these tools is a dependency of this module.
 KIND_VERSION ?= v0.33.0
 KUSTOMIZE_VERSION ?= v5.8.1

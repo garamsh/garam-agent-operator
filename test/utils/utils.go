@@ -12,6 +12,8 @@ import (
 )
 
 const (
+	// certmanagerVersion is moved by hand, because no file Dependabot reads holds
+	// it. The PM moves it and reviews it at each promotion to main.
 	certmanagerVersion = "v1.20.2"
 	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
 
