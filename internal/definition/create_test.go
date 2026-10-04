@@ -23,13 +23,13 @@ func TestCreateAgent_LaterTemplateVersionLeavesAgentUnchanged(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, registration{agent: firstAgent}, registration{agent: secondAgent})
 
-	tools := definition.ToolPins{"web_fetch": firstPin}
+	tools := definition.ToolPins{webFetch: firstPin}
 	v1, err := f.service.PublishTemplate(ctx, definition.Template{Name: analyst, Profile: f.profile, Config: config("first ego", tools)})
 	require.NoError(t, err)
 	_, err = f.service.CreateAgent(ctx, key("r1"), definition.TemplateRef{Name: analyst, Version: v1.Version})
 	require.NoError(t, err)
 
-	tools["web_fetch"] = secondPin
+	tools[webFetch] = secondPin
 	v2, err := f.service.PublishTemplate(ctx, definition.Template{Name: analyst, Profile: f.profile, Config: config("second ego", tools)})
 	require.NoError(t, err)
 
@@ -37,7 +37,7 @@ func TestCreateAgent_LaterTemplateVersionLeavesAgentUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, definition.Revision(1), d.Revision)
 	assert.Equal(t, "first ego", d.Config.Ego)
-	assert.Equal(t, definition.ToolPins{"web_fetch": firstPin}, d.Config.Tools)
+	assert.Equal(t, definition.ToolPins{webFetch: firstPin}, d.Config.Tools)
 
 	// Control: an agent created from the later version carries the later content.
 	_, err = f.service.CreateAgent(ctx, key("r2"), definition.TemplateRef{Name: analyst, Version: v2.Version})
@@ -45,7 +45,7 @@ func TestCreateAgent_LaterTemplateVersionLeavesAgentUnchanged(t *testing.T) {
 	later, err := f.service.GetDefinition(ctx, secondAgent)
 	require.NoError(t, err)
 	assert.Equal(t, "second ego", later.Config.Ego)
-	assert.Equal(t, definition.ToolPins{"web_fetch": secondPin}, later.Config.Tools)
+	assert.Equal(t, definition.ToolPins{webFetch: secondPin}, later.Config.Tools)
 }
 
 func TestCreateAgent_RepeatedRequestReturnsFirstOutcome(t *testing.T) {
@@ -104,7 +104,7 @@ func TestCreateAgent_RequestIDReusedForAnotherTemplateRefused(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, registration{agent: firstAgent}, registration{agent: secondAgent})
 
-	v2, err := f.service.PublishTemplate(ctx, definition.Template{Name: f.template.Name, Profile: f.profile, Config: config("second ego", definition.ToolPins{"web_fetch": secondPin})})
+	v2, err := f.service.PublishTemplate(ctx, definition.Template{Name: f.template.Name, Profile: f.profile, Config: config("second ego", definition.ToolPins{webFetch: secondPin})})
 	require.NoError(t, err)
 	_, err = f.service.CreateAgent(ctx, key("r1"), f.template)
 	require.NoError(t, err)

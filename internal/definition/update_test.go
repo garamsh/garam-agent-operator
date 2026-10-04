@@ -19,7 +19,7 @@ func TestUpdateDefinition_StaleRevisionRefused(t *testing.T) {
 	// Control: an update based on the latest revision is accepted as the next revision.
 	accepted, err := f.service.UpdateDefinition(ctx, definition.UpdateInput{
 		Agent: firstAgent, BasedOn: 1, Profile: f.profile,
-		Config: config("edited by one", definition.ToolPins{"web_fetch": firstPin}),
+		Config: config("edited by one", definition.ToolPins{webFetch: firstPin}),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, definition.Revision(2), accepted.Revision)
@@ -34,7 +34,7 @@ func TestUpdateDefinition_StaleRevisionRefused(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, definition.Revision(2), d.Revision)
 	assert.Equal(t, "edited by one", d.Config.Ego)
-	assert.Equal(t, definition.ToolPins{"web_fetch": firstPin}, d.Config.Tools)
+	assert.Equal(t, definition.ToolPins{webFetch: firstPin}, d.Config.Tools)
 }
 
 func TestUpdateDefinition_UnregisteredAgentRefused(t *testing.T) {
@@ -43,7 +43,7 @@ func TestUpdateDefinition_UnregisteredAgentRefused(t *testing.T) {
 
 	update := definition.UpdateInput{
 		Agent: firstAgent, BasedOn: 0, Profile: f.profile,
-		Config: config("ego", definition.ToolPins{"web_fetch": firstPin}),
+		Config: config("ego", definition.ToolPins{webFetch: firstPin}),
 	}
 	_, err := f.service.UpdateDefinition(ctx, update)
 	require.ErrorIs(t, err, definition.ErrNotFound)
@@ -64,7 +64,7 @@ func TestUpdateDefinition_UnpublishedProfileRefused(t *testing.T) {
 
 	update := definition.UpdateInput{
 		Agent: firstAgent, BasedOn: 1, Profile: definition.ProfileRef{Name: "unpublished", Version: 1},
-		Config: config("ego", definition.ToolPins{"web_fetch": firstPin}),
+		Config: config("ego", definition.ToolPins{webFetch: firstPin}),
 	}
 	_, err = f.service.UpdateDefinition(ctx, update)
 	require.ErrorIs(t, err, definition.ErrNotFound)

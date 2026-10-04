@@ -17,6 +17,7 @@ import (
 const (
 	firstPin  = "sha256:aa"
 	secondPin = "sha256:bb"
+	webFetch  = "web_fetch"
 )
 
 // registration is one answer the registrar gives, in order.
@@ -63,7 +64,7 @@ func newFixture(t *testing.T, answers ...registration) fixture {
 	tmpl, err := svc.PublishTemplate(ctx, definition.Template{
 		Name:    "researcher",
 		Profile: profile,
-		Config:  config("first ego", definition.ToolPins{"web_fetch": firstPin}),
+		Config:  config("first ego", definition.ToolPins{webFetch: firstPin}),
 	})
 	require.NoError(t, err)
 

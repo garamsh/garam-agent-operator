@@ -47,7 +47,7 @@ func TestPublishTemplate_UnknownProfileRefused(t *testing.T) {
 	_, err := f.service.PublishTemplate(ctx, definition.Template{
 		Name:    "writer",
 		Profile: definition.ProfileRef{Name: f.profile.Name, Version: f.profile.Version + 1},
-		Config:  config("ego", definition.ToolPins{"web_fetch": firstPin}),
+		Config:  config("ego", definition.ToolPins{webFetch: firstPin}),
 	})
 	require.ErrorIs(t, err, definition.ErrNotFound)
 
@@ -55,7 +55,7 @@ func TestPublishTemplate_UnknownProfileRefused(t *testing.T) {
 	_, err = f.service.PublishTemplate(ctx, definition.Template{
 		Name:    "writer",
 		Profile: f.profile,
-		Config:  config("ego", definition.ToolPins{"web_fetch": firstPin}),
+		Config:  config("ego", definition.ToolPins{webFetch: firstPin}),
 	})
 	require.NoError(t, err)
 }
