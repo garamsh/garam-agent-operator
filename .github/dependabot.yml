@@ -24,3 +24,27 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore
+  - package-ecosystem: gomod
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    # A module in no group moves on its own: each is released on its own, so a
+    # break stays with the one module that brought it.
+    groups:
+      # They share generated types and a client contract, and move in one change
+      # (docs/convention/stack-kubebuilder.md §11).
+      kubernetes:
+        patterns:
+          - k8s.io/api
+          - k8s.io/apimachinery
+          - k8s.io/client-go
+          - sigs.k8s.io/controller-runtime
+      # The postgres module is released from the same repository at the same
+      # version as the core module.
+      testcontainers:
+        patterns:
+          - github.com/testcontainers/testcontainers-go
+          - github.com/testcontainers/testcontainers-go/modules/*
