@@ -40,10 +40,13 @@ func (g garam) mint(t *testing.T, requestID string, body []byte) string {
 }
 
 // controllerClient presents the certificate garam issued the controller the agent is assigned to.
-func (g garam) controllerClient() *http.Client {
+func (g garam) controllerClient() *http.Client { return g.stack.feedClient() }
+
+// feedClient presents the controller's certificate garam issued, trusting the binary's serving root.
+func (s *garamStack) feedClient() *http.Client {
 	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
 		RootCAs:      apiClient.Transport.(*http.Transport).TLSClientConfig.RootCAs,
-		Certificates: []tls.Certificate{g.stack.controller},
+		Certificates: []tls.Certificate{s.controller},
 	}}}
 }
 
@@ -277,4 +280,115 @@ func TestConfigure_AnotherOrganizationsProfileAnswersNotFound(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, []string{"2"}, releasedRevisions(t, g))
+}
+
+// publishTemplate stores version 1 of organization's template named for the test, over its profile,
+// in the binary's database; no route publishes one yet.
+func publishTemplate(t *testing.T, organization, profile string) string {
+	t.Helper()
+	template := name(t, "template")
+	require.NoError(t, execute(t, `INSERT INTO templates
+    (organization, name, version, profile_name, profile_version, config)
+VALUES ($1, $2, 1, $3, 1, '{"ego":"created"}')`, organization, template, profile))
+	return template
+}
+
+// createAgentBody is the console's create route's body for controller, template and profile.
+func createAgentBody(requestID, controller, template, profile string) []byte {
+	type ref struct {
+		Name    string `json:"name"`
+		Version int    `json:"version"`
+	}
+	b, err := json.Marshal(struct {
+		RequestID  string `json:"requestId"`
+		Controller string `json:"controller"`
+		Template   ref    `json:"template"`
+		Profile    ref    `json:"profile"`
+	}{requestID, controller, ref{template, 1}, ref{profile, 1}})
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// createThroughConsole posts body to the attached binary's create route under authority.
+func createThroughConsole(t *testing.T, authority string, body []byte) (int, map[string]string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, attachedURL+"/v1/orgs/"+real.orgID+"/agents", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Garam-Operation "+authority)
+	resp, err := apiClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	out := map[string]string{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	return resp.StatusCode, out
+}
+
+// mintCreate has garam mint an agent:create authority on the controller for the exact body.
+func mintCreate(requestID string, body []byte) (string, error) {
+	digest := sha256.Sum256(body)
+	authority, _, err := real.mintAuthority("agent:create", real.controllerGRN, requestID, hex.EncodeToString(digest[:]))
+	return authority, err
+}
+
+func TestCreate_ThroughTheConsoleRouteAgainstGaram(t *testing.T) {
+	profile := publishProfile(t, real.orgID)
+	template := publishTemplate(t, real.orgID, profile)
+	requestID := name(t, "create")
+	body := createAgentBody(requestID, real.controllerGRN, template, profile)
+
+	authority, err := mintCreate(requestID, body)
+	require.NoError(t, err)
+	status, first := createThroughConsole(t, authority, body)
+	require.Equal(t, http.StatusCreated, status, first)
+	require.NotEmpty(t, first["agent"])
+	assert.Equal(t, "1", first["revision"])
+	assert.NotEmpty(t, first["epoch"])
+
+	// The console's retry: garam mints a fresh authority for the same request and body, and the
+	// repeat, which asks garam again, is answered the same agent.
+	retry, err := mintCreate(requestID, body)
+	require.NoError(t, err)
+	status, repeat := createThroughConsole(t, retry, body)
+	assert.Equal(t, http.StatusOK, status, repeat)
+	assert.Equal(t, first, repeat)
+
+	// A changed body under the same request id: garam refuses to mint an authority for it, and the
+	// authority it minted for the first body does not carry it either.
+	changed := createAgentBody(requestID, real.controllerGRN, template, publishProfile(t, real.orgID))
+	_, err = mintCreate(requestID, changed)
+	require.ErrorContains(t, err, "answered 409")
+	status, refused := createThroughConsole(t, retry, changed)
+	assert.Equal(t, http.StatusForbidden, status, refused)
+	assert.Equal(t, 1, count(t, "SELECT count(*) FROM creations WHERE organization = $1 AND request_id = $2",
+		real.orgID, requestID), "a second creation was stored")
+	assert.Equal(t, 1, revisionCount(t, first["agent"]))
+
+	// The created agent's revision 1 is released to the controller garam assigned it to.
+	resp, err := real.feedClient().Get(attachedURL + "/v1/operators/self/desired")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var feed struct {
+		Agents []struct {
+			Agent    string `json:"agent"`
+			Revision string `json:"revision"`
+			Epoch    string `json:"epoch"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&feed))
+	released := map[string]string{}
+	for _, a := range feed.Agents {
+		released[a.Agent] = a.Revision + "@" + a.Epoch
+	}
+	assert.Equal(t, "1@"+first["epoch"], released[first["agent"]], "revision 1 is not in its controller's feed")
+}
+
+// count is the one integer query answers for arg.
+func count(t *testing.T, query string, args ...any) int {
+	t.Helper()
+	var n int
+	require.NoError(t, pool.QueryRow(context.Background(), query, args...).Scan(&n))
+	return n
 }

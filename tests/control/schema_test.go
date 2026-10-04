@@ -61,10 +61,10 @@ func TestSchema_SecondRevisionUnderOneNumberRefused(t *testing.T) {
 
 func TestSchema_SecondCreationUnderOneKeyRefused(t *testing.T) {
 	organization := name(t, "organization")
-	template := name(t, "template")
-	require.NoError(t, insertTemplate(t, organization, template, publishProfile(t, organization)))
+	template, profile := name(t, "template"), publishProfile(t, organization)
+	require.NoError(t, insertTemplate(t, organization, template, profile))
 	insert := func(requestID, actor string) error {
-		return insertCreation(t, organization, requestID, actor, template)
+		return insertCreation(t, organization, requestID, actor, template, profile)
 	}
 
 	// Control: a first creation under a key, and one under another key, are accepted.
@@ -109,24 +109,33 @@ func TestSchema_TwoOrganizationsHoldOneNameAndVersion(t *testing.T) {
 func TestSchema_ReferenceToAnotherOrganizationsRowRefused(t *testing.T) {
 	tests := []struct {
 		name string
+		// setup gives other everything the row names but the one reference under test.
+		setup func(t *testing.T, other, profile, template string)
 		// insert stores a row of organization naming the profile and template published in published.
 		insert func(t *testing.T, organization, profile, template string) error
 	}{
-		{"a template naming a profile", func(t *testing.T, organization, profile, _ string) error {
+		{"a template naming a profile", nil, func(t *testing.T, organization, profile, _ string) error {
 			return insertTemplate(t, organization, name(t, "template"), profile)
 		}},
-		{"a definition naming a profile", func(t *testing.T, organization, profile, _ string) error {
+		{"a definition naming a profile", nil, func(t *testing.T, organization, profile, _ string) error {
 			return insertDefinition(t, name(t, "agent"), organization, 1, profile)
 		}},
-		{"a creation naming a template", func(t *testing.T, organization, _, template string) error {
-			return insertCreation(t, organization, name(t, "request"), "grn:acme:default:user:7c1d", template)
-		}},
+		{"a creation naming a template", func(t *testing.T, other, profile, _ string) {
+			require.NoError(t, insertProfile(t, other, profile))
+		}, insertCreationNaming},
+		{"a creation naming a profile", func(t *testing.T, other, _, template string) {
+			own := publishProfile(t, other)
+			require.NoError(t, insertTemplate(t, other, template, own))
+		}, insertCreationNaming},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			published, other := name(t, "organization"), name(t, "organization")
 			profile, template := publishProfile(t, published), name(t, "template")
 			require.NoError(t, insertTemplate(t, published, template, profile))
+			if tt.setup != nil {
+				tt.setup(t, other, profile, template)
+			}
 
 			assertForeignKeyViolation(t, tt.insert(t, other, profile, template))
 
@@ -166,11 +175,20 @@ SELECT $1::text, $2::text, $3::bigint, $4::text, 1, '{}', (SELECT position FROM 
 		agent, organization, revision, profile)
 }
 
-// insertCreation stores a pending creation in organization from version 1 of template.
-func insertCreation(t *testing.T, organization, requestID, actor, template string) error {
+// insertCreation stores a pending creation in organization from version 1 of template under
+// version 1 of profile.
+func insertCreation(t *testing.T, organization, requestID, actor, template, profile string) error {
 	t.Helper()
-	return execute(t, `INSERT INTO creations (actor, organization, request_id, template_name, template_version, state)
-VALUES ($1, $2, $3, $4, 1, 'pending')`, actor, organization, requestID, template)
+	return execute(t, `INSERT INTO creations (actor, organization, request_id, operation, target, body_sha256,
+    operation_ref, controller, template_name, template_version, profile_name, profile_version, state)
+VALUES ($1, $2, $3, 'agent:create', 'k8s', 'digest', 'ref', 'k8s', $4, 1, $5, 1, 'pending')`,
+		actor, organization, requestID, template, profile)
+}
+
+// insertCreationNaming stores a creation of organization naming version 1 of profile and of template.
+func insertCreationNaming(t *testing.T, organization, profile, template string) error {
+	t.Helper()
+	return insertCreation(t, organization, name(t, "request"), "grn:acme:default:user:7c1d", template, profile)
 }
 
 func name(t *testing.T, kind string) string {
