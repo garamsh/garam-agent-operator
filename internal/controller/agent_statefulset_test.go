@@ -31,6 +31,9 @@ const testPinnedTool = "message_send"
 // operator, which is why no spec asserts anything about its shape.
 const testToolPin = "sha256:aa"
 
+// testEgo is an ego the way an organisation writes one.
+const testEgo = "We are the platform team. We answer in plain language."
+
 // testSecondTool and testSecondPin are a second tool in a declaration, which is
 // what says a set is carried whole rather than one tool at a time.
 const (
@@ -512,7 +515,7 @@ var _ = Describe("Agent workload", func() {
 		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}})
 		Expect(err).NotTo(HaveOccurred())
 
-		command := writeConfigCommand(dir, agentTypeSherlock)
+		command := writeConfigCommand(dir, agentTypeSherlock, false)
 		run := exec.Command(command[0], command[1:]...)
 		run.Dir = dir
 		run.Env = append(os.Environ(), configContentVariable+"="+file)
@@ -606,6 +609,136 @@ var _ = Describe("Agent workload", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		pod := podOf(statefulSetFor(name), restrictedNamespace("admits-the-config"))
+		Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+	})
+
+	It("delivers a model's settings in the config file, its key from the Secret, and an ego by --ego-file", func() {
+		name := "declares-model-and-ego"
+		createSecret(credentialsSecretName(name))
+		createSecret(modelKeySecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Model = newModel(name)
+		agent.Spec.Ego = testEgo
+		createAgent(agent)
+
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		pod := statefulSetFor(name).Spec.Template.Spec
+		config := initContainerOf(pod, configContainerName)
+		agentContainer := containerOf(pod, agentContainerName)
+
+		By("writing the model's settings into the config file, naming the variable the key is in")
+		written := sherlockConfig{}
+		Expect(yaml.Unmarshal([]byte(environmentOf(config)[configContentVariable]), &written)).To(Succeed())
+		Expect(written.Model).To(Equal(&sherlockConfigModel{
+			Provider:  agent.Spec.Model.Provider,
+			BaseURL:   agent.Spec.Model.BaseURL,
+			Model:     agent.Spec.Model.Name,
+			APIKeyEnv: agentTypeSherlock.modelKeyVariable,
+		}))
+		Expect(written.Tools).To(BeNil())
+
+		By("giving the agent's container, and no other, the key from the Secret the spec names")
+		Expect(agentContainer.Env).To(ContainElement(corev1.EnvVar{
+			Name: agentTypeSherlock.modelKeyVariable,
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: modelKeySecretName(name)},
+				Key:                  agent.Spec.Model.APIKeySecretRef.Key,
+			}},
+		}))
+		Expect(environmentOf(config)).NotTo(HaveKey(agentTypeSherlock.modelKeyVariable))
+
+		By("writing the ego into a file beside the config file, and pointing the agent at it")
+		egoFile := agentTypeSherlock.egoFileIn(agentTypeSherlock.configMountPath)
+		Expect(environmentOf(config)).To(HaveKeyWithValue(egoContentVariable, testEgo))
+		Expect(strings.Join(config.Command, " ")).To(ContainSubstring(egoFile))
+		Expect(agentContainer.Args).To(Equal([]string{"agent", "--ego-file", egoFile}))
+		Expect(environmentOf(agentContainer)).NotTo(HaveKey(egoContentVariable))
+		Expect(agentContainer.Command).To(BeEmpty())
+	})
+
+	It("writes an ego file only its owner can read, holding the ego exactly as declared", func() {
+		dir := GinkgoT().TempDir()
+		// An ego is free text a person writes. This one closes the quoting a
+		// command would carry it in.
+		ego := "We answer briefly.\n\" ; touch escaped ; echo \"\n"
+		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: newModel("writes-an-ego")})
+		Expect(err).NotTo(HaveOccurred())
+
+		command := writeConfigCommand(dir, agentTypeSherlock, true)
+		run := exec.Command(command[0], command[1:]...)
+		run.Dir = dir
+		run.Env = append(os.Environ(), configContentVariable+"="+file, egoContentVariable+"="+ego)
+		output, err := run.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), string(output))
+
+		for _, written := range []string{agentTypeSherlock.configFileIn(dir), agentTypeSherlock.egoFileIn(dir)} {
+			info, err := os.Stat(written)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)), written)
+		}
+
+		content, err := os.ReadFile(agentTypeSherlock.egoFileIn(dir))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(content)).To(Equal(ego))
+		Expect(path.Join(dir, "escaped")).NotTo(BeAnExistingFile())
+	})
+
+	It("renders a model as sherlock's model section, and leaves out a pin section nobody declared", func() {
+		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: newModel("renders-a-model")})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(file).To(Equal("model:\n" +
+			"  api-key-env: " + agentTypeSherlock.modelKeyVariable + "\n" +
+			"  base-url: https://api.minimax.io/v1\n" +
+			"  model: MiniMax-M2\n" +
+			"  provider: openai-compatible\n"))
+	})
+
+	It("takes the model's key and the ego back out when an Agent stops declaring them", func() {
+		name := "stops-declaring-model"
+		createSecret(credentialsSecretName(name))
+		createSecret(modelKeySecretName(name))
+		createAgent(newAgent(name))
+
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		declaredNothing := statefulSetFor(name).Spec.Template.Spec
+
+		edited := readAgent(name)
+		edited.Spec.Model = newModel(name)
+		edited.Spec.Ego = testEgo
+		Expect(k8sClient.Update(ctx, edited)).To(Succeed())
+		_, err = reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		// The control: the declaration moved the Pod, so returning to the first
+		// one below is the removal and not two reads of one state.
+		Expect(statefulSetFor(name).Spec.Template.Spec).NotTo(Equal(declaredNothing))
+
+		edited = readAgent(name)
+		edited.Spec.Model = nil
+		edited.Spec.Ego = ""
+		Expect(k8sClient.Update(ctx, edited)).To(Succeed())
+		_, err = reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(statefulSetFor(name).Spec.Template.Spec).To(Equal(declaredNothing))
+	})
+
+	It("builds a Pod carrying a model and an ego that a namespace enforcing PodSecurity restricted admits", func() {
+		name := "restricted-admits-the-model"
+		createSecret(credentialsSecretName(name))
+		createSecret(modelKeySecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Model = newModel(name)
+		agent.Spec.Ego = testEgo
+		createAgent(agent)
+
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		pod := podOf(statefulSetFor(name), restrictedNamespace("admits-the-model"))
 		Expect(k8sClient.Create(ctx, pod)).To(Succeed())
 	})
 

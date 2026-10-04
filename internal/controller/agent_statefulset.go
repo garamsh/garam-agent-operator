@@ -26,8 +26,8 @@ const (
 	credentialsContainerName = "credentials"
 
 	// configContainerName is the init container that writes the config file an
-	// agent resolves its settings from. It is built only where an Agent declares
-	// something to write into one.
+	// agent resolves its settings from, and its ego file. It is built only where
+	// an Agent declares something to write into one.
 	configContainerName = "config"
 
 	// workspaceContainerName is the container serving the files an agent reads
@@ -47,6 +47,10 @@ const (
 	// the sherlock descriptor's agent refuses the environment road to keep
 	// (sherlock@fc5fca4:internal/config/config.go:216-234).
 	configContentVariable = "AGENT_CONFIG_CONTENT"
+
+	// egoContentVariable carries the ego file's text to the same init
+	// container, on the same ground.
+	egoContentVariable = "AGENT_EGO_CONTENT"
 
 	// configFileMask leaves the file readable by its owner and nobody else. The
 	// sherlock descriptor's agent refuses a config file carrying any group or
@@ -113,21 +117,28 @@ func copyCredentialsCommand(descriptor agentTypeDescriptor) []string {
 		descriptor.credentialsSecretMountPath, credentialsCopyMode, descriptor.credentialsMountPath)}
 }
 
-// writeConfigCommand writes the agent's config file into dir, at the path the
-// descriptor names under it, before the agent starts and at a mode only the
-// user that reads it can reach.
+// writeConfigCommand writes the agent's config file into dir, and its ego file
+// where ego is set, at the paths the descriptor names under it, before the agent
+// starts and at a mode only the user that reads them can reach.
 //
 // The text travels in the environment and is never part of the command. A pin
 // reaches this operator from a console field it does not read, and a value
 // interpolated into a command is one that can stop being a value — which is the
 // ground ci.md §Security baseline states for a pipeline's inputs, met here at an
 // init container's.
-func writeConfigCommand(dir string, descriptor agentTypeDescriptor) []string {
-	file := descriptor.configFileIn(dir)
+func writeConfigCommand(dir string, descriptor agentTypeDescriptor, ego bool) []string {
+	script := fmt.Sprintf("umask %s && %s", configFileMask,
+		writeFileCommand(descriptor.configFileIn(dir), configContentVariable))
+	if ego {
+		script += " && " + writeFileCommand(descriptor.egoFileIn(dir), egoContentVariable)
+	}
 
-	return []string{"/bin/sh", "-ec", fmt.Sprintf(
-		"umask %s && mkdir -p %s && printf '%%s' \"$%s\" > %s",
-		configFileMask, path.Dir(file), configContentVariable, file)}
+	return []string{"/bin/sh", "-ec", script}
+}
+
+// writeFileCommand is the shell that writes the text variable holds to file.
+func writeFileCommand(file, variable string) string {
+	return fmt.Sprintf("mkdir -p %s && printf '%%s' \"$%s\" > %s", path.Dir(file), variable, file)
 }
 
 // reconcileStatefulSet brings the StatefulSet an Agent describes into being, or
@@ -256,6 +267,23 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	// Written on every pass, so that an operator that stops naming an image
 	// stops pointing the agent at what the Pod no longer carries.
 	container.Env = []corev1.EnvVar{{Name: descriptor.memoryPathVariable, Value: descriptor.memoryPath()}}
+	// Written on every pass for the same reason: an Agent that stops declaring
+	// an ego leaves the image's own command arguments in place.
+	container.Args = nil
+
+	// The key reaches the agent's container and no other, from the Secret the
+	// spec names. sherlock reads a key from a variable only
+	// (sherlock@07aa5c4:internal/config/config.go:133), so the file road the
+	// credential takes does not reach it.
+	if agent.Spec.Model != nil {
+		container.Env = append(container.Env, corev1.EnvVar{
+			Name: descriptor.modelKeyVariable,
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: agent.Spec.Model.APIKeySecretRef.Name},
+				Key:                  agent.Spec.Model.APIKeySecretRef.Key,
+			}},
+		})
+	}
 
 	// The agent's end of the link, written only where the other end is built:
 	// an agent told where to dial with nothing listening there is the failure
@@ -266,7 +294,7 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 			corev1.EnvVar{Name: descriptor.workspaceAddressVariable, Value: descriptor.workspaceAddress})
 	}
 
-	if err := r.applyToolPins(agent, statefulSet, container, descriptor); err != nil {
+	if err := r.applyConfig(agent, statefulSet, container, descriptor); err != nil {
 		return err
 	}
 
@@ -277,10 +305,11 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	return controllerutil.SetControllerReference(agent, statefulSet, r.Scheme)
 }
 
-// applyToolPins builds the config file an Agent's declared tool set becomes and
-// the init container that writes it, and takes both back out again where the
-// Agent declares nothing — so that an Agent that stops declaring a tool set
-// builds the workload it built before it declared one.
+// applyConfig builds the config file an Agent's declared tool set and model
+// become, the ego file its ego becomes, and the init container that writes
+// them, and takes all of it back out again where the Agent declares nothing —
+// so that an Agent that stops declaring builds the workload it built before it
+// declared anything.
 //
 // The file is written into the Pod rather than mounted from an object of its
 // own. A ConfigMap would not remove this container: the kubelet ORs group access
@@ -293,10 +322,11 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 // It takes no memory-backed volume, which is where this parts from the
 // credential ADR 0010 delivers: that volume answers a rule about key material,
 // and a pin set is public. The mode is not.
-func (r *AgentReconciler) applyToolPins(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
+func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
 	container *corev1.Container, descriptor agentTypeDescriptor) error {
 	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
-	if len(agent.Spec.Tools.Pins) == 0 {
+	ego := agent.Spec.Ego != ""
+	if len(agent.Spec.Tools.Pins) == 0 && agent.Spec.Model == nil && !ego {
 		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
 			return initContainer.Name == configContainerName
 		})
@@ -321,8 +351,12 @@ func (r *AgentReconciler) applyToolPins(agent *agentv1alpha1.Agent, statefulSet 
 	// Always, on the ground the credential's init container already carries: the
 	// image is the deployer's and nothing here requires its tag to name one build.
 	config.ImagePullPolicy = corev1.PullAlways
-	config.Command = writeConfigCommand(descriptor.configMountPath, descriptor)
+	config.Command = writeConfigCommand(descriptor.configMountPath, descriptor, ego)
 	config.Env = []corev1.EnvVar{{Name: configContentVariable, Value: file}}
+	if ego {
+		config.Env = append(config.Env, corev1.EnvVar{Name: egoContentVariable, Value: agent.Spec.Ego})
+		container.Args = descriptor.egoArgs(descriptor.egoFileIn(descriptor.configMountPath))
+	}
 	config.SecurityContext = containerSecurityContext()
 	config.VolumeMounts = []corev1.VolumeMount{{Name: configVolumeName, MountPath: descriptor.configMountPath}}
 

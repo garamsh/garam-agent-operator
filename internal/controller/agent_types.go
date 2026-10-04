@@ -48,6 +48,17 @@ type agentTypeDescriptor struct {
 	// the agent's own setting names.
 	renderConfig func(agentv1alpha1.AgentSpec) (string, error)
 
+	// modelKeyVariable is the variable the agent's container is given the
+	// model's API key in, and the one its config file names for the key.
+	modelKeyVariable string
+
+	// egoFile is the ego file's path relative to configMountPath.
+	egoFile string
+
+	// egoArgs are the container's arguments that point the agent at the ego
+	// file at path.
+	egoArgs func(path string) []string
+
 	// workspaceAddress is where the workspace listens and the agent dials.
 	workspaceAddress string
 
@@ -99,6 +110,21 @@ var agentTypeSherlock = agentTypeDescriptor{
 	configFile:   "sherlock/config.yaml",
 	renderConfig: renderSherlockConfig,
 
+	modelKeyVariable: sherlockModelKeyVariable,
+
+	// Beside the config file, under the directory this operator names. No
+	// layout of sherlock's names an ego file; only the flag does.
+	egoFile: "sherlock/ego.md",
+
+	// The ego file is reached only by a flag, read off the flag rather than
+	// through the layer the SHERLOCK_ prefix binds
+	// (sherlock@07aa5c4:internal/config/config.go:165,
+	// sherlock@07aa5c4:internal/config/ego.go:15), so the container's arguments
+	// carry it. Arguments replace the image's CMD, so they restate the image's
+	// subcommand ahead of the flag (sherlock@07aa5c4:build/agent.Dockerfile,
+	// ENTRYPOINT ["/sherlock"] and CMD ["agent"]).
+	egoArgs: func(path string) []string { return []string{"agent", "--ego-file", path} },
+
 	// Both images default to it (sherlock@9b0e399:internal/config/config.go:34),
 	// and it is written to both containers rather than left to them: two
 	// defaults agreeing is not the same as one number this operator chose. It is
@@ -119,17 +145,36 @@ var agentTypeSherlock = agentTypeDescriptor{
 	execUserVariable: "SHERLOCK_EXEC_UID",
 }
 
+// sherlockModelKeyVariable is the variable sherlock's container is given the
+// model's API key in. It is this operator's name, which sherlock reads because
+// the config file names it under model.api-key-env
+// (sherlock@07aa5c4:internal/config/config.go:133). It sits outside the
+// SHERLOCK_ prefix, so it binds to no setting of sherlock's.
+const sherlockModelKeyVariable = "MODEL_API_KEY"
+
 // sherlockConfig is sherlock's config file, holding what this operator has been
 // taught to declare and nothing else. The field names are sherlock's setting
-// names. A second key family joins it as a second field here: the file is the
-// whole of what an agent is configured with, so nothing about its shape is the
-// pins'.
+// names. Each key family is a field of its own and is left out of the file
+// where the Agent declares nothing for it: sherlock refuses a pin section that
+// names no tool, and a model section missing a setting would fall back to
+// sherlock's default for it.
 type sherlockConfig struct {
-	Tools sherlockConfigTools `json:"tools"`
+	Tools *sherlockConfigTools `json:"tools,omitempty"`
+	Model *sherlockConfigModel `json:"model,omitempty"`
 }
 
 type sherlockConfigTools struct {
 	Pins map[string]string `json:"pins"`
+}
+
+// sherlockConfigModel is sherlock's model section
+// (sherlock@07aa5c4:internal/config/config.go:124-133). The key itself is never
+// in it: api-key-env names the variable that holds it.
+type sherlockConfigModel struct {
+	Provider  string `json:"provider"`
+	BaseURL   string `json:"base-url"`
+	Model     string `json:"model"`
+	APIKeyEnv string `json:"api-key-env"`
 }
 
 // renderSherlockConfig is the text of the config file an Agent's declaration
@@ -141,7 +186,20 @@ type sherlockConfigTools struct {
 // marshal in sorted order, so one declaration renders one text and an unchanged
 // Agent leaves the workload unchanged.
 func renderSherlockConfig(spec agentv1alpha1.AgentSpec) (string, error) {
-	file, err := yaml.Marshal(sherlockConfig{Tools: sherlockConfigTools{Pins: spec.Tools.Pins}})
+	config := sherlockConfig{}
+	if len(spec.Tools.Pins) > 0 {
+		config.Tools = &sherlockConfigTools{Pins: spec.Tools.Pins}
+	}
+	if spec.Model != nil {
+		config.Model = &sherlockConfigModel{
+			Provider:  spec.Model.Provider,
+			BaseURL:   spec.Model.BaseURL,
+			Model:     spec.Model.Name,
+			APIKeyEnv: sherlockModelKeyVariable,
+		}
+	}
+
+	file, err := yaml.Marshal(config)
 	if err != nil {
 		return "", fmt.Errorf("render the config file of the agent: %w", err)
 	}
@@ -209,3 +267,7 @@ func (d agentTypeDescriptor) memoryPath() string { return d.stateMountPath + "/"
 // configFileIn is where the agent looks for its config file under the
 // configuration directory dir.
 func (d agentTypeDescriptor) configFileIn(dir string) string { return dir + "/" + d.configFile }
+
+// egoFileIn is where the agent's ego file is written under the configuration
+// directory dir.
+func (d agentTypeDescriptor) egoFileIn(dir string) string { return dir + "/" + d.egoFile }

@@ -10,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,6 +31,24 @@ const agentNameLimit = 52
 // credentialsSecretName is the Secret the baseline Agent of that name expects.
 func credentialsSecretName(agent string) string {
 	return agent + "-credentials"
+}
+
+// modelKeySecretName is the Secret the model of a baseline Agent of that name
+// takes its key from.
+func modelKeySecretName(agent string) string {
+	return agent + "-model-key"
+}
+
+// newModel returns a model the API server accepts for the Agent of that name,
+// with the values a sherlock agent was measured answering with through the
+// tool-calling path.
+func newModel(agent string) *agentv1alpha1.ModelSpec {
+	return &agentv1alpha1.ModelSpec{
+		Provider:        "openai-compatible",
+		BaseURL:         "https://api.minimax.io/v1",
+		Name:            "MiniMax-M2",
+		APIKeySecretRef: agentv1alpha1.SecretKeyReference{Name: modelKeySecretName(agent), Key: "api-key"},
+	}
 }
 
 // newAgent returns an Agent the API server accepts, so that a spec differing
@@ -176,6 +195,22 @@ var _ = Describe("Agent", func() {
 		Expect(err).To(MatchError(ContainSubstring("spec.image")))
 	})
 
+	It("refuses a model missing a setting, which would leave the agent on its own default for it", func() {
+		By("creating an Agent naming a whole model")
+		accepted := newAgent("names-a-whole-model")
+		accepted.Spec.Model = newModel(accepted.Name)
+		Expect(k8sClient.Create(ctx, accepted)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(k8sClient.Delete(ctx, accepted)).To(Succeed())
+		})
+
+		By("creating one that differs from it by the endpoint alone")
+		rejected := newAgent("names-a-model-without-endpoint")
+		rejected.Spec.Model = newModel(rejected.Name)
+		rejected.Spec.Model.BaseURL = ""
+		Expect(k8sClient.Create(ctx, rejected)).To(MatchError(ContainSubstring("spec.model.baseURL")))
+	})
+
 	It("reconciles an Agent that is gone without returning an error", func() {
 		result, err := reconcileAgent("never-created")
 		Expect(err).NotTo(HaveOccurred())
@@ -200,6 +235,52 @@ var _ = Describe("Agent", func() {
 		_, err = reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(statefulSetFor(name).Spec.Template.Spec.Containers).To(HaveLen(1))
+	})
+
+	It("builds nothing until the Secret holding the model's key exists", func() {
+		name := "waits-for-model-key"
+		// The control: the credentials Secret exists, so what holds the
+		// workload back is the model's key and nothing before it.
+		createSecret(credentialsSecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Model = newModel(name)
+		createAgent(agent)
+
+		By("reconciling while the key's Secret is absent")
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		key := types.NamespacedName{Name: name, Namespace: agentNamespace}
+		Expect(k8sClient.Get(ctx, key, &appsv1.StatefulSet{})).
+			To(MatchError(apierrors.IsNotFound, "a not-found error"))
+		synced := meta.FindStatusCondition(readAgent(name).Status.Conditions, agentv1alpha1.ConditionSynced)
+		Expect(synced).NotTo(BeNil())
+		Expect(synced.Status).To(Equal(metav1.ConditionFalse))
+		Expect(synced.Reason).To(Equal(agentv1alpha1.ReasonModelKeySecretMissing))
+
+		By("reconciling once it exists")
+		createSecret(modelKeySecretName(name))
+		_, err = reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(statefulSetFor(name).Spec.Template.Spec.Containers).To(HaveLen(1))
+	})
+
+	It("wakes an Agent whose model names an arriving Secret", func() {
+		waiting := newAgent("names-the-model-key")
+		waiting.Spec.Model = newModel(waiting.Name)
+		createAgent(waiting)
+
+		// The control: an Agent naming no model is not woken by the same Secret.
+		createAgent(newAgent("names-no-model-key"))
+
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: modelKeySecretName(waiting.Name), Namespace: agentNamespace},
+		}
+
+		reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		Expect(reconciler.agentsNamingSecret(ctx, secret)).To(ConsistOf(reconcile.Request{
+			NamespacedName: client.ObjectKeyFromObject(waiting),
+		}))
 	})
 
 	It("wakes the Agents that name an arriving Secret, and no others", func() {

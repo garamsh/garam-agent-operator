@@ -68,6 +68,67 @@ type AgentSpec struct {
 	// it is delivered to the agent and read nowhere here.
 	// +optional
 	Tools ToolSet `json:"tools,omitzero"`
+
+	// model is the chat model the agent answers with. Unset leaves the agent on
+	// its own default, which for sherlock is a scripted mock that answers
+	// nothing. The settings are delivered to the agent in its config file, and
+	// the key is delivered from the Secret apiKeySecretRef names, as an
+	// environment variable of the agent's container only.
+	// +optional
+	Model *ModelSpec `json:"model,omitempty"`
+
+	// ego is the organisation's own statement the agent's instructions open
+	// with, in place of the default the agent's image embeds. It is the only
+	// part of the instructions this field reaches: the agent appends its own
+	// contract to it, and that contract is not configurable. Unset leaves the
+	// image's default.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	Ego string `json:"ego,omitempty"`
+}
+
+// ModelSpec is the chat model an Agent answers with. Every field is required,
+// because a field left out would fall back to the agent's own default for it —
+// for sherlock, an OpenAI endpoint and model — and a key paired with another
+// vendor's endpoint fails at the first request rather than here.
+type ModelSpec struct {
+	// provider is the wire protocol the endpoint speaks, in the agent's own
+	// words: for sherlock, openai-compatible or anthropic-compatible. It is
+	// delivered to the agent and read nowhere here.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Provider string `json:"provider"`
+
+	// baseURL is the endpoint's API root, which is what chooses the vendor.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	BaseURL string `json:"baseURL"`
+
+	// name is the model name passed to the endpoint.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// apiKeySecretRef names the key of a Secret in the Agent's namespace that
+	// holds the endpoint's API key. The key is referenced, never carried: this
+	// operator does not read it, and the agent's workload is not built until the
+	// Secret exists. Agents on one endpoint can name one Secret.
+	// +required
+	APIKeySecretRef SecretKeyReference `json:"apiKeySecretRef"`
+}
+
+// SecretKeyReference names one key of a Secret in the referring object's
+// namespace.
+type SecretKeyReference struct {
+	// name is the name of the Secret.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// key is the key within the Secret.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
 }
 
 // ToolSet is what an Agent declares about the tools it accepts.
@@ -92,9 +153,9 @@ type AgentStatus struct {
 	// are set, and they answer different questions:
 	//
 	// - "Synced": True when the cluster carries the workload this Agent's spec
-	//   asks for. False when the Secret named by credentialsSecretName does not
-	//   exist, and False when the spec was edited in a way the running workload
-	//   cannot take. The reason says which.
+	//   asks for. False when the Secret named by credentialsSecretName or by
+	//   model.apiKeySecretRef does not exist, and False when the spec was edited
+	//   in a way the running workload cannot take. The reason says which.
 	//
 	// - "Available": True when the workload reports a ready replica. False when
 	//   it reports none, which covers a replica still starting as much as one
@@ -151,6 +212,10 @@ const (
 	// ReasonCredentialsSecretMissing is set when the Secret the spec names does
 	// not exist, which leaves the workload unbuilt.
 	ReasonCredentialsSecretMissing = "CredentialsSecretMissing"
+
+	// ReasonModelKeySecretMissing is set when the Secret the spec names for the
+	// model's API key does not exist, which leaves the workload unbuilt.
+	ReasonModelKeySecretMissing = "ModelKeySecretMissing"
 
 	// ReasonStorageSizeImmutable is set when the spec asks for a volume size the
 	// workload cannot be changed to.
