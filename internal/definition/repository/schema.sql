@@ -17,16 +17,29 @@ CREATE TABLE IF NOT EXISTS templates (
     FOREIGN KEY (profile_name, profile_version) REFERENCES profiles (name, version)
 );
 
+-- The one row holding the position the latest stored revision took. Every writer of a revision
+-- takes the next position by updating it, so writers serialize on it and positions are taken
+-- in the order revisions commit: a reader holding a position has seen every revision below it.
+CREATE TABLE IF NOT EXISTS positions (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    position  bigint  NOT NULL
+);
+INSERT INTO positions (singleton, position) VALUES (true, 0) ON CONFLICT DO NOTHING;
+
 -- The primary key is what refuses a second revision under one number, so two
 -- updates based on one revision cannot both be stored.
 CREATE TABLE IF NOT EXISTS definitions (
-    agent           text   NOT NULL,
-    revision        bigint NOT NULL CHECK (revision >= 1),
-    profile_name    text   NOT NULL,
-    profile_version bigint NOT NULL,
-    config          jsonb  NOT NULL,
+    agent               text   NOT NULL,
+    revision            bigint NOT NULL CHECK (revision >= 1),
+    profile_name        text   NOT NULL,
+    profile_version     bigint NOT NULL,
+    config              jsonb  NOT NULL,
+    position            bigint NOT NULL UNIQUE,
+    assignment_operator text,
+    assignment_epoch    text,
     PRIMARY KEY (agent, revision),
-    FOREIGN KEY (profile_name, profile_version) REFERENCES profiles (name, version)
+    FOREIGN KEY (profile_name, profile_version) REFERENCES profiles (name, version),
+    CHECK ((assignment_operator IS NULL) = (assignment_epoch IS NULL))
 );
 
 CREATE TABLE IF NOT EXISTS creations (
@@ -62,4 +75,13 @@ CREATE TABLE IF NOT EXISTS requests (
     PRIMARY KEY (organization, request_id),
     FOREIGN KEY (agent, revision) REFERENCES definitions (agent, revision),
     CHECK ((outcome = 'applied') = (revision IS NOT NULL))
+);
+
+-- What controllers reported of each agent. A report raises a field and never lowers it;
+-- applied_revision is set by the runtime's own report, never by a controller's.
+CREATE TABLE IF NOT EXISTS agent_status (
+    agent             text   PRIMARY KEY,
+    observed_revision bigint NOT NULL CHECK (observed_revision >= 1),
+    rendered_revision bigint NOT NULL CHECK (rendered_revision >= 1),
+    applied_revision  bigint
 );

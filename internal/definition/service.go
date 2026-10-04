@@ -9,6 +9,8 @@ type Service interface {
 	CreateAgent(ctx context.Context, key RequestKey, actor string, template TemplateRef) (Creation, error)
 	Configure(ctx context.Context, in ConfigureInput) (Applied, error)
 	GetDefinition(ctx context.Context, agent GRN) (Definition, error)
+	Desired(ctx context.Context, operator string, after Position) (DesiredPage, error)
+	RecordStatus(ctx context.Context, agent GRN, observed, rendered Revision) (Status, error)
 }
 
 type service struct {

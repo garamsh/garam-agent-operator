@@ -1,8 +1,10 @@
 package repository
 
 import (
+	"cmp"
 	"context"
 	"maps"
+	"slices"
 	"sync"
 
 	"github.com/garamsh/garam-agent-operator/internal/definition"
@@ -14,8 +16,12 @@ type Memory struct {
 	profiles    map[string][]definition.Profile
 	templates   map[string][]definition.Template
 	definitions map[definition.GRN][]definition.Definition
-	creations   map[definition.RequestKey]definition.Creation
-	requests    map[definition.RequestKey]definition.Request
+	// positions holds, beside each agent's revisions, the position each was stored at.
+	positions map[definition.GRN][]definition.Position
+	position  definition.Position
+	statuses  map[definition.GRN]definition.Status
+	creations map[definition.RequestKey]definition.Creation
+	requests  map[definition.RequestKey]definition.Request
 }
 
 var _ definition.Repository = (*Memory)(nil)
@@ -26,6 +32,8 @@ func NewMemory() *Memory {
 		profiles:    map[string][]definition.Profile{},
 		templates:   map[string][]definition.Template{},
 		definitions: map[definition.GRN][]definition.Definition{},
+		positions:   map[definition.GRN][]definition.Position{},
+		statuses:    map[definition.GRN]definition.Status{},
 		creations:   map[definition.RequestKey]definition.Creation{},
 		requests:    map[definition.RequestKey]definition.Request{},
 	}
@@ -99,6 +107,44 @@ func (m *Memory) GetDefinition(_ context.Context, agent definition.GRN) (definit
 	return cloneDefinition(revisions[len(revisions)-1]), nil
 }
 
+func (m *Memory) Desired(_ context.Context, operator string, after definition.Position) (definition.DesiredPage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	type owed struct {
+		revision definition.DesiredRevision
+		position definition.Position
+	}
+	var found []owed
+	for agent, revisions := range m.definitions {
+		latest := revisions[len(revisions)-1]
+		position := m.positions[agent][len(revisions)-1]
+		if position <= after || latest.Assignment == nil || latest.Assignment.Operator != operator {
+			continue
+		}
+		profile := m.profiles[latest.Profile.Name][latest.Profile.Version-1]
+		found = append(found, owed{
+			revision: definition.DesiredRevision{Definition: cloneDefinition(latest), Settings: cloneSettings(profile.Settings)},
+			position: position,
+		})
+	}
+	slices.SortFunc(found, func(a, b owed) int { return cmp.Compare(a.position, b.position) })
+	page := definition.DesiredPage{Position: m.position}
+	for _, o := range found {
+		page.Revisions = append(page.Revisions, o.revision)
+	}
+	return page, nil
+}
+
+func (m *Memory) RecordStatus(_ context.Context, agent definition.GRN, s definition.Status) (definition.Status, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stored := m.statuses[agent]
+	stored.Observed = max(stored.Observed, s.Observed)
+	stored.Rendered = max(stored.Rendered, s.Rendered)
+	m.statuses[agent] = stored
+	return stored, nil
+}
+
 func (m *Memory) BeginCreation(_ context.Context, c definition.Creation) (definition.Creation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -149,7 +195,9 @@ func (m *Memory) appendLocked(d definition.Definition) error {
 	if int(d.Revision) != len(revisions)+1 {
 		return definition.ErrStaleRevision
 	}
+	m.position++
 	m.definitions[d.Agent] = append(revisions, cloneDefinition(d))
+	m.positions[d.Agent] = append(m.positions[d.Agent], m.position)
 	return nil
 }
 
@@ -182,5 +230,9 @@ func cloneTemplate(t definition.Template) definition.Template {
 
 func cloneDefinition(d definition.Definition) definition.Definition {
 	d.Config = cloneConfig(d.Config)
+	if d.Assignment != nil {
+		a := *d.Assignment
+		d.Assignment = &a
+	}
 	return d
 }

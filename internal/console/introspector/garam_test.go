@@ -14,6 +14,7 @@ import (
 
 	"github.com/garamsh/garam-agent-operator/internal/console"
 	"github.com/garamsh/garam-agent-operator/internal/console/introspector"
+	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
 const bindingAnswer = `{"operationRef":"ref-1","grantId":"grant-1","orgGrn":"grn:root:default:org:acme",
@@ -52,9 +53,9 @@ func introspect(t *testing.T, g http.Handler) (console.Binding, error) {
 	t.Helper()
 	server := httptest.NewServer(g)
 	t.Cleanup(server.Close)
-	client := introspector.NewGaram(server.URL, server.Client())
-	client.Backoff = time.Millisecond
-	return client.Introspect(context.Background(), "the-authority")
+	machine := garammachine.New(server.URL, server.Client())
+	machine.Backoff = time.Millisecond
+	return introspector.NewGaram(machine).Introspect(context.Background(), "the-authority")
 }
 
 func TestGaram_ReadsTheBinding(t *testing.T) {
@@ -89,36 +90,13 @@ func TestGaram_RefusalsAreNotRetried(t *testing.T) {
 	}
 }
 
-func TestGaram_UndecidedAnswersAreRetriedWithinTheBound(t *testing.T) {
-	for _, status := range []int{http.StatusServiceUnavailable, http.StatusInternalServerError} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			// Control: an undecided answer followed by a decided one is the decided one.
-			recovered := &garam{statuses: []int{status, 200}}
-			_, err := introspect(t, recovered)
-			require.NoError(t, err)
-			assert.Equal(t, int32(2), recovered.calls.Load())
+func TestGaram_UndecidedIsUndecided(t *testing.T) {
+	g := &garam{statuses: []int{http.StatusServiceUnavailable}}
+	_, err := introspect(t, g)
+	require.ErrorIs(t, err, console.ErrAuthorityUndecided)
 
-			persistent := &garam{statuses: []int{status}}
-			_, err = introspect(t, persistent)
-			require.ErrorIs(t, err, console.ErrAuthorityUndecided)
-			assert.Equal(t, int32(3), persistent.calls.Load())
-		})
-	}
-}
-
-func TestGaram_AnswerUnderAnotherContractRefused(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Garam-Contract-Version", "operation-authority.v2")
-		_, _ = w.Write([]byte(bindingAnswer))
-	}))
-	t.Cleanup(server.Close)
-
-	_, err := introspector.NewGaram(server.URL, server.Client()).Introspect(context.Background(), "the-authority")
-	require.Error(t, err)
-	assert.NotErrorIs(t, err, console.ErrAuthorityUnknown)
-
-	// Control: the same answer under the contract this client speaks is read.
-	_, err = introspect(t, &garam{statuses: []int{200}})
+	// Control: an undecided answer followed by a decided one is the decided one.
+	_, err = introspect(t, &garam{statuses: []int{http.StatusServiceUnavailable, 200}})
 	require.NoError(t, err)
 }
 

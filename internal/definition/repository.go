@@ -22,6 +22,12 @@ type Repository interface {
 	Configure(ctx context.Context, r Request, d Definition) (Request, error)
 	// GetDefinition returns the agent's latest revision, or ErrNotFound.
 	GetDefinition(ctx context.Context, agent GRN) (Definition, error)
+	// Desired returns the latest revision of each agent that is recorded for operator and was
+	// stored after after, in the order stored, and the position the answer accounts up to.
+	Desired(ctx context.Context, operator string, after Position) (DesiredPage, error)
+	// RecordStatus raises the agent's stored status to s field by field, never lowering one,
+	// and returns the status stored.
+	RecordStatus(ctx context.Context, agent GRN, s Status) (Status, error)
 
 	// BeginCreation stores c as Pending unless its key is already stored, and returns
 	// the creation stored under the key either way.

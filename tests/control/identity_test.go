@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -34,7 +35,12 @@ type identity struct {
 	servingCertificate string
 	servingKey         string
 	roots              *x509.CertPool
+	// controller is a controller's client certificate, carrying controllerGRN as its one SAN URI.
+	controller tls.Certificate
 }
+
+// controllerGRN is the operator GRN the controller certificate names.
+const controllerGRN = "grn:root:default:operator:k8s-e2e"
 
 // writeIdentity writes into dir a root and two certificates it signed: an operator certificate
 // carrying operatorGRN as its one SAN URI, and a serving certificate for 127.0.0.1, under which
@@ -112,6 +118,26 @@ func writeIdentity(dir string) (identity, error) {
 		roots:              x509.NewCertPool(),
 	}
 	id.roots.AddCert(rootCert)
+	controllerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return identity{}, err
+	}
+	controllerSAN, err := url.Parse(controllerGRN)
+	if err != nil {
+		return identity{}, err
+	}
+	controllerDER, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: big.NewInt(4),
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		URIs:         []*url.URL{controllerSAN},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}, rootTemplate, &controllerKey.PublicKey, rootKey)
+	if err != nil {
+		return identity{}, err
+	}
+	id.controller = tls.Certificate{Certificate: [][]byte{controllerDER}, PrivateKey: controllerKey}
 	for path, block := range map[string]*pem.Block{
 		id.serverRoot:         {Type: pemCertificate, Bytes: rootDER},
 		id.certificate:        {Type: pemCertificate, Bytes: leafDER},

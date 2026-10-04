@@ -23,18 +23,40 @@ SELECT profile_name, profile_version, config FROM templates WHERE name = $1 AND 
 
 	// appendDefinition inserts nothing unless the revision is one past the agent's latest.
 	appendDefinition = `
-INSERT INTO definitions (agent, revision, profile_name, profile_version, config)
-SELECT $1::text, $2::bigint, $3::text, $4::bigint, $5::jsonb
+WITH next AS (UPDATE positions SET position = position + 1 RETURNING position)
+INSERT INTO definitions (agent, revision, profile_name, profile_version, config, position,
+    assignment_operator, assignment_epoch)
+SELECT $1::text, $2::bigint, $3::text, $4::bigint, $5::jsonb, (SELECT position FROM next), $6::text, $7::text
 WHERE (SELECT MAX(revision) FROM definitions WHERE agent = $1::text) = $2::bigint - 1`
 
 	insertFirstDefinition = `
-INSERT INTO definitions (agent, revision, profile_name, profile_version, config)
-VALUES ($1, 1, $2, $3, $4)`
+WITH next AS (UPDATE positions SET position = position + 1 RETURNING position)
+INSERT INTO definitions (agent, revision, profile_name, profile_version, config, position,
+    assignment_operator, assignment_epoch)
+SELECT $1::text, 1, $2::text, $3::bigint, $4::jsonb, (SELECT position FROM next), $5::text, $6::text`
+
+	getPosition = `SELECT position FROM positions`
+
+	// desired is the latest revision of each agent recorded for an operator, stored after a position.
+	desired = `
+SELECT d.agent, d.revision, d.profile_name, d.profile_version, d.config, d.assignment_epoch, p.settings
+FROM definitions d
+JOIN profiles p ON p.name = d.profile_name AND p.version = d.profile_version
+WHERE d.position > $2 AND d.assignment_operator = $1
+  AND d.revision = (SELECT MAX(revision) FROM definitions latest WHERE latest.agent = d.agent)
+ORDER BY d.position`
+
+	recordStatus = `
+INSERT INTO agent_status (agent, observed_revision, rendered_revision) VALUES ($1, $2, $3)
+ON CONFLICT (agent) DO UPDATE SET
+    observed_revision = GREATEST(agent_status.observed_revision, EXCLUDED.observed_revision),
+    rendered_revision = GREATEST(agent_status.rendered_revision, EXCLUDED.rendered_revision)
+RETURNING observed_revision, rendered_revision, applied_revision`
 
 	definitionExists = `SELECT EXISTS (SELECT 1 FROM definitions WHERE agent = $1)`
 
 	getDefinition = `
-SELECT revision, profile_name, profile_version, config FROM definitions
+SELECT revision, profile_name, profile_version, config, assignment_operator, assignment_epoch FROM definitions
 WHERE agent = $1 ORDER BY revision DESC LIMIT 1`
 
 	beginCreation = `

@@ -41,6 +41,8 @@ var (
 	apiURL string
 	// apiClient trusts the root that signed the binary's serving certificate.
 	apiClient *http.Client
+	// controllerClient is apiClient presenting a controller's client certificate.
+	controllerClient *http.Client
 	// binaryPath, controlArgs and databaseURL are what the binary was started with.
 	binaryPath  string
 	controlArgs []string
@@ -100,6 +102,9 @@ func run(m *testing.M) (int, error) {
 		return 0, err
 	}
 	apiClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: id.roots}}}
+	controllerClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		RootCAs: id.roots, Certificates: []tls.Certificate{id.controller},
+	}}}
 	binaryPath, controlArgs = binary, []string{
 		"--health-probe-bind-address", probeAddr,
 		"--api-bind-address", apiAddr,

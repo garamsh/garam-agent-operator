@@ -78,6 +78,34 @@ type Definition struct {
 	Revision Revision
 	Profile  ProfileRef
 	Config   Configuration
+	// Assignment is where the agent ran when this revision was authorized, or nil when
+	// none was recorded with it. A controller is released only a revision recorded for it.
+	Assignment *Assignment
+}
+
+// Position orders every stored revision by when it was stored; a later one has a greater one.
+type Position int64
+
+// DesiredRevision is a controller's view of an agent's latest revision: the definition, and
+// the settings of the profile version it names.
+type DesiredRevision struct {
+	Definition Definition
+	Settings   ExecutionSettings
+}
+
+// DesiredPage is what a controller is owed after a position: the latest revision of each agent
+// recorded for it and stored after that position, and the position the page accounts up to.
+type DesiredPage struct {
+	Position  Position
+	Revisions []DesiredRevision
+}
+
+// Status is what controllers reported of an agent: the latest revision observed and rendered,
+// and the revision the runtime applied, which no controller report sets.
+type Status struct {
+	Observed Revision
+	Rendered Revision
+	Applied  *Revision
 }
 
 // RequestKey identifies one console request: a repeat of the same key is the same request.
@@ -180,6 +208,9 @@ var (
 	// ErrRequestReused is returned when a request key arrives again for a different request:
 	// another actor, operation, target, body or template.
 	ErrRequestReused = errors.New("request id reused for a different request")
+
+	// ErrInvalidStatus is returned for a status naming a revision the agent does not have.
+	ErrInvalidStatus = errors.New("status names a revision the agent does not have")
 
 	// ErrRegistrationRefused is wrapped by a Registrar whose registration garam refused.
 	ErrRegistrationRefused = errors.New("registration refused")
