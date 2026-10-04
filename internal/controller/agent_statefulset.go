@@ -16,7 +16,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
-	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
 const (
@@ -493,9 +493,9 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 		{Name: "GARAM_ADAPTER_MACHINE_URL", Value: "https://" + r.GaramAddress},
 		{Name: "GARAM_ADAPTER_GATEWAY_URL", Value: "http://" + descriptor.gatewayAddress},
 		{Name: "GARAM_ADAPTER_GATEWAY_AGENT", Value: grn},
-		{Name: "GARAM_ADAPTER_TLS_CERT_FILE", Value: adapterCredentialsMountPath + "/" + constructor.CertificateKey},
-		{Name: "GARAM_ADAPTER_TLS_KEY_FILE", Value: adapterCredentialsMountPath + "/" + constructor.KeyKey},
-		{Name: "GARAM_ADAPTER_SERVER_ROOT_FILE", Value: adapterCredentialsMountPath + "/" + constructor.ServerRootKey},
+		{Name: "GARAM_ADAPTER_TLS_CERT_FILE", Value: adapterCredentialsMountPath + "/" + garam.CertificateKey},
+		{Name: "GARAM_ADAPTER_TLS_KEY_FILE", Value: adapterCredentialsMountPath + "/" + garam.KeyKey},
+		{Name: "GARAM_ADAPTER_SERVER_ROOT_FILE", Value: adapterCredentialsMountPath + "/" + garam.ServerRootKey},
 	}
 	adapter.VolumeMounts = adapterVolumeMounts()
 }
