@@ -9,8 +9,12 @@ import (
 )
 
 // credentialsSecretSuffix is what an agent's credential Secret is named after
-// the Agent it belongs to.
-const credentialsSecretSuffix = "-credentials"
+// the Agent it belongs to, and credentialRequestSecretSuffix the Secret its first
+// certificate request is persisted in until the credential is placed.
+const (
+	credentialsSecretSuffix       = "-credentials"
+	credentialRequestSecretSuffix = "-credential-request"
+)
 
 // Agent is what the Agent built for a GRN is called. It is the digest of the
 // whole GRN rather than a part of it: what a GRN's segments mean is garam's, and
@@ -26,4 +30,10 @@ func Agent(grn string) string {
 // and its source carries no name for it.
 func CredentialsSecret(grn string) string {
 	return Agent(grn) + credentialsSecretSuffix
+}
+
+// CredentialRequestSecret is what the Secret persisting a managed agent's first
+// certificate request is called, until its credential is placed.
+func CredentialRequestSecret(grn string) string {
+	return Agent(grn) + credentialRequestSecretSuffix
 }

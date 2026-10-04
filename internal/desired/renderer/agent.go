@@ -11,6 +11,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
@@ -125,8 +126,12 @@ func (a *Agent) specOf(agent desired.Agent) (agentv1alpha1.AgentSpec, error) {
 }
 
 // modelOf is the model a revision configures, nil where it configures none. Its
-// key reference is "<secret-name>/<key>" in the Agent's namespace; neither a
-// Secret's name nor a data key can hold a "/", so the split is unambiguous.
+// key reference is "<secret-name>/<key>" in the Agent's namespace, each part as
+// Kubernetes allows it: the name a DNS subdomain and the key [-._a-zA-Z0-9]+ and
+// neither "." nor ".." (k8s.io/apimachinery@v0.36.0 pkg/util/validation
+// IsDNS1123Subdomain and IsConfigMapKey). The control service applies the same
+// rule to what it stores (its definition.SecretRef); the manager imports nothing
+// of that binary, so each side states the rule itself.
 func modelOf(model desired.Model) (*agentv1alpha1.ModelSpec, error) {
 	if model == (desired.Model{}) {
 		return nil, nil
@@ -134,8 +139,9 @@ func modelOf(model desired.Model) (*agentv1alpha1.ModelSpec, error) {
 	if model.Provider == "" || model.BaseURL == "" || model.Name == "" {
 		return nil, fmt.Errorf("%w: a model missing its provider, base URL or name", desired.ErrMalformed)
 	}
-	secret, key, found := strings.Cut(model.APIKeyRef, "/")
-	if !found || secret == "" || key == "" || strings.Contains(key, "/") {
+	// A reference with no "/" leaves the key empty, which IsConfigMapKey refuses.
+	secret, key, _ := strings.Cut(model.APIKeyRef, "/")
+	if len(validation.IsDNS1123Subdomain(secret)) > 0 || len(validation.IsConfigMapKey(key)) > 0 {
 		return nil, fmt.Errorf("%w: API key reference %q is not <secret-name>/<key>", desired.ErrMalformed, model.APIKeyRef)
 	}
 

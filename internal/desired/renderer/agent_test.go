@@ -152,7 +152,10 @@ var _ = Describe("Renderer", func() {
 			To(Succeed())
 		before := agentFor(grn)
 
-		for _, reference := range []string{"minimax", "minimax/", "/api-key", "a/b/c"} {
+		// The last four fail only Kubernetes' own rules for a Secret's name and
+		// data key, which a split on "/" alone would accept.
+		for _, reference := range []string{"minimax", "minimax/", "/api-key", "a/b/c",
+			"MiniMax/api-key", "minimax-/api-key", "minimax/api key", "minimax/.."} {
 			malformed := revision(grn, "2", "7", map[string]string{requiredTool: secondPin}, "dropped")
 			malformed.Configuration.Model.APIKeyRef = reference
 			Expect(rendering.Render(ctx, malformed)).To(MatchError(desired.ErrMalformed), "reference %q", reference)
