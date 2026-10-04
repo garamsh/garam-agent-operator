@@ -93,9 +93,18 @@ The control service: agents' execution definitions and their revisions, template
     - The binary refuses to start without either API certificate file, and a plaintext request never reaches the route.
     - The configure route, called over HTTPS under a throwaway serving certificate the suite generates, refuses a request with no authority, and answers 503 while garam is unreachable.
     - The controller routes refuse a request without a client certificate. With one, they reach garam's proof, which answers 503 while garam is unreachable. The console route needs no client certificate.
-  - **Skipped today.** These are written against a real garam but skip:
-    - configures through the binary: concurrent configures on one revision storing one, and concurrent repeats of one request storing one record;
-    - a configured agent released to its controller through the feed. garam has no supported way to mint an authority for a test organization (issue #230). Until it does, the PostgreSQL implementations of `Configure`, `Desired` and `RecordStatus`, and the store's races, have no e2e coverage.
+  - **Against a real garam.** The suite brings up garam built from `garamsh/garam` at `7ca51b94d670f0345f58645058930b02e6904006` (the Makefile's `GARAM_REVISION`, built by `make garam-e2e` into `bin/garam-<revision>/`). That commit contains garam's test-principal fixture (`garamsh/garam#1176`, from `6cfdde2`) and managed enrollment (`garamsh/garam#1167`).
+    - **Fixture.** It runs as that commit's `tests/testprincipal/README.md` §Invocation states: `testprincipal prepare -contract 1 -migrations <checkout>/migrations -server-url <the suite's PostgreSQL server>`. That makes a fresh `garam_principal_*` database and one signed-in user, and nothing else.
+    - **Processes.** The suite then starts `garam serve authz`, `serve api` and `serve machine` on loopback ports. Their key material is generated for the run: a garam server root, the listener certificate it signed, and the key-encryption key.
+    - **Public routes only.** Everything past the fixture's user is made through garam's public routes, and nothing writes garam's tables:
+      - the organization (`POST /orgs`);
+      - this service's hosted operator and one controller, each registered (`POST /orgs/{org}/operators`) and enrolled over a key generated in the suite (`POST /enrollment`);
+      - the hosted operator's delegation over the controller (`PUT /orgs/{org}/operators/{operator}/delegation`);
+      - each test's agent, through an `agent:create` authority and managed create;
+      - each configure's `agent:configure` authority (`POST /orgs/{org}/operation-authorities`).
+    - **Binaries.** A second control binary runs against that garam as the enrolled hosted operator, beside the one pointed at an unreachable garam.
+    - **Tests.** Concurrent configures on one revision store one. Concurrent repeats of one request, under one authority, store one record, and a fresh authority's repeat answers the first outcome. A configured agent is released to its controller through the feed, on garam's agent-bound proof of the controller's own leaf.
+    - **Credentials.** garamsh/garam is private, so `make garam-e2e` needs git credentials that can read it.
 
 ## Rationale
 
@@ -116,3 +125,4 @@ A creation stays `Pending` on an unknown outcome rather than failing, because a 
 - **Who may publish a profile or a template.** `garamsh/garam#1155` D4 makes editing a profile a high-trust action; nothing here checks an actor yet.
 - **What placing an agent elsewhere does.** An agent moved away from a controller is absent from its next answer, and is released to its new controller once reconfigured there. The placement itself is issue #218.
 - **How a controller with more than 500 agents is served.** The feed answers the whole releasable set or nothing, so 500 candidates is a capacity limit of the C2 wire. Paginating the set without letting the manager read a page as the rest withdrawn is not designed.
+- **How the promotion's e2e run reads garam.** `make test-e2e-control` now fetches garam at `GARAM_REVISION`, and the `E2E Tests` workflow's credential reads this repository only, so on a promotion that fetch is refused until the workflow is given read access to `garamsh/garam`.
