@@ -64,22 +64,24 @@ SELECT organization, revision, profile_name, profile_version, config, assignment
 FROM definitions WHERE agent = $1 ORDER BY revision DESC LIMIT 1`
 
 	beginCreation = `
-INSERT INTO creations (organization, request_id, actor, template_name, template_version, state)
-VALUES ($1, $2, $3, $4, $5, 'pending')
+INSERT INTO creations (organization, request_id, actor, operation, target, body_sha256, operation_ref,
+    controller, template_name, template_version, profile_name, profile_version, state)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending')
 ON CONFLICT DO NOTHING`
 
 	getCreation = `
-SELECT actor, template_name, template_version, state, agent, reason FROM creations
-WHERE organization = $1 AND request_id = $2`
+SELECT actor, operation, target, body_sha256, operation_ref, controller, template_name, template_version,
+    profile_name, profile_version, state, agent, epoch, reason, conflict
+FROM creations WHERE organization = $1 AND request_id = $2`
 
 	lockCreation = getCreation + ` FOR UPDATE`
 
 	registerCreation = `
-UPDATE creations SET state = 'registered', agent = $3
+UPDATE creations SET state = 'registered', agent = $3, epoch = $4
 WHERE organization = $1 AND request_id = $2`
 
 	failCreation = `
-UPDATE creations SET state = 'failed', reason = $3
+UPDATE creations SET state = 'failed', reason = $3, conflict = $4
 WHERE organization = $1 AND request_id = $2 AND state = 'pending'`
 
 	// beginRequest stores a configure request as stale until its revision is stored beside it.

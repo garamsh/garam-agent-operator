@@ -41,7 +41,7 @@ func (s *server) authorize(ctx context.Context, r *http.Request, body []byte, wa
 		return Binding{}, &MismatchError{Field: "organization"}
 	case b.Operation != want.operation:
 		return Binding{}, &MismatchError{Field: "operation"}
-	case b.Target != want.grn:
+	case want.grn != "" && b.Target != want.grn:
 		return Binding{}, &MismatchError{Field: "target"}
 	case b.Operation == OperationConfigure && b.Assignment == nil:
 		return Binding{}, &MismatchError{Field: "assignment"}

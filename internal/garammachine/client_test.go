@@ -39,7 +39,7 @@ func post(t *testing.T, g *garam) (garammachine.Answer, error) {
 	t.Cleanup(server.Close)
 	c := garammachine.New(server.URL, server.Client())
 	c.Backoff = time.Millisecond
-	return c.Post(context.Background(), "/route", map[string]string{})
+	return c.Post(context.Background(), garammachine.OperationAuthority, "/route", map[string]string{})
 }
 
 func TestPost_SendsAndRequiresTheContract(t *testing.T) {

@@ -33,8 +33,13 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeMessage(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, definition.ErrNotFound):
 		writeMessage(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, definition.ErrStaleRevision), errors.Is(err, definition.ErrRequestReused):
+	case errors.Is(err, definition.ErrStaleRevision), errors.Is(err, definition.ErrRequestReused),
+		errors.Is(err, definition.ErrRegistrationConflict), errors.Is(err, definition.ErrAssignmentMoved):
 		writeMessage(w, http.StatusConflict, err.Error())
+	case errors.Is(err, definition.ErrRegistrationRefused):
+		writeMessage(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, definition.ErrRegistrationUndecided):
+		writeMessage(w, http.StatusServiceUnavailable, err.Error())
 	default:
 		s.logger.Error("console request failed", "trace_id", newTraceID(), "error", err)
 		writeMessage(w, http.StatusInternalServerError, "internal error")

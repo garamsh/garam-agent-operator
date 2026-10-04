@@ -169,25 +169,27 @@ func (m *Memory) BeginCreation(_ context.Context, c definition.Creation) (defini
 	return c, nil
 }
 
-func (m *Memory) RegisterCreation(_ context.Context, key definition.RequestKey, d definition.Definition) (definition.Creation, error) {
+func (m *Memory) RegisterCreation(
+	_ context.Context, key definition.RequestKey, d definition.Definition,
+) (definition.Creation, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.creations[key]
 	if !ok {
-		return definition.Creation{}, definition.ErrNotFound
+		return definition.Creation{}, false, definition.ErrNotFound
 	}
 	if _, pending := c.Outcome.(definition.Pending); !pending {
-		return c, nil
+		return c, false, nil
 	}
 	if err := m.appendLocked(d); err != nil {
-		return definition.Creation{}, err
+		return definition.Creation{}, false, err
 	}
-	c.Outcome = definition.Registered{Agent: d.Agent}
+	c.Outcome = definition.Registered{Agent: d.Agent, Epoch: d.Assignment.Epoch}
 	m.creations[key] = c
-	return c, nil
+	return c, true, nil
 }
 
-func (m *Memory) FailCreation(_ context.Context, key definition.RequestKey, reason string) (definition.Creation, error) {
+func (m *Memory) FailCreation(_ context.Context, key definition.RequestKey, failed definition.Failed) (definition.Creation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.creations[key]
@@ -197,7 +199,7 @@ func (m *Memory) FailCreation(_ context.Context, key definition.RequestKey, reas
 	if _, pending := c.Outcome.(definition.Pending); !pending {
 		return c, nil
 	}
-	c.Outcome = definition.Failed{Reason: reason}
+	c.Outcome = failed
 	m.creations[key] = c
 	return c, nil
 }

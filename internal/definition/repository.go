@@ -35,9 +35,11 @@ type Repository interface {
 	// BeginCreation stores c as Pending unless its key is already stored, and returns
 	// the creation stored under the key either way.
 	BeginCreation(ctx context.Context, c Creation) (Creation, error)
-	// RegisterCreation records the key's creation as Registered and stores d, the
-	// agent's first revision, together: neither is stored without the other.
-	RegisterCreation(ctx context.Context, key RequestKey, d Definition) (Creation, error)
-	// FailCreation records the key's creation as Failed.
-	FailCreation(ctx context.Context, key RequestKey, reason string) (Creation, error)
+	// RegisterCreation records the key's creation as Registered, under d's agent and the epoch
+	// of d's assignment, and stores d, the agent's first revision, together: neither is stored
+	// without the other.
+	// It reports whether this call registered it, and is false for one an earlier call did.
+	RegisterCreation(ctx context.Context, key RequestKey, d Definition) (Creation, bool, error)
+	// FailCreation records the key's creation as failed.
+	FailCreation(ctx context.Context, key RequestKey, failed Failed) (Creation, error)
 }

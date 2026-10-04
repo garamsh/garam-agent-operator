@@ -60,38 +60,73 @@ func (i *introspector) set(a console.Authority, b console.Binding, err error) {
 	i.answers[a] = answer{binding: b, err: err}
 }
 
-type registrar struct{}
+// registrar is the test double for garam's managed create: it registers each request under a GRN
+// of its own with epoch "1", unless the test set the error its next calls answer.
+type registrar struct {
+	mu    sync.Mutex
+	err   error
+	calls int
+}
 
-func (registrar) Register(context.Context, definition.RequestKey) (definition.GRN, error) {
-	return agent, nil
+func (r *registrar) Register(_ context.Context, reg definition.Registration) (definition.Registered, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	if r.err != nil {
+		return definition.Registered{}, r.err
+	}
+	if reg.Request.RequestID == "create" {
+		return definition.Registered{Agent: agent, Epoch: "1"}, nil
+	}
+	return definition.Registered{Agent: definition.GRN("grn:acme:default:agent:" + reg.Request.RequestID), Epoch: "1"}, nil
+}
+
+func (r *registrar) answer(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.err = err
 }
 
 // env is a console server over an in-memory store holding agent at revision 1.
 type env struct {
 	url          string
 	introspector *introspector
+	registrar    *registrar
 	definitions  definition.Service
 	profile      definition.ProfileRef
+	template     definition.TemplateRef
 	authorities  int
 }
+
+// controllerGRN is the controller agents are created on, where the configure tests' assignment is.
+const controllerGRN = "grn:acme:default:operator:k8s"
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
-	definitions := definition.NewService(repository.NewMemory(), registrar{})
+	reg := &registrar{}
+	definitions := definition.NewService(repository.NewMemory(), reg)
 	p, err := definitions.PublishProfile(ctx, org, "small", definition.ExecutionSettings{})
 	require.NoError(t, err)
 	profile := definition.ProfileRef{Name: p.Name, Version: p.Version}
 	tmpl, err := definitions.PublishTemplate(ctx, org, definition.Template{Name: "researcher", Profile: profile})
 	require.NoError(t, err)
-	_, err = definitions.CreateAgent(ctx, definition.RequestKey{Organization: org, RequestID: "create"}, actor,
-		definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version})
+	_, _, err = definitions.CreateAgent(ctx, definition.CreateInput{
+		Request:    definition.RequestKey{Organization: org, RequestID: "create"},
+		Binding:    definition.Binding{Actor: actor, Operation: console.OperationCreate, Target: controllerGRN},
+		Controller: controllerGRN,
+		Template:   definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
+		Profile:    profile,
+	})
 	require.NoError(t, err)
 	d, err := definitions.GetDefinition(ctx, agent)
 	require.NoError(t, err)
 	require.Equal(t, definition.Revision(1), d.Revision)
 
-	e := &env{introspector: &introspector{answers: map[console.Authority]answer{}}, definitions: definitions, profile: profile}
+	e := &env{
+		introspector: &introspector{answers: map[console.Authority]answer{}}, registrar: reg,
+		definitions: definitions, profile: profile, template: definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
+	}
 	server := httptest.NewServer(console.NewHandler(console.Config{
 		Definitions:  definitions,
 		Introspector: e.introspector,
