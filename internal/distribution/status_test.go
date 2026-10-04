@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/garamsh/garam-agent-operator/internal/distribution"
 )
 
 func TestStatus_IgnoresARegression(t *testing.T) {
@@ -84,5 +86,17 @@ func TestStatus_RefusesARevisionTheAgentDoesNotHave(t *testing.T) {
 	}
 	// Control: the agent's latest revision is a revision it has.
 	status, out := e.report(t, e.withCert, agentA, `{"observedRevision":"2","renderedRevision":"2"}`)
+	assert.Equal(t, 200, status, out)
+}
+
+func TestStatus_RefusesALeafForAnotherController(t *testing.T) {
+	e := newEnv(t)
+	e.prover.setSession(verdict{proof: distribution.Proof{Operator: elsewhere, Org: org}})
+	status, out := e.report(t, e.withCert, agentA, `{"observedRevision":"2","renderedRevision":"2"}`)
+	assert.Equal(t, 403, status, out)
+
+	// Control: a session proof naming the certificate's own operator is accepted.
+	e.prover.setSession(verdict{proof: distribution.Proof{Operator: controller, Org: org}})
+	status, out = e.report(t, e.withCert, agentA, `{"observedRevision":"2","renderedRevision":"2"}`)
 	assert.Equal(t, 200, status, out)
 }
