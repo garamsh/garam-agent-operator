@@ -80,19 +80,72 @@ type Definition struct {
 	Config   Configuration
 }
 
-// CreationKey identifies one creation request: a repeat of the same key is the same request.
-type CreationKey struct {
-	Actor        string
+// RequestKey identifies one console request: a repeat of the same key is the same request.
+type RequestKey struct {
 	Organization string
 	RequestID    string
 }
 
 // Creation records one request to create an agent from a template, and how it ended.
+// A repeat of its key by another actor, or naming another template, is another request.
 type Creation struct {
-	Key      CreationKey
+	Key      RequestKey
+	Actor    string
 	Template TemplateRef
 	Outcome  Outcome
 }
+
+// Binding is what garam's operation authority bound a console request to. It is stored
+// with the request as data and compared on every repeat; nothing here interprets it.
+type Binding struct {
+	Actor        string
+	Operation    string
+	Target       string
+	BodySHA256   string
+	OperationRef string
+	Assignment   Assignment
+}
+
+// Assignment is where an agent ran when its configuration change was authorized.
+type Assignment struct {
+	Operator string
+	Epoch    string
+}
+
+// ConfigureInput is a request to change an agent's definition, stating the revision it expects
+// to replace.
+type ConfigureInput struct {
+	Request          RequestKey
+	Binding          Binding
+	Agent            GRN
+	ExpectedRevision Revision
+	Profile          ProfileRef
+	Config           Configuration
+}
+
+// Request records one configure request and its first outcome, which every repeat returns.
+type Request struct {
+	Key     RequestKey
+	Binding Binding
+	Agent   GRN
+	Outcome RequestOutcome
+}
+
+// RequestOutcome is how a configure request ended: Applied or Stale.
+type RequestOutcome interface {
+	requestOutcome()
+}
+
+// Applied is a configure request stored as the agent's revision.
+type Applied struct {
+	Revision Revision
+}
+
+// Stale is a configure request whose expected revision was no longer the latest.
+type Stale struct{}
+
+func (Applied) requestOutcome() {}
+func (Stale) requestOutcome()   {}
 
 // Outcome is where a creation stands: Pending, Registered or Failed.
 type Outcome interface {
@@ -120,10 +173,12 @@ var (
 	// ErrNotFound is returned for a definition, template or profile that does not exist.
 	ErrNotFound = errors.New("not found")
 
-	// ErrStaleRevision is returned for an update based on a revision that is no longer the latest.
+	// ErrStaleRevision is returned for a configure request expecting a revision that is no longer
+	// the latest.
 	ErrStaleRevision = errors.New("stale revision")
 
-	// ErrRequestReused is returned when a creation key arrives again naming a different template.
+	// ErrRequestReused is returned when a request key arrives again for a different request:
+	// another actor, operation, target, body or template.
 	ErrRequestReused = errors.New("request id reused for a different request")
 
 	// ErrRegistrationRefused is wrapped by a Registrar whose registration garam refused.

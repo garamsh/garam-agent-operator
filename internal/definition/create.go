@@ -8,17 +8,18 @@ import (
 
 // CreateAgent registers an agent with garam and gives it a first revision copied from
 // the template. A repeated key returns the first request's outcome, and resumes it
-// while garam has not yet answered.
-func (s *service) CreateAgent(ctx context.Context, key CreationKey, ref TemplateRef) (Creation, error) {
+// while garam has not yet answered; one from another actor or naming another template
+// is refused with ErrRequestReused.
+func (s *service) CreateAgent(ctx context.Context, key RequestKey, actor string, ref TemplateRef) (Creation, error) {
 	t, err := s.repository.GetTemplate(ctx, ref)
 	if err != nil {
 		return Creation{}, fmt.Errorf("template %s version %d: %w", ref.Name, ref.Version, err)
 	}
-	c, err := s.repository.BeginCreation(ctx, Creation{Key: key, Template: ref, Outcome: Pending{}})
+	c, err := s.repository.BeginCreation(ctx, Creation{Key: key, Actor: actor, Template: ref, Outcome: Pending{}})
 	if err != nil {
 		return Creation{}, err
 	}
-	if c.Template != ref {
+	if c.Template != ref || c.Actor != actor {
 		return Creation{}, ErrRequestReused
 	}
 	if _, pending := c.Outcome.(Pending); !pending {

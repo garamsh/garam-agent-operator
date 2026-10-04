@@ -6,17 +6,9 @@ import "context"
 type Service interface {
 	PublishProfile(ctx context.Context, name string, settings ExecutionSettings) (Profile, error)
 	PublishTemplate(ctx context.Context, t Template) (Template, error)
-	CreateAgent(ctx context.Context, key CreationKey, template TemplateRef) (Creation, error)
-	UpdateDefinition(ctx context.Context, in UpdateInput) (Definition, error)
+	CreateAgent(ctx context.Context, key RequestKey, actor string, template TemplateRef) (Creation, error)
+	Configure(ctx context.Context, in ConfigureInput) (Applied, error)
 	GetDefinition(ctx context.Context, agent GRN) (Definition, error)
-}
-
-// UpdateInput is a change to an agent's definition, stating the revision it was based on.
-type UpdateInput struct {
-	Agent   GRN
-	BasedOn Revision
-	Profile ProfileRef
-	Config  Configuration
 }
 
 type service struct {

@@ -23,6 +23,10 @@ import (
 // postgresImage is moved by hand: no file Dependabot reads holds it.
 const postgresImage = "postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
 
+// garamURL is the machine listener the binary is pointed at. Until garam can be brought up
+// for this suite (issue #230), nothing answers there.
+const garamURL = "https://127.0.0.1:1"
+
 // readyTimeout bounds how long the binary has to apply its schema and answer ready.
 const readyTimeout = 30 * time.Second
 
@@ -31,6 +35,8 @@ var (
 	pool *pgxpool.Pool
 	// healthURL is the base URL of the binary's health endpoints.
 	healthURL string
+	// apiURL is the base URL of the binary's console routes.
+	apiURL string
 )
 
 func TestMain(m *testing.M) {
@@ -76,8 +82,23 @@ func run(m *testing.M) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	healthURL = "http://" + probeAddr
-	control := exec.Command(binary, "--health-probe-bind-address", probeAddr)
+	apiAddr, err := freeAddress()
+	if err != nil {
+		return 0, err
+	}
+	healthURL, apiURL = "http://"+probeAddr, "http://"+apiAddr
+	identity, err := writeOperatorIdentity(dir)
+	if err != nil {
+		return 0, err
+	}
+	control := exec.Command(binary,
+		"--health-probe-bind-address", probeAddr,
+		"--api-bind-address", apiAddr,
+		"--garam-machine-url", garamURL,
+		"--garam-server-root-file", identity.serverRoot,
+		"--operator-certificate-file", identity.certificate,
+		"--operator-key-file", identity.key,
+	)
 	control.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+databaseURL)
 	control.Stdout, control.Stderr = os.Stdout, os.Stderr
 	if err := control.Start(); err != nil {

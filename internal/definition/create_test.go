@@ -26,7 +26,7 @@ func TestCreateAgent_LaterTemplateVersionLeavesAgentUnchanged(t *testing.T) {
 	tools := definition.ToolPins{webFetch: firstPin}
 	v1, err := f.service.PublishTemplate(ctx, definition.Template{Name: analyst, Profile: f.profile, Config: config("first ego", tools)})
 	require.NoError(t, err)
-	_, err = f.service.CreateAgent(ctx, key("r1"), definition.TemplateRef{Name: analyst, Version: v1.Version})
+	_, err = f.service.CreateAgent(ctx, key("r1"), actor, definition.TemplateRef{Name: analyst, Version: v1.Version})
 	require.NoError(t, err)
 
 	tools[webFetch] = secondPin
@@ -40,7 +40,7 @@ func TestCreateAgent_LaterTemplateVersionLeavesAgentUnchanged(t *testing.T) {
 	assert.Equal(t, definition.ToolPins{webFetch: firstPin}, d.Config.Tools)
 
 	// Control: an agent created from the later version carries the later content.
-	_, err = f.service.CreateAgent(ctx, key("r2"), definition.TemplateRef{Name: analyst, Version: v2.Version})
+	_, err = f.service.CreateAgent(ctx, key("r2"), actor, definition.TemplateRef{Name: analyst, Version: v2.Version})
 	require.NoError(t, err)
 	later, err := f.service.GetDefinition(ctx, secondAgent)
 	require.NoError(t, err)
@@ -52,18 +52,18 @@ func TestCreateAgent_RepeatedRequestReturnsFirstOutcome(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, registration{agent: firstAgent}, registration{agent: secondAgent})
 
-	first, err := f.service.CreateAgent(ctx, key("r1"), f.template)
+	first, err := f.service.CreateAgent(ctx, key("r1"), actor, f.template)
 	require.NoError(t, err)
 	assert.Equal(t, definition.Registered{Agent: firstAgent}, first.Outcome)
 
-	repeat, err := f.service.CreateAgent(ctx, key("r1"), f.template)
+	repeat, err := f.service.CreateAgent(ctx, key("r1"), actor, f.template)
 	require.NoError(t, err)
 	assert.Equal(t, definition.Registered{Agent: firstAgent}, repeat.Outcome)
 	_, err = f.service.GetDefinition(ctx, secondAgent)
 	require.ErrorIs(t, err, definition.ErrNotFound)
 
 	// Control: another request id is another creation, and registers a second agent.
-	other, err := f.service.CreateAgent(ctx, key("r2"), f.template)
+	other, err := f.service.CreateAgent(ctx, key("r2"), actor, f.template)
 	require.NoError(t, err)
 	assert.Equal(t, definition.Registered{Agent: secondAgent}, other.Outcome)
 }
@@ -73,11 +73,11 @@ func TestCreateAgent_RepeatedRequestReturnsFirstRefusal(t *testing.T) {
 	refusal := fmt.Errorf("organization over its agent quota: %w", definition.ErrRegistrationRefused)
 	f := newFixture(t, registration{err: refusal}, registration{agent: firstAgent})
 
-	first, err := f.service.CreateAgent(ctx, key("r1"), f.template)
+	first, err := f.service.CreateAgent(ctx, key("r1"), actor, f.template)
 	require.NoError(t, err)
 	assert.Equal(t, definition.Failed{Reason: refusal.Error()}, first.Outcome)
 
-	repeat, err := f.service.CreateAgent(ctx, key("r1"), f.template)
+	repeat, err := f.service.CreateAgent(ctx, key("r1"), actor, f.template)
 	require.NoError(t, err)
 	assert.Equal(t, definition.Failed{Reason: refusal.Error()}, repeat.Outcome)
 	_, err = f.service.GetDefinition(ctx, firstAgent)
@@ -88,11 +88,11 @@ func TestCreateAgent_UnansweredRegistrationResumesOnRepeat(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, registration{err: errors.New("connection reset")}, registration{agent: firstAgent})
 
-	_, err := f.service.CreateAgent(ctx, key("r1"), f.template)
+	_, err := f.service.CreateAgent(ctx, key("r1"), actor, f.template)
 	require.Error(t, err)
 	require.NotErrorIs(t, err, definition.ErrRegistrationRefused)
 
-	repeat, err := f.service.CreateAgent(ctx, key("r1"), f.template)
+	repeat, err := f.service.CreateAgent(ctx, key("r1"), actor, f.template)
 	require.NoError(t, err)
 	assert.Equal(t, definition.Registered{Agent: firstAgent}, repeat.Outcome)
 	d, err := f.service.GetDefinition(ctx, firstAgent)
@@ -106,14 +106,29 @@ func TestCreateAgent_RequestIDReusedForAnotherTemplateRefused(t *testing.T) {
 
 	v2, err := f.service.PublishTemplate(ctx, definition.Template{Name: f.template.Name, Profile: f.profile, Config: config("second ego", definition.ToolPins{webFetch: secondPin})})
 	require.NoError(t, err)
-	_, err = f.service.CreateAgent(ctx, key("r1"), f.template)
+	_, err = f.service.CreateAgent(ctx, key("r1"), actor, f.template)
 	require.NoError(t, err)
 
-	_, err = f.service.CreateAgent(ctx, key("r1"), definition.TemplateRef{Name: v2.Name, Version: v2.Version})
+	_, err = f.service.CreateAgent(ctx, key("r1"), actor, definition.TemplateRef{Name: v2.Name, Version: v2.Version})
 	require.ErrorIs(t, err, definition.ErrRequestReused)
 
 	// Control: the same key naming the same template is a repeat, not a reuse.
-	repeat, err := f.service.CreateAgent(ctx, key("r1"), f.template)
+	repeat, err := f.service.CreateAgent(ctx, key("r1"), actor, f.template)
+	require.NoError(t, err)
+	assert.Equal(t, definition.Registered{Agent: firstAgent}, repeat.Outcome)
+}
+
+func TestCreateAgent_RequestIDReusedByAnotherActorRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, registration{agent: firstAgent}, registration{agent: secondAgent})
+	_, err := f.service.CreateAgent(ctx, key("r1"), actor, f.template)
+	require.NoError(t, err)
+
+	_, err = f.service.CreateAgent(ctx, key("r1"), "grn:acme:default:user:other", f.template)
+	require.ErrorIs(t, err, definition.ErrRequestReused)
+
+	// Control: the same actor repeating the key is a repeat, not a reuse.
+	repeat, err := f.service.CreateAgent(ctx, key("r1"), actor, f.template)
 	require.NoError(t, err)
 	assert.Equal(t, definition.Registered{Agent: firstAgent}, repeat.Outcome)
 }
