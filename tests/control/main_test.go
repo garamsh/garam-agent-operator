@@ -21,7 +21,8 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-// postgresImage is moved by hand: no file Dependabot reads holds it.
+// postgresImage is moved by hand, because no file Dependabot reads holds it. The
+// PM moves it and reviews it at each promotion to main.
 const postgresImage = "postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
 
 // garamURL is the machine listener the binary is pointed at. Until garam can be brought up

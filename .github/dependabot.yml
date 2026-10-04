@@ -24,6 +24,13 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore
+  - package-ecosystem: docker
+    directory: /test/e2e/agent-image
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
   - package-ecosystem: gomod
     directory: /
     target-branch: dev

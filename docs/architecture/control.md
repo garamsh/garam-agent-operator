@@ -75,7 +75,6 @@ A creation stays `Pending` on an unknown outcome rather than failing, because a 
 
 ## Open questions
 
-- **What moves the e2e suite's PostgreSQL image.** It is pinned by digest in `tests/control/main_test.go`, which no Dependabot ecosystem reads, so it is moved by hand.
 - **How the schema changes once a table holds rows.** `schema.sql` creates what is missing and alters nothing, so a change to an existing table needs a migration that no part of the binary performs yet.
 - **What configuration the domain refuses.** It stores any configuration it is given, including an empty tool-pin set, which `agent.md` records `sherlock` refusing. The configure route now parses a request, and checks only that it is one configure request; which values to refuse there is not decided.
 - **The rest of the API.** Create waits on `garamsh/garam#1167`, the controller routes on this repository's next slice, the runtime-status route on `garamsh/garam#1161`, and console reads and publishing on #220 (`garamsh/garam#1170`). Each is judged against `structure.md` §A new domain when it arrives (ADR 0039).
