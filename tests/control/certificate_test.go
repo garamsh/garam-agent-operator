@@ -146,7 +146,8 @@ func TestInitialCertificate_GaramRefusalKeepsNothing(t *testing.T) {
 	const swap = `UPDATE creations SET operation_ref = (SELECT operation_ref FROM creations WHERE agent = $2)
 WHERE agent = $1`
 	var ref string
-	require.NoError(t, pool.QueryRow(t.Context(), "SELECT operation_ref FROM creations WHERE agent = $1", agent).Scan(&ref))
+	const read = "SELECT operation_ref FROM creations WHERE agent = $1"
+	require.NoError(t, pool.QueryRow(t.Context(), read, agent).Scan(&ref))
 	require.NoError(t, execute(t, swap, agent, other))
 	_, csr := certificateRequestPEM(t)
 
