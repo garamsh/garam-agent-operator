@@ -1,6 +1,6 @@
 # ADR 0012: Declare an agent's tool set in its definition's values, and carry the keys this operator knows into a file
 
-> Status: accepted
+> Status: accepted; declaration site in garam's values superseded by ADR-0032
 > Date: 2026-08-27
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

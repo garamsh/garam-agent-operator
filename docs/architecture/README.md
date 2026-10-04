@@ -52,12 +52,12 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0004-extend-stack-go.md` | Extend `stack-go.md` instead of replacing it | accepted |
 | `adr/0005-statefulset-of-one.md` | Run an agent as a StatefulSet of one replica | accepted |
 | `adr/0006-credential-group.md` | Carry credential access on a group, not on a user | accepted |
-| `adr/0007-claim-definitions-from-a-poller.md` | Claim garam's definitions from a poller beside the reconciler | accepted |
+| `adr/0007-claim-definitions-from-a-poller.md` | Claim garam's definitions from a poller beside the reconciler | accepted; composition held by garam superseded by ADR-0032 |
 | `adr/0008-renew-the-operator-credential-into-the-secret-it-is-read-from.md` | Renew the operator's credential into the Secret it is read from | accepted |
 | `adr/0009-construct-a-claimed-agent-from-the-operators-own-configuration.md` | Construct a claimed agent from the operator's own configuration, and place the credential the claim admits it to | accepted |
 | `adr/0010-copy-an-agents-credential-into-a-memory-volume-the-pods-own-user-owns.md` | Copy an agent's credential into a memory volume the Pod's own user owns | accepted |
 | `adr/0011-the-conventions-template-is-the-frame.md` | The conventions template is the frame, and a divergence is earned by a fact | accepted |
-| `adr/0012-declare-an-agents-tool-set-in-its-definitions-values.md` | Declare an agent's tool set in its definition's values, and carry the keys this operator knows into a file | accepted |
+| `adr/0012-declare-an-agents-tool-set-in-its-definitions-values.md` | Declare an agent's tool set in its definition's values, and carry the keys this operator knows into a file | accepted; declaration site in garam's values superseded by ADR-0032 |
 | `adr/0013-the-base-carries-what-every-deployment-shares.md` | Carry what every deployment shares in the base, and an environment's values where that environment is reconciled | superseded by ADR-0017 |
 | `adr/0014-the-image-repository-is-immutable-and-a-deployment-references-a-digest.md` | Keep the image repository immutable with a tag naming one commit, and reference the image by digest with the tag beside it | accepted |
 | `adr/0015-run-the-e2e-suite-where-a-change-lands-and-advance-main-only-by-a-human-promotion.md` | Run the e2e suite where a change lands and not on every pull request, and advance `main` only by a human promotion | accepted; trigger decisions superseded by ADR-0028 |
@@ -76,5 +76,6 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0028-run-the-checks-and-the-e2e-suite-on-the-promotion-to-main-and-nothing-on-dev.md` | Run the checks and the e2e suite on the promotion to `main`, and nothing on `dev` | accepted |
 | `adr/0029-route-every-agent-specific-name-in-the-pod-through-its-types-descriptor.md` | Route every agent-specific name in the Pod through its type's descriptor, and keep the operator's images out of it | accepted |
 | `adr/0030-carry-the-operators-certificate-expiry-and-garams-refusals-as-metrics.md` | Carry the operator's certificate expiry and garam's refusals as metrics, under names an alert can depend on | accepted |
-| `adr/0031-support-agents-declared-in-garam-on-one-cluster-of-the-sherlock-type.md` | Support agents declared in garam, on one cluster, of the sherlock type, and keep a hand-written `Agent` to development | accepted |
+| `adr/0031-support-agents-declared-in-garam-on-one-cluster-of-the-sherlock-type.md` | Support agents declared in garam, on one cluster, of the sherlock type, and keep a hand-written `Agent` to development | accepted; §1 superseded by ADR-0032 |
+| `adr/0032-own-an-agents-desired-definition-in-this-projects-control-service.md` | Own an agent's desired definition in this project's control service, and render every `Agent` carrying a GRN from it | accepted |
 | `adr/0033-publish-the-control-service-as-a-second-image-to-its-own-repository.md` | Publish the control service as a second image, to a repository of its own, under the rules every image here follows | accepted |
