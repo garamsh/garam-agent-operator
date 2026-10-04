@@ -364,6 +364,29 @@ var _ = Describe("Writer fence", func() {
 		expectHeld("fence-no-status", agentv1alpha1.ReasonNoContainerStatus)
 	})
 
+	It("holds a Pod whose writer terminated with no container ID, beside one whose writer reports its ID", func() {
+		createNode("fence-node-container-id", corev1.ConditionTrue)
+
+		By("the control: a writer terminated under a container ID")
+		identified := fencedAgent("fence-container-id-control", "fence-node-container-id", terminatedState)
+		deletePod(identified)
+		_, err := reconcileAgent("fence-container-id-control")
+		Expect(err).NotTo(HaveOccurred())
+		expectReleased("fence-container-id-control", string(identified.UID))
+
+		// The shape a Pod deleted before its container was created can report:
+		// terminated, with no instance the evidence could name.
+		By("a writer terminated with no container ID")
+		anonymous := fencedAgent("fence-container-id-missing", "fence-node-container-id", runningState)
+		reportContainers(anonymous, map[string]corev1.ContainerState{agentContainerName: {
+			Terminated: &corev1.ContainerStateTerminated{ExitCode: 0},
+		}})
+		deletePod(anonymous)
+		_, err = reconcileAgent("fence-container-id-missing")
+		Expect(err).NotTo(HaveOccurred())
+		expectHeld("fence-container-id-missing", agentv1alpha1.ReasonNoContainerStatus)
+	})
+
 	It("records the evidence before it lets the Pod go, so a release that fails there leaves both", func() {
 		createNode("fence-node-persist", corev1.ConditionTrue)
 		name := "fence-persisted-first"
