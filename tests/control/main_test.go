@@ -72,10 +72,8 @@ func run(m *testing.M) (int, error) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	binary := filepath.Join(dir, "control")
-	build := exec.Command("go", "build", "-o", binary, "../../cmd/control")
-	build.Stdout, build.Stderr = os.Stdout, os.Stderr
-	if err := build.Run(); err != nil {
-		return 0, fmt.Errorf("build control binary: %w", err)
+	if out, err := exec.Command("go", "build", "-o", binary, "../../cmd/control").CombinedOutput(); err != nil {
+		return 0, step("build control binary", fmt.Errorf("%w: %s", err, out))
 	}
 
 	container, err := postgres.Run(ctx, postgresImage,
@@ -86,11 +84,11 @@ func run(m *testing.M) (int, error) {
 	)
 	defer func() { _ = testcontainers.TerminateContainer(container) }()
 	if err != nil {
-		return 0, fmt.Errorf("start postgres: %w", err)
+		return 0, step("start postgres", err)
 	}
 	databaseURL, err = container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		return 0, err
+		return 0, step("read postgres connection string", err)
 	}
 
 	probeAddr, err := freeAddress()
@@ -120,17 +118,14 @@ func run(m *testing.M) (int, error) {
 		"--operator-certificate-file", id.certificate,
 		"--operator-key-file", id.key,
 	}
-	control := exec.Command(binary, controlArgs...)
-	control.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+databaseURL)
-	control.Stdout, control.Stderr = os.Stdout, os.Stderr
-	if err := control.Start(); err != nil {
-		return 0, fmt.Errorf("start control binary: %w", err)
+	detachedCmd := exec.Command(binary, controlArgs...)
+	detachedCmd.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+databaseURL)
+	detached, err := startProcess("detached control", dir, detachedCmd)
+	if err != nil {
+		return 0, err
 	}
-	defer func() {
-		_ = control.Process.Kill()
-		_ = control.Wait()
-	}()
-	if err := waitReady(healthURL + "/readyz"); err != nil {
+	defer detached.stop()
+	if err := detached.waitReady(healthURL + "/readyz"); err != nil {
 		return 0, err
 	}
 
@@ -141,24 +136,24 @@ func run(m *testing.M) (int, error) {
 	serverURL = strings.Replace(serverURL, "/control?", "/postgres?", 1)
 	real, err = startGaram(ctx, os.Getenv("GARAM_BIN_DIR"), os.Getenv("GARAM_MIGRATIONS_DIR"), serverURL, dir)
 	if err != nil {
-		return 0, fmt.Errorf("start garam: %w", err)
+		return 0, err
 	}
 	defer real.stop()
-	stopAttached, err := startAttached(binary, id, real)
+	attached, err := startAttached(binary, dir, id, real)
 	if err != nil {
 		return 0, err
 	}
-	defer stopAttached()
+	defer attached.stop()
 
 	pool, err = pgxpool.New(ctx, databaseURL)
 	if err != nil {
-		return 0, err
+		return 0, step("open the test's own pool", err)
 	}
 	defer pool.Close()
 	return m.Run(), nil
 }
 
-// waitReady polls url until it answers 200, which the binary does only after applying its schema.
+// waitReady polls url until it answers 200, for a binary a test started itself.
 func waitReady(url string) error {
 	deadline := time.Now().Add(readyTimeout)
 	for time.Now().Before(deadline) {
@@ -185,7 +180,7 @@ func freeAddress() (string, error) {
 
 // startAttached starts a second control binary on the same database, calling the real garam as
 // the hosted operator garam enrolled, and serving under the suite's serving certificate.
-func startAttached(binary string, id identity, g *garamStack) (func(), error) {
+func startAttached(binary, dir string, id identity, g *garamStack) (*process, error) {
 	probeAddr, err := freeAddress()
 	if err != nil {
 		return nil, err
@@ -206,17 +201,13 @@ func startAttached(binary string, id identity, g *garamStack) (func(), error) {
 		"--operator-key-file", g.hostedFiles.key,
 	)
 	control.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+databaseURL)
-	control.Stdout, control.Stderr = os.Stdout, os.Stderr
-	if err := control.Start(); err != nil {
-		return nil, fmt.Errorf("start attached control binary: %w", err)
-	}
-	stop := func() {
-		_ = control.Process.Kill()
-		_ = control.Wait()
-	}
-	if err := waitReady("http://" + probeAddr + "/readyz"); err != nil {
-		stop()
+	attached, err := startProcess("attached control", dir, control)
+	if err != nil {
 		return nil, err
 	}
-	return stop, nil
+	if err := attached.waitReady("http://" + probeAddr + "/readyz"); err != nil {
+		attached.stop()
+		return nil, step("attached control ready", err, g.processes...)
+	}
+	return attached, nil
 }

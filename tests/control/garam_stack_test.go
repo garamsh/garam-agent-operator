@@ -52,13 +52,15 @@ type garamStack struct {
 	machine     *http.Client
 	hostedTLS   *http.Client
 	controller  tls.Certificate
-	stop        func()
+	// processes are garam's three running for the suite.
+	processes []*process
 }
 
-// garamProcess is one garam command running for the suite, with the file its output goes to.
-type garamProcess struct {
-	cmd *exec.Cmd
-	log string
+// stop stops every garam process the suite started.
+func (s *garamStack) stop() {
+	for _, p := range s.processes {
+		p.stop()
+	}
 }
 
 // startGaram brings garam up on loopback ports over a fresh database on the PostgreSQL server
@@ -67,42 +69,30 @@ type garamProcess struct {
 // delegation from the one to the other.
 func startGaram(ctx context.Context, binDir, migrations, serverURL, dir string) (_ *garamStack, err error) {
 	if binDir == "" || migrations == "" {
-		return nil, errors.New("GARAM_BIN_DIR and GARAM_MIGRATIONS_DIR are unset: run the suite through " +
-			"`make test-e2e-control`, which builds garam at GARAM_REVISION")
+		return nil, step("locate garam", errors.New("GARAM_BIN_DIR and GARAM_MIGRATIONS_DIR are unset: "+
+			"run the suite through `make test-e2e-control`, which builds garam at GARAM_REVISION"))
 	}
-	var processes []garamProcess
 	s := &garamStack{}
-	s.stop = func() {
-		for _, p := range processes {
-			_ = p.cmd.Process.Kill()
-			_ = p.cmd.Wait()
-		}
-	}
 	defer func() {
 		if err != nil {
 			s.stop()
-			for _, p := range processes {
-				if out, readErr := os.ReadFile(p.log); readErr == nil {
-					fmt.Fprintf(os.Stderr, "--- %s\n%s\n", p.log, out)
-				}
-			}
 		}
 	}()
 
 	prepared, err := prepareDatabase(ctx, filepath.Join(binDir, "testprincipal"), migrations, serverURL)
 	if err != nil {
-		return nil, err
+		return nil, step("prepare garam's database with testprincipal", err)
 	}
 	s.session = &http.Cookie{Name: prepared.Session.Cookie, Value: prepared.Session.Token}
 
 	keys, err := writeGaramKeys(dir)
 	if err != nil {
-		return nil, err
+		return nil, step("write garam's key material", err)
 	}
 	addrs := map[string]string{}
 	for _, name := range []string{"grpc", "authzMetrics", "http", "machine", "machineHealth"} {
 		if addrs[name], err = freeAddress(); err != nil {
-			return nil, err
+			return nil, step("choose garam's ports", err)
 		}
 	}
 	garam := filepath.Join(binDir, "garam")
@@ -120,20 +110,15 @@ func startGaram(ctx context.Context, binDir, migrations, serverURL, dir string) 
 			"GARAM_MACHINE_TLS_CERT_FILE=" + keys.listenerCert, "GARAM_MACHINE_TLS_KEY_FILE=" + keys.listenerKey,
 			"GARAM_MACHINE_SERVER_ROOT_FILE=" + keys.serverRoot, "GARAM_CA_KEY_FILE=" + keys.kek}},
 	} {
-		log := filepath.Join(dir, "garam-"+p.name+".log")
-		out, err := os.Create(log)
-		if err != nil {
-			return nil, err
-		}
 		cmd := exec.Command(garam, "serve", p.name)
 		cmd.Env = append(append(os.Environ(), common...), p.env...)
-		cmd.Stdout, cmd.Stderr = out, out
-		if err := cmd.Start(); err != nil {
-			return nil, fmt.Errorf("start garam serve %s: %w", p.name, err)
+		started, err := startProcess("garam serve "+p.name, dir, cmd)
+		if err != nil {
+			return nil, step("start garam serve "+p.name, err, s.processes...)
 		}
-		processes = append(processes, garamProcess{cmd: cmd, log: log})
-		if err := waitReady(p.ready); err != nil {
-			return nil, fmt.Errorf("garam serve %s: %w", p.name, err)
+		s.processes = append(s.processes, started)
+		if err := started.waitReady(p.ready); err != nil {
+			return nil, step("garam serve "+p.name+" ready", err, s.processes[:len(s.processes)-1]...)
 		}
 	}
 	s.apiURL = "http://" + addrs["http"]
@@ -252,18 +237,18 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	if err := s.create(http.MethodPost, "/orgs", "", struct {
 		Name string `json:"name"`
 	}{Name: "acme"}, &org); err != nil {
-		return err
+		return step("create the organization", err, s.processes...)
 	}
 	s.orgGRN = org.GRN
 	s.orgID = org.GRN[strings.LastIndex(org.GRN, ":")+1:]
 
 	hosted, err := s.enroll("control")
 	if err != nil {
-		return err
+		return step("register and enroll the hosted operator", err, s.processes...)
 	}
 	controller, err := s.enroll("k8s")
 	if err != nil {
-		return err
+		return step("register and enroll the controller", err, s.processes...)
 	}
 	s.hosted, s.controllerGRN, s.controller = hosted.grn, controller.grn, controller.pair
 	s.hostedTLS = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
@@ -275,10 +260,10 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 		key:         filepath.Join(dir, "hosted-key.pem"),
 	}
 	if err := os.WriteFile(s.hostedFiles.certificate, []byte(hosted.certificatePEM), 0o600); err != nil {
-		return err
+		return step("write the hosted operator's certificate", err)
 	}
 	if err := os.WriteFile(s.hostedFiles.key, hosted.keyPEM, 0o600); err != nil {
-		return err
+		return step("write the hosted operator's key", err)
 	}
 
 	delegation := struct {
@@ -292,7 +277,9 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 		Operations:  []string{"agent:create", "agent:configure", "agent:activate"},
 		ExpiresAt:   time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 	}
-	return s.create(http.MethodPut, "/orgs/"+s.orgID+"/operators/control/delegation", garamContract, delegation, nil)
+	return step("write the hosted operator's delegation",
+		s.create(http.MethodPut, "/orgs/"+s.orgID+"/operators/control/delegation", garamContract, delegation, nil),
+		s.processes...)
 }
 
 // enrolled is an operator garam signed a certificate for, over a key generated here.
