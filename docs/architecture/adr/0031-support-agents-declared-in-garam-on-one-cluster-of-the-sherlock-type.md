@@ -1,6 +1,6 @@
 # ADR 0031: Support agents declared in garam, on one cluster, of the sherlock type, and keep a hand-written Agent to development
 
-> Status: accepted
+> Status: accepted; §1 superseded by ADR-0032
 > Date: 2026-09-28
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
