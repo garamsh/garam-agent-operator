@@ -6,6 +6,7 @@ package control_test
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,6 +24,10 @@ import (
 // postgresImage is moved by hand: no file Dependabot reads holds it.
 const postgresImage = "postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
 
+// garamURL is the machine listener the binary is pointed at. Until garam can be brought up
+// for this suite (issue #230), nothing answers there.
+const garamURL = "https://127.0.0.1:1"
+
 // readyTimeout bounds how long the binary has to apply its schema and answer ready.
 const readyTimeout = 30 * time.Second
 
@@ -31,6 +36,14 @@ var (
 	pool *pgxpool.Pool
 	// healthURL is the base URL of the binary's health endpoints.
 	healthURL string
+	// apiURL is the base URL of the binary's console routes, served over TLS.
+	apiURL string
+	// apiClient trusts the root that signed the binary's serving certificate.
+	apiClient *http.Client
+	// binaryPath, controlArgs and databaseURL are what the binary was started with.
+	binaryPath  string
+	controlArgs []string
+	databaseURL string
 )
 
 func TestMain(m *testing.M) {
@@ -67,7 +80,7 @@ func run(m *testing.M) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("start postgres: %w", err)
 	}
-	databaseURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	databaseURL, err = container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		return 0, err
 	}
@@ -76,8 +89,27 @@ func run(m *testing.M) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	healthURL = "http://" + probeAddr
-	control := exec.Command(binary, "--health-probe-bind-address", probeAddr)
+	apiAddr, err := freeAddress()
+	if err != nil {
+		return 0, err
+	}
+	healthURL, apiURL = "http://"+probeAddr, "https://"+apiAddr
+	id, err := writeIdentity(dir)
+	if err != nil {
+		return 0, err
+	}
+	apiClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: id.roots}}}
+	binaryPath, controlArgs = binary, []string{
+		"--health-probe-bind-address", probeAddr,
+		"--api-bind-address", apiAddr,
+		"--api-certificate-file", id.servingCertificate,
+		"--api-key-file", id.servingKey,
+		"--garam-machine-url", garamURL,
+		"--garam-server-root-file", id.serverRoot,
+		"--operator-certificate-file", id.certificate,
+		"--operator-key-file", id.key,
+	}
+	control := exec.Command(binary, controlArgs...)
 	control.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+databaseURL)
 	control.Stdout, control.Stderr = os.Stdout, os.Stderr
 	if err := control.Start(); err != nil {

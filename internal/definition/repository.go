@@ -15,9 +15,11 @@ type Repository interface {
 	// GetTemplate returns ErrNotFound for a version never published.
 	GetTemplate(ctx context.Context, ref TemplateRef) (Template, error)
 
-	// AppendDefinition stores d only when d.Revision is one past the agent's latest,
-	// and returns ErrStaleRevision otherwise, or ErrNotFound for an agent with none.
-	AppendDefinition(ctx context.Context, d Definition) error
+	// Configure stores r unless its key is already stored, and returns the request stored
+	// under the key either way. A new request stores d with it when d.Revision is one past
+	// the agent's latest, as Applied, and is stored as Stale otherwise. An agent with no
+	// revision stores nothing and returns ErrNotFound. r.Outcome is ignored.
+	Configure(ctx context.Context, r Request, d Definition) (Request, error)
 	// GetDefinition returns the agent's latest revision, or ErrNotFound.
 	GetDefinition(ctx context.Context, agent GRN) (Definition, error)
 
@@ -26,7 +28,7 @@ type Repository interface {
 	BeginCreation(ctx context.Context, c Creation) (Creation, error)
 	// RegisterCreation records the key's creation as Registered and stores d, the
 	// agent's first revision, together: neither is stored without the other.
-	RegisterCreation(ctx context.Context, key CreationKey, d Definition) (Creation, error)
+	RegisterCreation(ctx context.Context, key RequestKey, d Definition) (Creation, error)
 	// FailCreation records the key's creation as Failed.
-	FailCreation(ctx context.Context, key CreationKey, reason string) (Creation, error)
+	FailCreation(ctx context.Context, key RequestKey, reason string) (Creation, error)
 }

@@ -6,5 +6,5 @@ import "context"
 // Registering one key again returns the GRN of the first registration.
 // A refusal wraps ErrRegistrationRefused; any other error leaves the outcome unknown.
 type Registrar interface {
-	Register(ctx context.Context, key CreationKey) (GRN, error)
+	Register(ctx context.Context, key RequestKey) (GRN, error)
 }

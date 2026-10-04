@@ -38,8 +38,28 @@ CREATE TABLE IF NOT EXISTS creations (
     state            text   NOT NULL CHECK (state IN ('pending', 'registered', 'failed')),
     agent            text,
     reason           text,
-    PRIMARY KEY (actor, organization, request_id),
+    PRIMARY KEY (organization, request_id),
     FOREIGN KEY (template_name, template_version) REFERENCES templates (name, version),
     CHECK ((state = 'registered') = (agent IS NOT NULL)),
     CHECK ((state = 'failed') = (reason IS NOT NULL))
+);
+
+-- One row per configure request, keyed as garam keys the operation's request id. A repeat
+-- returns the outcome stored here; the binding columns are compared, not interpreted.
+CREATE TABLE IF NOT EXISTS requests (
+    organization        text   NOT NULL,
+    request_id          text   NOT NULL,
+    actor               text   NOT NULL,
+    operation           text   NOT NULL,
+    target              text   NOT NULL,
+    body_sha256         text   NOT NULL,
+    operation_ref       text   NOT NULL,
+    assignment_operator text   NOT NULL,
+    assignment_epoch    text   NOT NULL,
+    agent               text   NOT NULL,
+    outcome             text   NOT NULL CHECK (outcome IN ('applied', 'stale')),
+    revision            bigint,
+    PRIMARY KEY (organization, request_id),
+    FOREIGN KEY (agent, revision) REFERENCES definitions (agent, revision),
+    CHECK ((outcome = 'applied') = (revision IS NOT NULL))
 );

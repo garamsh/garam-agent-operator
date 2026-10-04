@@ -14,7 +14,8 @@ type Memory struct {
 	profiles    map[string][]definition.Profile
 	templates   map[string][]definition.Template
 	definitions map[definition.GRN][]definition.Definition
-	creations   map[definition.CreationKey]definition.Creation
+	creations   map[definition.RequestKey]definition.Creation
+	requests    map[definition.RequestKey]definition.Request
 }
 
 var _ definition.Repository = (*Memory)(nil)
@@ -25,7 +26,8 @@ func NewMemory() *Memory {
 		profiles:    map[string][]definition.Profile{},
 		templates:   map[string][]definition.Template{},
 		definitions: map[definition.GRN][]definition.Definition{},
-		creations:   map[definition.CreationKey]definition.Creation{},
+		creations:   map[definition.RequestKey]definition.Creation{},
+		requests:    map[definition.RequestKey]definition.Request{},
 	}
 }
 
@@ -70,14 +72,21 @@ func (m *Memory) GetTemplate(_ context.Context, ref definition.TemplateRef) (def
 	return cloneTemplate(versions[ref.Version-1]), nil
 }
 
-func (m *Memory) AppendDefinition(_ context.Context, d definition.Definition) error {
+func (m *Memory) Configure(_ context.Context, r definition.Request, d definition.Definition) (definition.Request, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	revisions := m.definitions[d.Agent]
-	if len(revisions) == 0 {
-		return definition.ErrNotFound
+	if stored, ok := m.requests[r.Key]; ok {
+		return stored, nil
 	}
-	return m.appendLocked(d)
+	if len(m.definitions[d.Agent]) == 0 {
+		return definition.Request{}, definition.ErrNotFound
+	}
+	r.Outcome = definition.Stale{}
+	if err := m.appendLocked(d); err == nil {
+		r.Outcome = definition.Applied{Revision: d.Revision}
+	}
+	m.requests[r.Key] = r
+	return r, nil
 }
 
 func (m *Memory) GetDefinition(_ context.Context, agent definition.GRN) (definition.Definition, error) {
@@ -101,7 +110,7 @@ func (m *Memory) BeginCreation(_ context.Context, c definition.Creation) (defini
 	return c, nil
 }
 
-func (m *Memory) RegisterCreation(_ context.Context, key definition.CreationKey, d definition.Definition) (definition.Creation, error) {
+func (m *Memory) RegisterCreation(_ context.Context, key definition.RequestKey, d definition.Definition) (definition.Creation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.creations[key]
@@ -119,7 +128,7 @@ func (m *Memory) RegisterCreation(_ context.Context, key definition.CreationKey,
 	return c, nil
 }
 
-func (m *Memory) FailCreation(_ context.Context, key definition.CreationKey, reason string) (definition.Creation, error) {
+func (m *Memory) FailCreation(_ context.Context, key definition.RequestKey, reason string) (definition.Creation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.creations[key]

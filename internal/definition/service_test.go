@@ -32,7 +32,7 @@ type registrar struct {
 	answers []registration
 }
 
-func (r *registrar) Register(_ context.Context, _ definition.CreationKey) (definition.GRN, error) {
+func (r *registrar) Register(_ context.Context, _ definition.RequestKey) (definition.GRN, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.answers) == 0 {
@@ -100,10 +100,9 @@ func config(ego string, tools definition.ToolPins) definition.Configuration {
 	}
 }
 
-func key(requestID string) definition.CreationKey {
-	return definition.CreationKey{
-		Actor:        "grn:acme:default:user:7c1d",
-		Organization: "acme",
-		RequestID:    requestID,
-	}
+// actor is the user every test's requests are made for.
+const actor = "grn:acme:default:user:7c1d"
+
+func key(requestID string) definition.RequestKey {
+	return definition.RequestKey{Organization: "acme", RequestID: requestID}
 }
