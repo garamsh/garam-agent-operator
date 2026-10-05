@@ -165,6 +165,14 @@ func TestActivation_AgainstGaramsExecutionFence(t *testing.T) {
 	assert.Equal(t, activation, retry.body["activationId"])
 	assert.Equal(t, float64(2), retry.body["tokenVersion"])
 
+	// The controller reports what it rendered, so the runtime's report updates a status it did not create.
+	controllerStatus, err := real.feedClient().Post(attachedURL+"/v1/operators/self/agents/"+a.grn+"/status",
+		"application/json", strings.NewReader(`{"observedRevision":"1","renderedRevision":"1"}`))
+	require.NoError(t, err)
+	_ = controllerStatus.Body.Close()
+	require.Equal(t, http.StatusOK, controllerStatus.StatusCode)
+	require.Equal(t, 1, count(t, "SELECT count(*) FROM agent_status WHERE agent = $1 AND applied_revision IS NULL", a.grn))
+
 	// Runtime status: accepted for the activated generation only.
 	accepted := postAgent(t, a, a.pair, "runtime-status", statusOf(activation, a.grn, a.epoch, generation))
 	assert.Equal(t, http.StatusNoContent, accepted.status, accepted.raw)
