@@ -134,3 +134,33 @@ func TestPlacement_ConcurrentReplacementsOfOnePlacementStoreOne(t *testing.T) {
 	assert.Equal(t, 1, created, "more than one placement replaced the same one")
 	assert.Equal(t, 1, count(t, "SELECT count(*) FROM placements WHERE agent = $1 AND revoked_at IS NULL", agent))
 }
+
+func TestPlacement_ConcurrentIdenticalFirstRegistrationsStoreOne(t *testing.T) {
+	agent, epoch := managedAgent(t)
+	body := placementOf(epoch, "pod-1", "")
+
+	const n = 8
+	statuses := make([]int, n)
+	answers := make([][]byte, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			status, raw, err := registerPlacement(agent, body)
+			if err != nil {
+				status, raw = -1, []byte(err.Error())
+			}
+			statuses[i], answers[i] = status, raw
+		})
+	}
+	wg.Wait()
+	created := 0
+	for i, status := range statuses {
+		require.Contains(t, []int{http.StatusCreated, http.StatusOK}, status, string(answers[i]))
+		if status == http.StatusCreated {
+			created++
+		}
+		assert.Equal(t, answers[0], answers[i])
+	}
+	assert.Equal(t, 1, created, "more than one request stored the placement")
+	assert.Equal(t, 1, count(t, "SELECT count(*) FROM placements WHERE agent = $1", agent))
+}
