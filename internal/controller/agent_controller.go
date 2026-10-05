@@ -62,6 +62,13 @@ type AgentReconciler struct {
 	// agent image the deployment runs accepts the flag, which sherlock does from
 	// v0.1.0, because one that does not refuses to start on it (ADR 0045).
 	RenderInstructionsFile bool
+
+	// MigrateSharedClaims replaces a StatefulSet whose workspace shares the
+	// state claim with one claiming them separately (ADR 0044). Off, such a
+	// StatefulSet is reconciled in the shape it has, and the Agent reports it as
+	// not isolated, until a person has stopped the agent and copied its state
+	// (ADR 0047).
+	MigrateSharedClaims bool
 }
 
 // +kubebuilder:rbac:groups=agent.garam.sh,resources=agents,verbs=get;list;watch;patch
@@ -193,6 +200,8 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 				effectiveType(agent.Spec.Type)))
 		setAvailable(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonWorkloadNotObserved,
 			"The workload was not reconciled, so its readiness was not observed. The Synced condition says why")
+		setStateIsolated(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonWorkloadNotObserved,
+			"The workload was not reconciled, so its shape was not observed. The Synced condition says why")
 
 		return nil
 	}
@@ -211,6 +220,8 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 				// Secret deleted after one was built leaves that workload running.
 				setAvailable(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonWorkloadNotObserved,
 					"The workload was not reconciled, so its readiness was not observed. The Synced condition says why")
+				setStateIsolated(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonWorkloadNotObserved,
+					"The workload was not reconciled, so its shape was not observed. The Synced condition says why")
 
 				return nil
 			}
@@ -234,6 +245,8 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 			fmt.Sprintf("StatefulSet %q is being replaced to give the workspace a volume of its own; its Pod and its claims are kept", agent.Name))
 		setAvailable(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonWorkloadNotObserved,
 			"The workload was not reconciled, so its readiness was not observed. The Synced condition says why")
+		setStateIsolated(agent, metav1.ConditionFalse, agentv1alpha1.ReasonWorkloadReplacing,
+			fmt.Sprintf("StatefulSet %q is being replaced with one claiming the state and the workspace separately", agent.Name))
 
 		return nil
 	}
@@ -246,7 +259,8 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageSizeImmutable,
 			fmt.Sprintf("The volume was claimed at %s and spec.storageSize now asks for %s, which a StatefulSet's claim template cannot be changed to",
 				claimed.String(), agent.Spec.StorageSize.String()))
-	} else if claimed := claimedStorageSize(statefulSet, workspaceVolumeName); claimed.Cmp(workspaceSize) != 0 {
+	} else if claimed := claimedStorageSize(statefulSet, workspaceVolumeName); hasWorkspaceClaim(statefulSet) &&
+		claimed.Cmp(workspaceSize) != 0 {
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageSizeImmutable,
 			fmt.Sprintf("The workspace's volume was claimed at %s and the spec now asks for %s, which a StatefulSet's claim template cannot be changed to",
 				claimed.String(), workspaceSize.String()))
@@ -260,6 +274,7 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 	}
 
 	setAvailableFromWorkload(agent, statefulSet)
+	setStateIsolatedFromWorkload(agent, statefulSet)
 
 	return nil
 }

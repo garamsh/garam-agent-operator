@@ -276,7 +276,9 @@ func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agent
 
 // replaceSharedShape deletes a StatefulSet whose workspace shares the state
 // claim, leaving its Pod and its claims where they are, and reports whether the
-// one to be created in its place seeds the workspace. A claim template cannot be
+// one to be created in its place seeds the workspace. It deletes one only where
+// MigrateSharedClaims is set; otherwise the StatefulSet is kept in its shape
+// (ADR 0047). A claim template cannot be
 // changed after creation, so a second claim needs a second StatefulSet (ADR
 // 0044).
 //
@@ -299,7 +301,9 @@ func (r *AgentReconciler) replaceSharedShape(ctx context.Context, agent *agentv1
 	if err == nil {
 		// An existing StatefulSet decided its seed when it was created, and its
 		// annotation carries that decision; only a missing one is decided here.
-		if claimTemplate(existing, workspaceVolumeName) != nil {
+		// A shared-shape one is kept as it is unless this operator is told to
+		// replace it, and applyAgent then renders it in that shape (ADR 0047).
+		if hasWorkspaceClaim(existing) || !r.MigrateSharedClaims {
 			return false, nil
 		}
 		// A shared-shape StatefulSet still deleting is deleted again, which
@@ -358,6 +362,13 @@ func claimTemplate(statefulSet *appsv1.StatefulSet, name string) *corev1.Persist
 	}
 
 	return nil
+}
+
+// hasWorkspaceClaim reports whether the StatefulSet claims the workspace
+// separately. One kept in the shared shape does not, so it has no workspace size
+// to compare and its workspace mounts the state claim (ADR 0047).
+func hasWorkspaceClaim(statefulSet *appsv1.StatefulSet) bool {
+	return claimTemplate(statefulSet, workspaceVolumeName) != nil
 }
 
 // claimedStorageSize is the size of the volume the StatefulSet claims from the
@@ -742,7 +753,16 @@ func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet, descri
 	// here: what the workspace runs is the agent's untrusted code. Nor is the
 	// credential's copy — the workspace reads no credential, and every container
 	// mounting it is one more that can.
-	workspace.VolumeMounts = []corev1.VolumeMount{{Name: workspaceVolumeName, MountPath: descriptor.stateMountPath}}
+	//
+	// A StatefulSet kept in the shared shape has no workspace claim, and its
+	// workspace keeps the mount it had, on the state claim: its claim templates
+	// cannot change, and a mount naming a claim it lacks would be refused
+	// (ADR 0047). The Agent reports that shape as not isolated.
+	claim := workspaceVolumeName
+	if !hasWorkspaceClaim(statefulSet) {
+		claim = stateVolumeName
+	}
+	workspace.VolumeMounts = []corev1.VolumeMount{{Name: claim, MountPath: descriptor.stateMountPath}}
 }
 
 // applySeed builds, on a StatefulSet replacing the shared shape, the init

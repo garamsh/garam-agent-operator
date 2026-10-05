@@ -61,7 +61,7 @@ func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
-	var enableLeaderElection, agentAssignmentEpoch, agentInstructionsFile bool
+	var enableLeaderElection, agentAssignmentEpoch, agentInstructionsFile, agentMigrateSharedClaims bool
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
@@ -150,6 +150,12 @@ func main() {
 			"passed as --instructions-file, and leave its ego as its spec declares it. Off by default, which "+
 			"joins the instruction to the ego instead: set it only once the agent image this deployment runs "+
 			"accepts the flag (sherlock v0.1.0 or later), because an image that does not refuses to start on it.")
+	flag.BoolVar(&agentMigrateSharedClaims, "agent-migrate-shared-claims", false,
+		"Replace every agent StatefulSet whose workspace shares the state claim with one claiming them "+
+			"separately, keeping the state claim and copying the workspace onto its own. Off by default: such "+
+			"a StatefulSet keeps its shape, and its Agent reports StateIsolated False, until a person has "+
+			"suspended the agent, copied its state and turned this on (ADR 0047). New agents always get "+
+			"separate claims.")
 	flag.BoolVar(&agentAssignmentEpoch, "agent-assignment-epoch", false,
 		"Pass every agent this operator constructed its assignment epoch on the command line, as "+
 			"--assignment-epoch. Off by default: set it only once the agent image this deployment runs "+
@@ -290,6 +296,7 @@ func main() {
 
 		RenderAssignmentEpoch:  agentAssignmentEpoch,
 		RenderInstructionsFile: agentInstructionsFile,
+		MigrateSharedClaims:    agentMigrateSharedClaims,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)

@@ -24,6 +24,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Available")].status
       name: Available
       type: string
+    - jsonPath: .status.conditions[?(@.type=="StateIsolated")].status
+      name: Isolated
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date

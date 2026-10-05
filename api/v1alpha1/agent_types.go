@@ -423,12 +423,33 @@ const (
 	ReasonPVCChanged = "PVCChanged"
 )
 
+// ConditionStateIsolated is the condition type reporting which shape the
+// agent's workload runs in: whether the agent's state and its workspace are on
+// separate claims, so the code the agent runs cannot reach its state (ADR 0044).
+// False lists an agent still in the shape where the workspace shares the state
+// claim, which this operator replaces only where it is told to (ADR 0047).
+const ConditionStateIsolated = "StateIsolated"
+
+// Reasons for the StateIsolated condition. WorkloadNotObserved and
+// WorkloadReplacing are shared with Synced.
+const (
+	// ReasonSeparateClaims is set when the workload claims the state and the
+	// workspace separately, and only the agent's container mounts the state.
+	ReasonSeparateClaims = "SeparateClaims"
+
+	// ReasonSharedClaim is set when the workload is in the shape where the
+	// workspace mounts the state claim, and this operator is not told to replace
+	// it.
+	ReasonSharedClaim = "SharedClaim"
+)
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 52",message="metadata.name must be 52 characters or fewer, because the Pods of this Agent's workload carry the name with a suffix of up to 11 characters in a label, and a label value stops at 63"
 // +kubebuilder:printcolumn:name="Synced",type=string,JSONPath=`.status.conditions[?(@.type=="Synced")].status`
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Synced")].reason`
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
+// +kubebuilder:printcolumn:name="Isolated",type=string,JSONPath=`.status.conditions[?(@.type=="StateIsolated")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Agent is the Schema for the agents API
