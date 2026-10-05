@@ -228,6 +228,9 @@ func TestRegisterPlacement_AgentNotPlacedUnderTheEpochRefused(t *testing.T) {
 			func(e *env) { delete(e.prover.epochs, agentB) }, http.StatusForbidden, ""},
 		{"garam proves another epoch", agentB, placementBody("pod-1", "", ""),
 			func(e *env) { e.prover.epochs[agentB] = "8" }, http.StatusConflict, "epoch_superseded"},
+		{"garam proves the registration's epoch, not the revision's", agentB,
+			strings.Replace(placementBody("pod-1", "", ""), `"epoch":"7"`, `"epoch":"8"`, 1),
+			func(e *env) { e.prover.epochs[agentB] = "8" }, http.StatusConflict, "epoch_superseded"},
 		{"the registration names another epoch", agentB, strings.Replace(placementBody("pod-1", "", ""), `"epoch":"7"`, `"epoch":"6"`, 1),
 			func(*env) {}, http.StatusConflict, "epoch_superseded"},
 	}
