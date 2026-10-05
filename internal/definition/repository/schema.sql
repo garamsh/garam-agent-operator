@@ -97,10 +97,12 @@ CREATE TABLE IF NOT EXISTS requests (
 -- What controllers reported of each agent. A report raises a field and never lowers it;
 -- applied_revision is set by the runtime's own report, never by a controller's.
 CREATE TABLE IF NOT EXISTS agent_status (
-    agent             text   PRIMARY KEY,
-    observed_revision bigint NOT NULL CHECK (observed_revision >= 1),
-    rendered_revision bigint NOT NULL CHECK (rendered_revision >= 1),
-    applied_revision  bigint
+    agent                 text   PRIMARY KEY,
+    observed_revision     bigint NOT NULL CHECK (observed_revision >= 1),
+    rendered_revision     bigint NOT NULL CHECK (rendered_revision >= 1),
+    applied_revision      bigint,
+    applied_activation_id text,
+    CHECK ((applied_revision IS NULL) = (applied_activation_id IS NULL))
 );
 
 -- A creation's agent names one creation, which a first-certificate request is sent under.
@@ -143,3 +145,26 @@ CREATE TABLE IF NOT EXISTS placements (
 
 -- One current placement per agent: the one it replaces is revoked before it can be stored.
 CREATE UNIQUE INDEX IF NOT EXISTS placements_current ON placements (agent) WHERE revoked_at IS NULL;
+
+-- Every activation request an agent's adapter made, under the identifier the adapter derives, with
+-- what control sends garam for it. The anchor and the reference are fixed when the row is
+-- inserted, so every attempt sends garam the same request; activation_id is null until garam
+-- answers. Tokens are never stored.
+CREATE TABLE IF NOT EXISTS activation_requests (
+    agent                  text   NOT NULL,
+    request_id             text   NOT NULL,
+    epoch                  text   NOT NULL,
+    generation             text   NOT NULL,
+    config_revision        bigint NOT NULL CHECK (config_revision >= 1),
+    placement_pod_uid      text   NOT NULL,
+    replaces_activation_id text   NOT NULL DEFAULT '',
+    operation_ref          text   NOT NULL DEFAULT '',
+    activation_id          text,
+    PRIMARY KEY (agent, request_id)
+);
+
+-- Each agent's most recent activation, current or ended: the next activation's anchor.
+CREATE TABLE IF NOT EXISTS agent_activations (
+    agent                text PRIMARY KEY,
+    latest_activation_id text NOT NULL
+);

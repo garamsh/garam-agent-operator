@@ -9,3 +9,8 @@ import "context"
 func (s *service) RegisterPlacement(ctx context.Context, in PlacementInput) (Placement, bool, error) {
 	return s.repository.RegisterPlacement(ctx, in)
 }
+
+// CurrentPlacement returns the agent's current placement, or ErrNotFound.
+func (s *service) CurrentPlacement(ctx context.Context, agent GRN) (Placement, error) {
+	return s.repository.CurrentPlacement(ctx, agent)
+}

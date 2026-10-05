@@ -60,6 +60,34 @@ type Repository interface {
 	// returns the placement now current for the Pod, and reports whether this call stored it.
 	RegisterPlacement(ctx context.Context, in PlacementInput) (Placement, bool, error)
 
+	// CurrentPlacement returns the agent's current placement, or ErrNotFound.
+	CurrentPlacement(ctx context.Context, agent GRN) (Placement, error)
+
+	// WithAgentLock runs fn while holding the agent's activation lock, which serializes every
+	// activation attempt for the agent across every instance of the service sharing the store.
+	WithAgentLock(ctx context.Context, agent GRN, fn func(context.Context) error) error
+	// InsertActivation stores a unless an activation request is stored under its key, and
+	// returns the one stored either way.
+	InsertActivation(ctx context.Context, a Activation) (Activation, error)
+	// GetActivation returns the activation request stored under the key, or ErrNotFound.
+	GetActivation(ctx context.Context, agent GRN, requestID string) (Activation, error)
+	// RecordActivation records the activation garam answered for the stored request, and makes it
+	// the agent's latest. A request already answered with another is ErrActivationMismatch.
+	RecordActivation(ctx context.Context, agent GRN, requestID, activationID string) error
+	// LatestActivation returns the agent's most recent activation, current or ended, or
+	// ErrNotFound before the first.
+	LatestActivation(ctx context.Context, agent GRN) (string, error)
+	// ActivationOfGeneration returns the activation garam answered for the agent's generation, or
+	// ErrNotFound.
+	ActivationOfGeneration(ctx context.Context, agent GRN, generation string) (string, error)
+	// ConfigureReference returns the operation reference of the configure request that applied
+	// the agent's revision, or ErrNotFound.
+	ConfigureReference(ctx context.Context, agent GRN, revision Revision) (string, error)
+	// RecordRuntimeApplied records the revision the agent's runtime reported effective.
+	RecordRuntimeApplied(ctx context.Context, agent GRN, applied RuntimeApplied) error
+	// GetRuntimeApplied returns what RecordRuntimeApplied last recorded, or ErrNotFound.
+	GetRuntimeApplied(ctx context.Context, agent GRN) (RuntimeApplied, error)
+
 	// ClearInitialCertificate removes agent's stored request when it is still pending and equal
 	// to r, deciding and removing it in one step. Anything else is left as it is.
 	ClearInitialCertificate(ctx context.Context, agent GRN, r CertificateRequest) error

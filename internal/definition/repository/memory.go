@@ -25,6 +25,13 @@ type Memory struct {
 	certificates map[definition.GRN]definition.InitialCertificate
 	// placements holds every placement stored for an agent, by Pod UID, superseded ones too.
 	placements map[definition.GRN]map[string]definition.Placement
+	// locks serializes each agent's activation attempts; activations holds every activation
+	// request by its request id, latest each agent's most recent activation, and applied what its
+	// runtime last reported effective.
+	locks       map[definition.GRN]*sync.Mutex
+	activations map[definition.GRN]map[string]definition.Activation
+	latest      map[definition.GRN]string
+	applied     map[definition.GRN]definition.RuntimeApplied
 }
 
 var _ definition.Repository = (*Memory)(nil)
@@ -48,6 +55,10 @@ func NewMemory() *Memory {
 
 		certificates: map[definition.GRN]definition.InitialCertificate{},
 		placements:   map[definition.GRN]map[string]definition.Placement{},
+		locks:        map[definition.GRN]*sync.Mutex{},
+		activations:  map[definition.GRN]map[string]definition.Activation{},
+		latest:       map[definition.GRN]string{},
+		applied:      map[definition.GRN]definition.RuntimeApplied{},
 	}
 }
 
@@ -297,6 +308,123 @@ func (m *Memory) RegisterPlacement(_ context.Context, in definition.PlacementInp
 	p := definition.Placement{Agent: in.Agent, Controller: in.Controller, Request: in.Request, LeafDER: slices.Clone(in.LeafDER)}
 	stored[p.Request.PodUID] = p
 	return clonePlacement(p), true, nil
+}
+
+func (m *Memory) CurrentPlacement(_ context.Context, agent definition.GRN) (definition.Placement, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.placements[agent] {
+		if !p.Superseded {
+			return clonePlacement(p), nil
+		}
+	}
+	return definition.Placement{}, definition.ErrNotFound
+}
+
+func (m *Memory) WithAgentLock(ctx context.Context, agent definition.GRN, fn func(context.Context) error) error {
+	m.mu.Lock()
+	lock, ok := m.locks[agent]
+	if !ok {
+		lock = &sync.Mutex{}
+		m.locks[agent] = lock
+	}
+	m.mu.Unlock()
+	lock.Lock()
+	defer lock.Unlock()
+	return fn(ctx)
+}
+
+func (m *Memory) InsertActivation(_ context.Context, a definition.Activation) (definition.Activation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stored := m.activations[a.Agent]
+	if stored == nil {
+		stored = map[string]definition.Activation{}
+		m.activations[a.Agent] = stored
+	}
+	if existing, ok := stored[a.Request.RequestID]; ok {
+		return existing, nil
+	}
+	stored[a.Request.RequestID] = a
+	return a, nil
+}
+
+func (m *Memory) GetActivation(_ context.Context, agent definition.GRN, requestID string) (definition.Activation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.activations[agent][requestID]
+	if !ok {
+		return definition.Activation{}, definition.ErrNotFound
+	}
+	return a, nil
+}
+
+func (m *Memory) RecordActivation(_ context.Context, agent definition.GRN, requestID, activationID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.activations[agent][requestID]
+	if !ok {
+		return definition.ErrNotFound
+	}
+	if a.ActivationID != "" && a.ActivationID != activationID {
+		return definition.ErrActivationMismatch
+	}
+	a.ActivationID = activationID
+	m.activations[agent][requestID] = a
+	m.latest[agent] = activationID
+	return nil
+}
+
+func (m *Memory) LatestActivation(_ context.Context, agent definition.GRN) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	latest, ok := m.latest[agent]
+	if !ok {
+		return "", definition.ErrNotFound
+	}
+	return latest, nil
+}
+
+func (m *Memory) ActivationOfGeneration(_ context.Context, agent definition.GRN, generation string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, a := range m.activations[agent] {
+		if a.Request.Generation == generation && a.ActivationID != "" {
+			return a.ActivationID, nil
+		}
+	}
+	return "", definition.ErrNotFound
+}
+
+func (m *Memory) ConfigureReference(_ context.Context, agent definition.GRN, revision definition.Revision) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.requests {
+		if applied, ok := r.Outcome.(definition.Applied); ok && r.Agent == agent && applied.Revision == revision {
+			return r.Binding.OperationRef, nil
+		}
+	}
+	return "", definition.ErrNotFound
+}
+
+func (m *Memory) RecordRuntimeApplied(_ context.Context, agent definition.GRN, applied definition.RuntimeApplied) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.applied[agent] = applied
+	status := m.statuses[agent]
+	status.Applied = &applied.Revision
+	m.statuses[agent] = status
+	return nil
+}
+
+func (m *Memory) GetRuntimeApplied(_ context.Context, agent definition.GRN) (definition.RuntimeApplied, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	applied, ok := m.applied[agent]
+	if !ok {
+		return definition.RuntimeApplied{}, definition.ErrNotFound
+	}
+	return applied, nil
 }
 
 func (m *Memory) appendLocked(d definition.Definition) error {

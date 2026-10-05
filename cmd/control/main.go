@@ -28,6 +28,8 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition/repository"
 	"github.com/garamsh/garam-agent-operator/internal/distribution"
 	"github.com/garamsh/garam-agent-operator/internal/distribution/prover"
+	"github.com/garamsh/garam-agent-operator/internal/execution"
+	executiongaram "github.com/garamsh/garam-agent-operator/internal/execution/garam"
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
@@ -126,6 +128,11 @@ func run(ctx context.Context, o options, databaseURL string) error {
 		PollInterval: feedPollInterval,
 		MaxAgents:    feedMaxAgents,
 		Logger:       slog.Default(),
+	}))
+	api.Handle("/v1/agents/", execution.NewHandler(execution.Config{
+		Definitions: definitions,
+		Garam:       executiongaram.NewGaram(garam),
+		Logger:      slog.Default(),
 	}))
 
 	health := http.NewServeMux()

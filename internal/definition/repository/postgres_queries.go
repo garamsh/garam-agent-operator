@@ -145,4 +145,50 @@ UPDATE placements SET revoked_at = now() WHERE agent = $1 AND revoked_at IS NULL
 INSERT INTO placements (agent, pod_uid, controller, epoch, pvc_uid, token_sha256, previous_pod_uid,
     previous_writer_stopped_sha256, leaf_der)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+
+	currentPlacement = `SELECT ` + placementColumns + ` FROM placements
+WHERE agent = $1 AND revoked_at IS NULL`
+
+	lockAgent   = `SELECT pg_advisory_lock(hashtextextended('activation:' || $1, 0))`
+	unlockAgent = `SELECT pg_advisory_unlock(hashtextextended('activation:' || $1, 0))`
+
+	activationColumns = `request_id, epoch, generation, config_revision, placement_pod_uid,
+    replaces_activation_id, operation_ref, COALESCE(activation_id, '')`
+
+	insertActivation = `
+INSERT INTO activation_requests (agent, request_id, epoch, generation, config_revision, placement_pod_uid,
+    replaces_activation_id, operation_ref)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (agent, request_id) DO UPDATE SET agent = EXCLUDED.agent
+RETURNING ` + activationColumns
+
+	getActivation = `SELECT ` + activationColumns + ` FROM activation_requests
+WHERE agent = $1 AND request_id = $2`
+
+	recordActivation = `
+UPDATE activation_requests SET activation_id = $3
+WHERE agent = $1 AND request_id = $2 AND (activation_id IS NULL OR activation_id = $3)`
+
+	recordLatestActivation = `
+INSERT INTO agent_activations (agent, latest_activation_id) VALUES ($1, $2)
+ON CONFLICT (agent) DO UPDATE SET latest_activation_id = EXCLUDED.latest_activation_id`
+
+	latestActivation = `SELECT latest_activation_id FROM agent_activations WHERE agent = $1`
+
+	activationOfGeneration = `
+SELECT activation_id FROM activation_requests
+WHERE agent = $1 AND generation = $2 AND activation_id IS NOT NULL LIMIT 1`
+
+	configureReference = `
+SELECT operation_ref FROM requests WHERE agent = $1 AND revision = $2 AND outcome = 'applied'`
+
+	recordRuntimeApplied = `
+INSERT INTO agent_status (agent, observed_revision, rendered_revision, applied_revision, applied_activation_id)
+VALUES ($1, $2, $2, $2, $3)
+ON CONFLICT (agent) DO UPDATE SET applied_revision = EXCLUDED.applied_revision,
+    applied_activation_id = EXCLUDED.applied_activation_id`
+
+	getRuntimeApplied = `
+SELECT applied_revision, applied_activation_id FROM agent_status
+WHERE agent = $1 AND applied_revision IS NOT NULL`
 )
