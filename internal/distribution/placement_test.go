@@ -14,6 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// epochSuperseded is the kind a registration under another epoch than garam proves is refused with.
+const epochSuperseded = "epoch_superseded"
+
 // digest is a SHA-256 as the manager writes one, of what.
 func digest(what string) string {
 	sum := sha256.Sum256([]byte(what))
@@ -227,12 +230,12 @@ func TestRegisterPlacement_AgentNotPlacedUnderTheEpochRefused(t *testing.T) {
 		{"garam refuses the agent's proof", agentB, placementBody("pod-1", "", ""),
 			func(e *env) { delete(e.prover.epochs, agentB) }, http.StatusForbidden, ""},
 		{"garam proves another epoch", agentB, placementBody("pod-1", "", ""),
-			func(e *env) { e.prover.epochs[agentB] = "8" }, http.StatusConflict, "epoch_superseded"},
+			func(e *env) { e.prover.epochs[agentB] = "8" }, http.StatusConflict, epochSuperseded},
 		{"garam proves the registration's epoch, not the revision's", agentB,
 			strings.Replace(placementBody("pod-1", "", ""), `"epoch":"7"`, `"epoch":"8"`, 1),
-			func(e *env) { e.prover.epochs[agentB] = "8" }, http.StatusConflict, "epoch_superseded"},
+			func(e *env) { e.prover.epochs[agentB] = "8" }, http.StatusConflict, epochSuperseded},
 		{"the registration names another epoch", agentB, strings.Replace(placementBody("pod-1", "", ""), `"epoch":"7"`, `"epoch":"6"`, 1),
-			func(*env) {}, http.StatusConflict, "epoch_superseded"},
+			func(*env) {}, http.StatusConflict, epochSuperseded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
