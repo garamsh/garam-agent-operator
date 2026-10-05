@@ -63,6 +63,7 @@ func main() {
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
 	var enableLeaderElection, agentAssignmentEpoch, agentInstructionsFile, agentMigrateSharedClaims bool
+	var agentAdapterControl bool
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
@@ -151,6 +152,12 @@ func main() {
 			"passed as --instructions-file, and leave its ego as its spec declares it. Off by default, which "+
 			"joins the instruction to the ego instead: set it only once the agent image this deployment runs "+
 			"accepts the flag (sherlock v0.1.0 or later), because an image that does not refuses to start on it.")
+	flag.BoolVar(&agentAdapterControl, "agent-adapter-control", false,
+		"Give the adapter of every agent the control service created the control service's settings, the "+
+			"placement token's file and the agent's outbox, so it activates through the control service rather "+
+			"than running unfenced. Off by default: set it only once the control service serves activation and "+
+			"agent-adapter-image is garam e81a1e0 or later, because an older adapter refuses to start without "+
+			"the setting this drops (ADR 0049). Requires control-address.")
 	flag.BoolVar(&agentMigrateSharedClaims, "agent-migrate-shared-claims", false,
 		"Replace every agent StatefulSet whose workspace shares the state claim with one claiming them "+
 			"separately, keeping the state claim and copying the workspace onto its own. Off by default: such "+
@@ -286,6 +293,11 @@ func main() {
 			"so garam delivers them no message")
 	}
 
+	if agentAdapterControl && controlAddress == "" {
+		setupLog.Error(errors.New("agent-adapter-control requires control-address"),
+			"Failed to configure agents' adapters")
+		os.Exit(1)
+	}
 	if err := (&controller.AgentReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
@@ -298,6 +310,9 @@ func main() {
 		RenderAssignmentEpoch:  agentAssignmentEpoch,
 		RenderInstructionsFile: agentInstructionsFile,
 		MigrateSharedClaims:    agentMigrateSharedClaims,
+		AdapterControl:         agentAdapterControl,
+		ControlAddress:         controlAddress,
+		ControlRootFile:        controlTrustFile,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)

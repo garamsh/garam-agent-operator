@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"path"
 	"reflect"
 
 	"sigs.k8s.io/yaml"
@@ -349,6 +350,11 @@ func (d agentTypeDescriptor) implemented() bool {
 // memoryPath is the absolute path of the agent's memory store on its state
 // volume.
 func (d agentTypeDescriptor) memoryPath() string { return d.stateMountPath + "/" + d.memoryFile }
+
+// outboxDir is the agent's outbox relative to its state volume: the directory
+// beside the memory store, as sherlock derives it from the memory path
+// (sherlock@44aaa55:internal/gateway/outbox.go:18-26).
+func (d agentTypeDescriptor) outboxDir() string { return path.Dir(d.memoryFile) + "/outbox" }
 
 // configFileIn is where the agent looks for its config file under the
 // configuration directory dir.
