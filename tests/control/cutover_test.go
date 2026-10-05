@@ -11,26 +11,43 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// controllerMachine is the controller's own client of garam's machine listener.
+func controllerMachine() *http.Client {
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		RootCAs:      real.machine.Transport.(*http.Transport).TLSClientConfig.RootCAs,
+		Certificates: []tls.Certificate{real.controller},
+	}}}
+}
+
 // legacyAgent is an agent garam's legacy route creates for the controller: assigned to it, with no
 // definition, so its cutover source is empty values under its assignee.
 func legacyAgent(t *testing.T) string {
 	t.Helper()
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		RootCAs:      real.machine.Transport.(*http.Transport).TLSClientConfig.RootCAs,
-		Certificates: []tls.Certificate{real.controller},
-	}}}
 	var created struct {
 		GRN string `json:"grn"`
 	}
-	require.NoError(t, real.machineCall(client, "/agents", "", nil, http.StatusCreated, &created))
+	require.NoError(t, real.machineCall(controllerMachine(), "/agents", "", nil, http.StatusCreated, &created))
 	require.NotEmpty(t, created.GRN)
 	return created.GRN
+}
+
+// legacyCertificate is the certificate garam's legacy route issues the agent's operator, as the
+// legacy path placed it before any cutover.
+func legacyCertificate(t *testing.T, agent string) tls.Certificate {
+	t.Helper()
+	var issued struct{ CertificatePem, PrivateKeyPem string }
+	require.NoError(t, real.machineCall(controllerMachine(), "/agents/"+agent+"/certificate", "", nil,
+		http.StatusCreated, &issued))
+	pair, err := tls.X509KeyPair([]byte(issued.CertificatePem), []byte(issued.PrivateKeyPem))
+	require.NoError(t, err)
+	return pair
 }
 
 // stageTarget is garam's machine route a stage's reference binds.
@@ -146,6 +163,7 @@ func releasedCutovers(t *testing.T) map[string]string {
 
 func TestCutover_ImportFreezeSwitchReleasesALegacyAgentAgainstGaram(t *testing.T) {
 	agent := legacyAgent(t)
+	pair := legacyCertificate(t, agent)
 	profile := publishProfile(t)
 
 	status, imported := importLegacy(t, agent, profile)
@@ -176,6 +194,23 @@ func TestCutover_ImportFreezeSwitchReleasesALegacyAgentAgainstGaram(t *testing.T
 	require.Equal(t, http.StatusOK, status, switched)
 	assert.Equal(t, "switched", switched["stage"])
 	assert.Equal(t, "1/cutover", releasedCutovers(t)[agent])
+
+	// The released revision 1 is activated under the switch's agent:configure reference: garam takes
+	// the legacy agent's first activation once its switch is recorded.
+	var epoch string
+	const importedEpoch = "SELECT epoch FROM cutover_imports WHERE agent = $1"
+	require.NoError(t, pool.QueryRow(t.Context(), importedEpoch, agent).Scan(&epoch))
+	placed := placedAgent{grn: agent, epoch: epoch, token: name(t, "placement-token"), pair: pair}
+	mustPlace(t, agent, string(requestBody(t, struct {
+		Epoch       string  `json:"epoch"`
+		PodUID      string  `json:"podUid"`
+		PVCUID      string  `json:"pvcUid"`
+		TokenSHA256 string  `json:"tokenSha256"`
+		Previous    *string `json:"previous"`
+	}{epoch, "pod-1", "pvc-1", sha(placed.token), nil})), http.StatusCreated)
+	activation := activationOf(name(t, "activation"), epoch, strings.Repeat("f", 32))
+	activated := postAgent(t, placed, pair, "activations", activation)
+	require.Equal(t, http.StatusCreated, activated.status, activated.raw)
 
 	// After the switch there is no rollback.
 	rollbackID := name(t, "rollback")
