@@ -32,6 +32,8 @@ type Memory struct {
 	activations map[definition.GRN]map[string]definition.Activation
 	latest      map[definition.GRN]string
 	applied     map[definition.GRN]definition.RuntimeApplied
+	// cutovers holds each agent's cutover import.
+	cutovers map[definition.GRN]definition.CutoverImport
 }
 
 var _ definition.Repository = (*Memory)(nil)
@@ -59,6 +61,7 @@ func NewMemory() *Memory {
 		activations:  map[definition.GRN]map[string]definition.Activation{},
 		latest:       map[definition.GRN]string{},
 		applied:      map[definition.GRN]definition.RuntimeApplied{},
+		cutovers:     map[definition.GRN]definition.CutoverImport{},
 	}
 }
 
@@ -153,7 +156,10 @@ func (m *Memory) Desired(_ context.Context, operator string, limit int) (definit
 		}
 		profile := m.profiles[named{org: latest.Organization, name: latest.Profile.Name}][latest.Profile.Version-1]
 		found = append(found, owed{
-			revision: definition.DesiredRevision{Definition: cloneDefinition(latest), Settings: cloneSettings(profile.Settings)},
+			revision: definition.DesiredRevision{
+				Definition: cloneDefinition(latest), Settings: cloneSettings(profile.Settings),
+				Cutover: m.cutovers[agent].Stage == definition.CutoverSwitched,
+			},
 			position: m.positions[agent][len(revisions)-1],
 		})
 	}
@@ -427,6 +433,99 @@ func (m *Memory) GetRuntimeApplied(_ context.Context, agent definition.GRN) (def
 	return applied, nil
 }
 
+func (m *Memory) BeginCutoverImport(
+	_ context.Context, imp definition.CutoverImport, d definition.Definition,
+) (definition.CutoverImport, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if stored, ok := m.cutovers[imp.Agent]; ok {
+		return cloneImport(stored), false, nil
+	}
+	if len(m.definitions[imp.Agent]) > 0 {
+		return definition.CutoverImport{}, false, definition.ErrAlreadyDefined
+	}
+	if err := m.appendLocked(d); err != nil {
+		return definition.CutoverImport{}, false, err
+	}
+	m.cutovers[imp.Agent] = cloneImport(imp)
+	return cloneImport(imp), true, nil
+}
+
+func (m *Memory) GetCutoverImport(_ context.Context, agent definition.GRN) (definition.CutoverImport, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	imp, ok := m.cutovers[agent]
+	if !ok {
+		return definition.CutoverImport{}, definition.ErrNotFound
+	}
+	return cloneImport(imp), nil
+}
+
+// cutoverLocked is the agent's import under importID, or the refusal for its absence or another.
+func (m *Memory) cutoverLocked(agent definition.GRN, importID string) (definition.CutoverImport, error) {
+	imp, ok := m.cutovers[agent]
+	if !ok {
+		return definition.CutoverImport{}, definition.ErrNotFound
+	}
+	if imp.ImportID != importID {
+		return definition.CutoverImport{}, definition.ErrImportOpen
+	}
+	return imp, nil
+}
+
+func (m *Memory) FreezeCutoverImport(_ context.Context, agent definition.GRN, importID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	imp, err := m.cutoverLocked(agent, importID)
+	if err != nil {
+		return err
+	}
+	if imp.Stage != definition.CutoverImported && imp.Stage != definition.CutoverFrozen {
+		return definition.ErrCutoverStage
+	}
+	imp.Stage = definition.CutoverFrozen
+	m.cutovers[agent] = imp
+	return nil
+}
+
+func (m *Memory) SwitchCutoverImport(_ context.Context, agent definition.GRN, importID, configureRef string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	imp, err := m.cutoverLocked(agent, importID)
+	if err != nil {
+		return err
+	}
+	switch imp.Stage {
+	case definition.CutoverSwitched:
+		return nil
+	case definition.CutoverFrozen:
+	default:
+		return definition.ErrCutoverStage
+	}
+	imp.Stage, imp.ConfigureRef = definition.CutoverSwitched, configureRef
+	m.cutovers[agent] = imp
+	m.position++
+	m.definitions[agent][0].Assignment = &definition.Assignment{Operator: imp.Assignee, Epoch: imp.Epoch}
+	m.positions[agent][0] = m.position
+	return nil
+}
+
+func (m *Memory) DiscardCutoverImport(_ context.Context, agent definition.GRN, importID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	imp, err := m.cutoverLocked(agent, importID)
+	if err != nil {
+		return err
+	}
+	if imp.Stage == definition.CutoverSwitched {
+		return definition.ErrReverseMigrationRequired
+	}
+	delete(m.cutovers, agent)
+	delete(m.definitions, agent)
+	delete(m.positions, agent)
+	return nil
+}
+
 func (m *Memory) appendLocked(d definition.Definition) error {
 	revisions := m.definitions[d.Agent]
 	if int(d.Revision) != len(revisions)+1 {
@@ -485,4 +584,11 @@ func cloneCertificate(c definition.InitialCertificate) definition.InitialCertifi
 func clonePlacement(p definition.Placement) definition.Placement {
 	p.LeafDER = slices.Clone(p.LeafDER)
 	return p
+}
+
+func cloneImport(imp definition.CutoverImport) definition.CutoverImport {
+	imp.Values = maps.Clone(imp.Values)
+	imp.Dispositions = maps.Clone(imp.Dispositions)
+	imp.Pins = maps.Clone(imp.Pins)
+	return imp
 }

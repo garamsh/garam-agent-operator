@@ -28,7 +28,14 @@ type desiredAgent struct {
 	Epoch         string        `json:"epoch"`
 	Profile       profile       `json:"profile"`
 	Configuration configuration `json:"configuration"`
+	// Origin is "cutover" for an agent garam recorded as switched from its legacy source, and
+	// absent otherwise: the manager takes such an agent over from the source it was built from
+	// (ADR 0050).
+	Origin string `json:"origin,omitempty"`
 }
+
+// originCutover is the origin of an agent whose revisions began with a cutover import.
+const originCutover = "cutover"
 
 type profile struct {
 	Name             string                      `json:"name"`
@@ -152,7 +159,12 @@ func parseFeedQuery(r *http.Request) (*definition.Position, time.Duration, error
 
 func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 	def, settings := d.Definition, d.Settings
+	origin := ""
+	if d.Cutover {
+		origin = originCutover
+	}
 	return desiredAgent{
+		Origin:   origin,
 		Agent:    string(def.Agent),
 		Revision: def.Revision.String(),
 		Epoch:    def.Assignment.Epoch,

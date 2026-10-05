@@ -19,12 +19,18 @@ type target struct {
 	org       string
 	operation string
 	grn       string
+	// requestTarget, where set, is the one route the authority must be bound to carry.
+	requestTarget string
 }
 
 // authorize introspects the request's authority and checks every field it binds against the
 // request, the body's digest last. It reads nothing out of the body.
 func (s *server) authorize(ctx context.Context, r *http.Request, body []byte, want target) (Binding, error) {
-	header := r.Header.Get("Authorization")
+	return s.authorizeHeader(ctx, r.Header.Get("Authorization"), body, want)
+}
+
+// authorizeHeader is authorize for the authority header carries, as `Garam-Operation <authority>`.
+func (s *server) authorizeHeader(ctx context.Context, header string, body []byte, want target) (Binding, error) {
 	if !strings.HasPrefix(header, authorizationScheme) || len(header) == len(authorizationScheme) {
 		return Binding{}, ErrNoAuthority
 	}
@@ -43,8 +49,10 @@ func (s *server) authorize(ctx context.Context, r *http.Request, body []byte, wa
 		return Binding{}, &MismatchError{Field: "operation"}
 	case want.grn != "" && b.Target != want.grn:
 		return Binding{}, &MismatchError{Field: "target"}
-	case b.Operation == OperationConfigure && b.Assignment == nil:
+	case (b.Operation == OperationConfigure || b.Operation == OperationCutover) && b.Assignment == nil:
 		return Binding{}, &MismatchError{Field: "assignment"}
+	case want.requestTarget != "" && b.RequestTarget != want.requestTarget:
+		return Binding{}, &MismatchError{Field: "request target"}
 	}
 	digest := sha256.Sum256(body)
 	if hex.EncodeToString(digest[:]) != b.BodySHA256 {

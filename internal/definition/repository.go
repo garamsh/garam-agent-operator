@@ -60,6 +60,24 @@ type Repository interface {
 	// returns the placement now current for the Pod, and reports whether this call stored it.
 	RegisterPlacement(ctx context.Context, in PlacementInput) (Placement, bool, error)
 
+	// BeginCutoverImport stores imp and the inactive revision 1 its import makes, d, together,
+	// unless an import is stored for the agent; it returns the import stored either way, and
+	// reports whether this call stored it. An agent with a revision and no import is
+	// ErrAlreadyDefined.
+	BeginCutoverImport(ctx context.Context, imp CutoverImport, d Definition) (CutoverImport, bool, error)
+	// GetCutoverImport returns the agent's cutover import, or ErrNotFound.
+	GetCutoverImport(ctx context.Context, agent GRN) (CutoverImport, error)
+	// FreezeCutoverImport records the import frozen where it is imported or frozen, else
+	// ErrCutoverStage; another import id is ErrImportOpen.
+	FreezeCutoverImport(ctx context.Context, agent GRN, importID string) error
+	// SwitchCutoverImport records the frozen import switched under configureRef, and in the same
+	// step makes its revision 1 active, recorded for the import's assignee and epoch at a new
+	// position. A switched one is answered as it is; an imported one is ErrCutoverStage.
+	SwitchCutoverImport(ctx context.Context, agent GRN, importID, configureRef string) error
+	// DiscardCutoverImport removes an import that is not switched, with its revision 1. A
+	// switched one is ErrReverseMigrationRequired.
+	DiscardCutoverImport(ctx context.Context, agent GRN, importID string) error
+
 	// CurrentPlacement returns the agent's current placement, or ErrNotFound.
 	CurrentPlacement(ctx context.Context, agent GRN) (Placement, error)
 

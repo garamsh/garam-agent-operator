@@ -42,7 +42,7 @@ SELECT $1::text, $2::text, 1, $3::text, $4::bigint, $5::jsonb, (SELECT position 
 	// desired is the latest revision of each agent recorded for an operator, at most $2 of them.
 	desired = `
 SELECT d.agent, d.organization, d.revision, d.profile_name, d.profile_version, d.config, d.assignment_epoch,
-    p.settings
+    p.settings, EXISTS (SELECT 1 FROM cutover_imports c WHERE c.agent = d.agent AND c.stage = 'switched')
 FROM definitions d
 JOIN profiles p ON p.organization = d.organization AND p.name = d.profile_name AND p.version = d.profile_version
 WHERE d.assignment_operator = $1
@@ -191,4 +191,27 @@ ON CONFLICT (agent) DO UPDATE SET applied_revision = EXCLUDED.applied_revision,
 	getRuntimeApplied = `
 SELECT applied_revision, applied_activation_id FROM agent_status
 WHERE agent = $1 AND applied_revision IS NOT NULL`
+
+	cutoverColumns = `organization, import_id, epoch, assignee, source_digest, source_values, dispositions, profile_name,
+    profile_version, pins, stage, configure_ref`
+
+	lockCutover = `SELECT ` + cutoverColumns + ` FROM cutover_imports WHERE agent = $1 FOR UPDATE`
+
+	getCutover = `SELECT ` + cutoverColumns + ` FROM cutover_imports WHERE agent = $1`
+
+	insertCutover = `
+INSERT INTO cutover_imports (agent, organization, import_id, epoch, assignee, source_digest, source_values,
+    dispositions, profile_name, profile_version, pins, stage)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'imported')`
+
+	setCutoverStage = `UPDATE cutover_imports SET stage = $2, configure_ref = $3 WHERE agent = $1`
+
+	activateImportedRevision = `
+WITH next AS (UPDATE positions SET position = position + 1 RETURNING position)
+UPDATE definitions SET assignment_operator = $2, assignment_epoch = $3, position = (SELECT position FROM next)
+WHERE agent = $1 AND revision = 1 AND assignment_operator IS NULL`
+
+	deleteCutover = `DELETE FROM cutover_imports WHERE agent = $1`
+
+	deleteImportedRevisions = `DELETE FROM definitions WHERE agent = $1`
 )
