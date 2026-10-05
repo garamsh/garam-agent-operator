@@ -752,6 +752,113 @@ var _ = Describe("Agent workload", func() {
 		Expect(environmentOf(agentContainer)).To(HaveKeyWithValue(agentTypeSherlock.configHomeVariable, agentTypeSherlock.configMountPath))
 	})
 
+	It("writes garam's reply instruction into an instructions file, leaving the ego the Agent's, once that file is rendered", func() {
+		agentWith := func(name, ego string) {
+			createSecret(credentialsSecretName(name))
+			agent := newAgent(name)
+			agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+			agent.Spec.Ego = ego
+			createAgent(agent)
+		}
+		egoFile := agentTypeSherlock.egoFileIn(agentTypeSherlock.configMountPath)
+		instructionsFile := agentTypeSherlock.instructionsFileIn(agentTypeSherlock.configMountPath)
+
+		By("the control: with the switch off, the instruction is joined to the declared ego and no instructions file is named")
+		joined := "instructions-switch-off"
+		agentWith(joined, testEgo)
+		_, err := reconcileAgentWithAdapter(joined)
+		Expect(err).NotTo(HaveOccurred())
+		pod := statefulSetFor(joined).Spec.Template.Spec
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).
+			To(HaveKeyWithValue(egoContentVariable, testEgo+"\n\n"+agentTypeSherlock.garamReplyInstruction))
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).NotTo(HaveKey(instructionsContentVariable))
+		Expect(containerOf(pod, agentContainerName).Args).NotTo(ContainElement(sherlockInstructionsFlag))
+
+		By("with the switch on, the instruction is the instructions file, and the ego exactly as declared")
+		declared := "instructions-beside-ego"
+		agentWith(declared, testEgo)
+		_, err = reconcileAgentWithInstructions(declared)
+		Expect(err).NotTo(HaveOccurred())
+		pod = statefulSetFor(declared).Spec.Template.Spec
+		written := environmentOf(initContainerOf(pod, configContainerName))
+		Expect(written).To(HaveKeyWithValue(instructionsContentVariable, agentTypeSherlock.garamReplyInstruction))
+		Expect(written).To(HaveKeyWithValue(egoContentVariable, testEgo))
+		Expect(containerOf(pod, agentContainerName).Args).To(Equal([]string{sherlockAgentCommand,
+			sherlockAgentIDFlag, testGRN, sherlockEgoFileFlag, egoFile, sherlockInstructionsFlag, instructionsFile}))
+
+		By("with the switch on and no declared ego, no ego file, so the image's default ego is kept")
+		bare := "instructions-default-ego"
+		agentWith(bare, "")
+		_, err = reconcileAgentWithInstructions(bare)
+		Expect(err).NotTo(HaveOccurred())
+		pod = statefulSetFor(bare).Spec.Template.Spec
+		written = environmentOf(initContainerOf(pod, configContainerName))
+		Expect(written).To(HaveKeyWithValue(instructionsContentVariable, agentTypeSherlock.garamReplyInstruction))
+		Expect(written).NotTo(HaveKey(egoContentVariable))
+		Expect(containerOf(pod, agentContainerName).Args).To(Equal([]string{sherlockAgentCommand,
+			sherlockAgentIDFlag, testGRN, sherlockInstructionsFlag, instructionsFile}))
+
+		By("mounting the file read-only into the agent and into no other container that runs beside it")
+		Expect(containerOf(pod, agentContainerName).VolumeMounts).To(ContainElement(corev1.VolumeMount{
+			Name: configVolumeName, MountPath: agentTypeSherlock.configMountPath, ReadOnly: true}))
+		for _, container := range append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...) {
+			if container.Name == agentContainerName || container.Name == configContainerName {
+				continue
+			}
+			Expect(container.VolumeMounts).NotTo(ContainElement(HaveField("Name", configVolumeName)), container.Name)
+		}
+	})
+
+	It("renders no instructions file where no adapter is placed, whether or not the switch is on", func() {
+		By("the control: an Agent with an identity, with the adapter placed and the switch on")
+		placed := "instructions-adapter-placed"
+		createSecret(credentialsSecretName(placed))
+		withAdapter := newAgent(placed)
+		withAdapter.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(withAdapter)
+		_, err := reconcileAgentWithInstructions(placed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(containerOf(statefulSetFor(placed).Spec.Template.Spec, agentContainerName).Args).
+			To(ContainElement(sherlockInstructionsFlag))
+
+		By("an Agent a user wrote, with no identity, so no adapter, under the same switch")
+		written := "instructions-no-adapter"
+		createSecret(credentialsSecretName(written))
+		withEgo := newAgent(written)
+		withEgo.Spec.Ego = testEgo
+		createAgent(withEgo)
+		_, err = reconcileAgentWithInstructions(written)
+		Expect(err).NotTo(HaveOccurred())
+		pod := statefulSetFor(written).Spec.Template.Spec
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).NotTo(HaveKey(instructionsContentVariable))
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).To(HaveKeyWithValue(egoContentVariable, testEgo))
+		Expect(containerOf(pod, agentContainerName).Args).NotTo(ContainElement(sherlockInstructionsFlag))
+	})
+
+	It("writes the instructions file beside the ego, at the mode the config file takes", func() {
+		dir := GinkgoT().TempDir()
+		command := writeConfigCommand(dir, agentTypeSherlock, true, true)
+		run := exec.Command(command[0], command[1:]...)
+		run.Dir = dir
+		run.Env = append(os.Environ(), configContentVariable+"=tools: {}\n", egoContentVariable+"="+testEgo,
+			instructionsContentVariable+"="+agentTypeSherlock.garamReplyInstruction)
+		output, err := run.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), string(output))
+
+		By("the control: the ego file, holding the ego alone")
+		ego, err := os.ReadFile(agentTypeSherlock.egoFileIn(dir))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(ego)).To(Equal(testEgo))
+
+		By("the instructions file, holding the instruction exactly")
+		instructions, err := os.ReadFile(agentTypeSherlock.instructionsFileIn(dir))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(instructions)).To(Equal(agentTypeSherlock.garamReplyInstruction))
+		info, err := os.Stat(agentTypeSherlock.instructionsFileIn(dir))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
+	})
+
 	It("writes a config file only its owner can read, out of text no pin can turn into a command", func() {
 		dir := GinkgoT().TempDir()
 		// A pin is a string this operator does not read and a console user
@@ -763,7 +870,7 @@ var _ = Describe("Agent workload", func() {
 		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}})
 		Expect(err).NotTo(HaveOccurred())
 
-		command := writeConfigCommand(dir, agentTypeSherlock, false)
+		command := writeConfigCommand(dir, agentTypeSherlock, false, false)
 		run := exec.Command(command[0], command[1:]...)
 		run.Dir = dir
 		run.Env = append(os.Environ(), configContentVariable+"="+file)
@@ -914,7 +1021,7 @@ var _ = Describe("Agent workload", func() {
 		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: newModel("writes-an-ego")})
 		Expect(err).NotTo(HaveOccurred())
 
-		command := writeConfigCommand(dir, agentTypeSherlock, true)
+		command := writeConfigCommand(dir, agentTypeSherlock, true, false)
 		run := exec.Command(command[0], command[1:]...)
 		run.Dir = dir
 		run.Env = append(os.Environ(), configContentVariable+"="+file, egoContentVariable+"="+ego)

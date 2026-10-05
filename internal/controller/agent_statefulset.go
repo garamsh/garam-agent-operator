@@ -111,6 +111,10 @@ const (
 	// container, on the same ground.
 	egoContentVariable = "AGENT_EGO_CONTENT"
 
+	// instructionsContentVariable carries the operator instructions file's text
+	// to the same init container, on the same ground.
+	instructionsContentVariable = "AGENT_INSTRUCTIONS_CONTENT"
+
 	// configFileMask leaves the file readable by its owner and nobody else. The
 	// sherlock descriptor's agent refuses a config file carrying any group or
 	// other bit (sherlock@8218189:docs/architecture/deployment.md:78), so an
@@ -190,20 +194,24 @@ func copyFilesCommand(from, to string) string {
 	return fmt.Sprintf("for f in %s/*; do install -m %s \"$f\" %s/; done", from, credentialsCopyMode, to)
 }
 
-// writeConfigCommand writes the agent's config file into dir, and its ego file
-// where ego is set, at the paths the descriptor names under it, before the agent
-// starts and at a mode only the user that reads them can reach.
+// writeConfigCommand writes the agent's config file into dir, its ego file where
+// ego is set, and its operator instructions file where instructions is set, at
+// the paths the descriptor names under it, before the agent starts and at a mode
+// only the user that reads them can reach.
 //
 // The text travels in the environment and is never part of the command. A pin
 // reaches this operator from a console field it does not read, and a value
 // interpolated into a command is one that can stop being a value — which is the
 // ground ci.md §Security baseline states for a pipeline's inputs, met here at an
 // init container's.
-func writeConfigCommand(dir string, descriptor agentTypeDescriptor, ego bool) []string {
+func writeConfigCommand(dir string, descriptor agentTypeDescriptor, ego, instructions bool) []string {
 	script := fmt.Sprintf("umask %s && %s", configFileMask,
 		writeFileCommand(descriptor.configFileIn(dir), configContentVariable))
 	if ego {
 		script += " && " + writeFileCommand(descriptor.egoFileIn(dir), egoContentVariable)
+	}
+	if instructions {
+		script += " && " + writeFileCommand(descriptor.instructionsFileIn(dir), instructionsContentVariable)
 	}
 
 	return shellCommand(script)
@@ -587,19 +595,38 @@ func (r *AgentReconciler) agentArgumentsFor(agent *agentv1alpha1.Agent,
 	if r.egoFor(agent, descriptor) != "" {
 		args.egoFile = descriptor.egoFileIn(descriptor.configMountPath)
 	}
+	if r.instructionsFor(agent, descriptor) != "" {
+		args.instructionsFile = descriptor.instructionsFileIn(descriptor.configMountPath)
+	}
 
 	return args
 }
 
+// instructionsFor is the text of the operator instructions file an Agent's
+// agent is given: garam's reply instruction wherever the adapter is placed,
+// because only then does a message in garam's envelope arrive, and this operator
+// renders the file at all. The agent composes it between its ego and its own
+// contract and never in place of the ego (ADR 0045). Empty means no file.
+func (r *AgentReconciler) instructionsFor(agent *agentv1alpha1.Agent, descriptor agentTypeDescriptor) string {
+	if !r.RenderInstructionsFile || !r.adapterBuilt(agent) {
+		return ""
+	}
+
+	return descriptor.garamReplyInstruction
+}
+
 // egoFor is the text of the ego file an Agent's agent is given: the ego its
-// spec declares, and garam's reply instruction after it wherever the adapter is
-// placed, because only then does a message in garam's envelope arrive. The spec
-// holds what its author wrote and nothing of this operator's; the instruction is
-// joined here, at rendering. Where the spec declares no ego, the instruction is
-// the whole file, and the file replaces the default ego the agent's image
-// carries (ADR 0041). Empty means no ego file.
+// spec declares, and nothing of this operator's where the reply instruction
+// goes to the instructions file. The spec holds what its author wrote; an empty
+// ego means no ego file, and the agent's image keeps its default ego.
+//
+// Where this operator renders no instructions file, because the deployment's
+// agent image predates the flag, the instruction is joined to the ego wherever
+// the adapter is placed, and where the spec declares no ego it is the whole
+// file and replaces the image's default ego (ADR 0041, kept behind ADR 0045's
+// switch).
 func (r *AgentReconciler) egoFor(agent *agentv1alpha1.Agent, descriptor agentTypeDescriptor) string {
-	if !r.adapterBuilt(agent) {
+	if r.RenderInstructionsFile || !r.adapterBuilt(agent) {
 		return agent.Spec.Ego
 	}
 	if agent.Spec.Ego == "" {
@@ -631,7 +658,9 @@ func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *a
 	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
 	egoText := r.egoFor(agent, descriptor)
 	ego := egoText != ""
-	if len(agent.Spec.Tools.Pins) == 0 && agent.Spec.Model == nil && !ego {
+	instructionsText := r.instructionsFor(agent, descriptor)
+	instructions := instructionsText != ""
+	if len(agent.Spec.Tools.Pins) == 0 && agent.Spec.Model == nil && !ego && !instructions {
 		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
 			return initContainer.Name == configContainerName
 		})
@@ -656,15 +685,20 @@ func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *a
 	// Always, on the ground the credential's init container already carries: the
 	// image is the deployer's and nothing here requires its tag to name one build.
 	config.ImagePullPolicy = corev1.PullAlways
-	config.Command = writeConfigCommand(descriptor.configMountPath, descriptor, ego)
+	config.Command = writeConfigCommand(descriptor.configMountPath, descriptor, ego, instructions)
 	config.Env = []corev1.EnvVar{{Name: configContentVariable, Value: file}}
 	if ego {
 		config.Env = append(config.Env, corev1.EnvVar{Name: egoContentVariable, Value: egoText})
 	}
+	if instructions {
+		config.Env = append(config.Env, corev1.EnvVar{Name: instructionsContentVariable, Value: instructionsText})
+	}
 	config.SecurityContext = containerSecurityContext()
 	config.VolumeMounts = []corev1.VolumeMount{{Name: configVolumeName, MountPath: descriptor.configMountPath}}
 
-	// Read-only, because the agent reads this file and writes nothing back to it.
+	// Read-only, because the agent reads these files and writes nothing back to
+	// them. Only the agent mounts them: the instructions file is no other
+	// container's, and sherlock does not mode-check it.
 	container.VolumeMounts = append(container.VolumeMounts,
 		corev1.VolumeMount{Name: configVolumeName, MountPath: descriptor.configMountPath, ReadOnly: true})
 	container.Env = append(container.Env,
