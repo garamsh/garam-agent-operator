@@ -546,3 +546,36 @@ func TestCutover_GaramsRefusalsPassThroughAndRecordNothing(t *testing.T) {
 		})
 	}
 }
+
+func TestCutover_AnAuthorityBindingNoAssignmentRefused(t *testing.T) {
+	e := newCutoverEnv(t, map[string]string{})
+	body := e.importBody(importID, nil)
+	authority := e.authority(console.OperationCutover, e.cutover.Target(legacy, console.StageRead), importID, body, "read-ref")
+	unassigned := e.introspector.answers[authority]
+	unassigned.binding.Assignment = nil
+	e.introspector.set(authority, unassigned.binding, nil)
+
+	refused := e.post(t, "import", body, authority, "")
+	assert.Equal(t, http.StatusForbidden, refused.status, refused.raw)
+	assert.Contains(t, refused.raw, "assignment")
+	assert.Equal(t, 0, e.cutover.callsTo(console.StageRead))
+
+	// Control: the same authority binding the agent's assignment imports.
+	assert.Equal(t, http.StatusCreated, e.doImport(t, importID, nil).status)
+}
+
+func TestCutover_AFreezeAfterTheSwitchRefusedHere(t *testing.T) {
+	e := newCutoverEnv(t, map[string]string{})
+	require.Equal(t, http.StatusCreated, e.doImport(t, importID, nil).status)
+
+	// Control: an imported agent is frozen, and a repeated freeze is answered.
+	require.Equal(t, http.StatusOK, e.doStage(t, console.StageFreeze, "freeze-1").status)
+	require.Equal(t, http.StatusOK, e.doStage(t, console.StageFreeze, "freeze-2").status)
+	require.Equal(t, http.StatusOK, e.doStage(t, console.StageSwitch, "switch-1").status)
+	freezes := e.cutover.callsTo(console.StageFreeze)
+
+	refused := e.doStage(t, console.StageFreeze, "freeze-3")
+	assert.Equal(t, http.StatusConflict, refused.status, refused.raw)
+	assert.Equal(t, "cutover_stage", refused.kind())
+	assert.Equal(t, freezes, e.cutover.callsTo(console.StageFreeze), "garam was asked to freeze a switched agent")
+}
