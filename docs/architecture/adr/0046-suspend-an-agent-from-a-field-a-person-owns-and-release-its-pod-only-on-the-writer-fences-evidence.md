@@ -36,7 +36,7 @@ Two writers could own the field: a person, or the desired state the renderer and
 
 **Resuming asks the same StatefulSet for its replica again.** Its claim templates are unchanged, so the next `agent-0` binds the claims the last one had, under the same UIDs, with the same credential.
 
-**ADR 0044's replacement is not ordered here.** This decision covers suspending and resuming a StatefulSet of the shape the manager builds. #256 gates that replacement behind a manager flag, and decides how a migration's copy is ordered around it.
+**ADR 0044's replacement is not ordered here.** This decision covers suspending and resuming, whatever the StatefulSet's shape. [ADR 0047](0047-replace-a-shared-claim-statefulset-only-where-the-migration-is-turned-on.md) gates that replacement behind `--agent-migrate-shared-claims`, and its lab order takes the copy through this field before the flag is turned on.
 
 **Status reports it.** The new condition is `Suspended`:
 

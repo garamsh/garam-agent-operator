@@ -86,9 +86,8 @@ The `agent.garam.sh` API group, the `Agent` kind it serves, and the controller t
     - That is admission only: no kubelet runs there, so the mount itself was not observed.
     - Whoever may update `pods/ephemeralcontainers` can therefore read the running agent's state. What they read is a store its writer is still changing, so it is never a copy. ADR 0044's boundary is against the code the agent runs, not against a cluster user holding that right.
   - **A consistent copy needs the agent stopped.** `sherlock` takes one "only from a drained, positively stopped writer": the process exited after its drain and its writer lock is free. `memory.db`, `-wal`, `-shm` and `outbox/` are copied together, a sidecar that is absent stays absent, and the source is never moved or deleted (`sherlock@44aaa55:docs/architecture/deployment.md` §Snapshot and restore). Once stopped, the released `ReadWriteOnce` claim can be mounted by a Job that runs that procedure.
-  - **This operator has no supported stop yet** (#254, `spec.suspended`):
-    - **Scaling the StatefulSet to zero is not a stop.** The reconciler writes `replicas: 1` on every pass.
-    - **Deleting the `Agent` is not a stop either, and it destroys what the agent runs with.** The credential Secret is owned by the `Agent` and goes with it, both where the constructor builds it and where the issuer places it. A managed agent's lost key then meets a 409 rather than a second first certificate (`control.md`). The feed constructs a `Control`-source `Agent` again at once (above), so it does not even stay stopped.
+  - **The supported stop is `spec.suspended`** (ADR 0046). The StatefulSet is asked for no replica, and the writer fence releases the Pod only on evidence. §Copying an agent's state below is the procedure.
+    - **Deleting the `Agent` is still not a stop, and it destroys what the agent runs with.** The credential Secret is owned by the `Agent` and goes with it, both where the constructor builds it and where the issuer places it. A managed agent's lost key then meets a 409 rather than a second first certificate (`control.md`). The feed constructs a `Control`-source `Agent` again at once (above), so it does not even stay stopped.
 - It is given no credential and no tools. The workspace reads no key material, and tools live in the agent and reach the workspace over the contract rather than running beside it.
 - An operator naming no workspace image builds the workload it built before one could be named — no container, and nothing written on the agent — and says so once at startup. That line is the whole of the notice: an agent with no workspace starts, binds its port and reports itself available.
 - The Pod carrying that container is still one a namespace enforcing PodSecurity `restricted` admits. Measured on 2026-09-06 against the Kubernetes 1.36.2 API server the integration layer runs: the Pod this operator builds with the workspace on it was admitted, and the same Pod with `SYS_ADMIN` added to that container was refused, so the standard's capability rule is enforced there and this workload asks for nothing outside it. What that layer cannot say is whether the container starts, binds, or executes anything.
@@ -152,8 +151,10 @@ A consistent copy of an agent's state is taken through `spec.suspended`, and onl
 
 1. **Suspend.** Set `spec.suspended: true` on the `Agent`.
 2. **Wait for both signals.** The copy is taken only once `Suspended` is `True` **and** `WriterFence` is `True` with reason `WriterStopped`, its evidence recorded in `status.writerStopped`. `Suspended` alone says the Pod is gone, and a Pod a person released by hand leaves no evidence.
-3. **Copy.** Copy the `state` claim, `state-<agent>-0`, with Sherlock's procedure, from a Pod of the operator's own that mounts it. Nothing else mounts it while the agent is suspended. The workspace claim is not part of the agent's state.
+3. **Copy.** Copy the `state` claim, `state-<agent>-0`, with Sherlock's procedure, from a Job that mounts the released claim. Nothing else mounts it while the agent is suspended. The workspace claim is not part of the agent's state.
 4. **Resume.** Clear `spec.suspended`. The agent starts again on the same claims and the same credential.
+
+An agent whose StatefulSet still shares one claim is copied the same way before `--agent-migrate-shared-claims` is turned on, in ADR 0047's lab order. Turned on, the replacement runs with no live Pod, and the resume starts the agent on its state claim with the workspace seeded once.
 
 ## Rationale
 
