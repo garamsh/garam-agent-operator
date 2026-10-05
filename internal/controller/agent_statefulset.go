@@ -237,9 +237,26 @@ func seedWorkspaceCommand(from, to, marker string) []string {
 	return shellCommand(script)
 }
 
-// errReplacing reports that the StatefulSet is being replaced, so there is none
-// to reconcile until the old one is gone.
-var errReplacing = errors.New("the statefulset is being replaced")
+var (
+	// errReplacing reports that the StatefulSet is being replaced, so there is
+	// none to reconcile until the old one is gone.
+	errReplacing = errors.New("the statefulset is being replaced")
+
+	// errReplacementDeferred reports that a suspended Agent's StatefulSet still
+	// has the shared shape. It is scaled to no replica and not replaced until
+	// the Agent is resumed (ADR 0046).
+	errReplacementDeferred = errors.New("the statefulset's replacement waits for the agent to be resumed")
+)
+
+// replicasFor is the number of replicas the Agent's workload runs: one, or none
+// while it is suspended.
+func replicasFor(agent *agentv1alpha1.Agent) int32 {
+	if agent.Spec.Suspended {
+		return 0
+	}
+
+	return 1
+}
 
 // reconcileStatefulSet brings the StatefulSet an Agent describes into being, or
 // brings an existing one back to what the Agent's spec says, and returns it as
@@ -252,6 +269,9 @@ func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agent
 	}
 
 	seed, err := r.replaceSharedShape(ctx, agent, statefulSet)
+	if errors.Is(err, errReplacementDeferred) {
+		return statefulSet, err
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -306,6 +326,12 @@ func (r *AgentReconciler) replaceSharedShape(ctx context.Context, agent *agentv1
 		if hasWorkspaceClaim(existing) || !r.MigrateSharedClaims {
 			return false, nil
 		}
+		// Suspension comes first: the shared-shape StatefulSet is only scaled
+		// down, under its Pod's fence, and replaced once the agent is resumed, so
+		// a copy of its state can be taken before the replacement (ADR 0046).
+		if agent.Spec.Suspended {
+			return false, r.suspendSharedShape(ctx, existing, statefulSet)
+		}
 		// A shared-shape StatefulSet still deleting is deleted again, which
 		// changes nothing, and is waited for the same way.
 
@@ -334,6 +360,24 @@ func (r *AgentReconciler) replaceSharedShape(ctx context.Context, agent *agentv1
 	}
 
 	return stateClaimed && !workspaceClaimed, nil
+}
+
+// suspendSharedShape scales a shared-shape StatefulSet to no replica, changing
+// nothing else of it, and leaves it in statefulSet as the cluster now holds it.
+func (r *AgentReconciler) suspendSharedShape(ctx context.Context, existing, statefulSet *appsv1.StatefulSet) error {
+	if existing.Spec.Replicas == nil || *existing.Spec.Replicas != 0 {
+		scaled := existing.DeepCopy()
+		scaled.Spec.Replicas = ptr.To[int32](0)
+		if err := r.Patch(ctx, scaled, client.MergeFrom(existing)); err != nil {
+			return fmt.Errorf("scale the suspended agent's statefulset to no replica: %w", err)
+		}
+		existing = scaled
+		logf.FromContext(ctx).Info("Scaled the suspended agent's StatefulSet to no replica; its replacement waits for the agent to be resumed",
+			"statefulSet", existing.Name)
+	}
+	*statefulSet = *existing
+
+	return errReplacementDeferred
 }
 
 // claimExists reports whether the claim the StatefulSet makes from the template
@@ -437,8 +481,9 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	}
 
 	// The agent's state is a single-writer store, so a second replica is never
-	// correct.
-	statefulSet.Spec.Replicas = ptr.To[int32](1)
+	// correct. A suspended agent has none, and its Pod is released by its writer
+	// fence (ADR 0046).
+	statefulSet.Spec.Replicas = ptr.To(replicasFor(agent))
 
 	// Every Pod the StatefulSet creates carries the writer fence, so a deleted
 	// one is held until its writers are seen to stop (ADR 0042).

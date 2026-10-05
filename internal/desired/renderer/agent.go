@@ -19,6 +19,13 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/desired"
 )
 
+// fieldOwnerName is the field manager every write the renderer makes to an Agent is
+// recorded under, so an Agent's managedFields show which fields it owns: never
+// spec.suspended, which is a person's (ADR 0046).
+const fieldOwnerName = "garam-operator-renderer"
+
+var fieldOwner = client.FieldOwner(fieldOwnerName)
+
 // Agent renders revisions into Agents in one namespace, the one the manager
 // runs in.
 type Agent struct {
@@ -51,7 +58,7 @@ func (a *Agent) Render(ctx context.Context, agent desired.Agent) error {
 			ObjectMeta: metav1.ObjectMeta{Name: agentname.Agent(agent.GRN), Namespace: a.namespace},
 			Spec:       spec,
 		}
-		if err := a.client.Create(ctx, created); err != nil {
+		if err := a.client.Create(ctx, created, fieldOwner); err != nil {
 			return fmt.Errorf("create the agent for %s: %w", agent.GRN, err)
 		}
 
@@ -82,7 +89,7 @@ func (a *Agent) Render(ctx context.Context, agent desired.Agent) error {
 	}
 	// A merge patch names only the fields this writer decides, so a status
 	// written meanwhile does not refuse it.
-	if err := a.client.Patch(ctx, rendered, client.MergeFrom(existing)); err != nil {
+	if err := a.client.Patch(ctx, rendered, client.MergeFrom(existing), fieldOwner); err != nil {
 		return fmt.Errorf("render revision %s into the agent for %s: %w", agent.Revision, agent.GRN, err)
 	}
 

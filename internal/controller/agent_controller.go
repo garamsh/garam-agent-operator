@@ -110,7 +110,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// The fence first: a Pod being deleted is held or released on what it shows,
 	// whatever the spec now asks of the workload.
-	_, unverified, err := r.reconcileFence(ctx, &agent)
+	podGone, unverified, err := r.reconcileFence(ctx, &agent)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -118,6 +118,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err := r.reconcileWorkload(ctx, &agent); err != nil {
 		return ctrl.Result{}, err
 	}
+	setSuspendedFromPod(&agent, podGone)
 	agent.Status.ObservedGeneration = agent.Generation
 
 	if err := r.writeStatus(ctx, &agent, held); err != nil {
@@ -238,6 +239,13 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 	}
 
 	statefulSet, err := r.reconcileStatefulSet(ctx, agent, descriptor)
+	if errors.Is(err, errReplacementDeferred) {
+		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonReplacementDeferred,
+			fmt.Sprintf("StatefulSet %q shares one volume between the agent's state and its workspace. It is scaled to no replica while the agent is suspended, and replaced when spec.suspended is cleared", agent.Name))
+		setAvailableFromWorkload(agent, statefulSet)
+
+		return nil
+	}
 	if errors.Is(err, errReplacing) {
 		// The old StatefulSet's deletion is an event on a StatefulSet this Agent
 		// owns, so it brings this Agent back to create the next one.
