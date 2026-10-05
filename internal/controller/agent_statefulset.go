@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"slices"
@@ -10,9 +11,11 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -63,8 +66,39 @@ const (
 	// only the init container that copies it mounts.
 	placementVolumeName       = "placement"
 	placementSecretVolumeName = "placement-secret"
-	stateVolumeName           = "state"
 	configVolumeName          = "config"
+
+	// stateVolumeName is the claim the agent's state is kept on: its memory store
+	// and the outbox beside it. Only the agent's container mounts it. The name is
+	// the one the claim had when the workspace shared it, so the claim an existing
+	// agent already holds is the one it keeps (ADR 0044).
+	stateVolumeName = "state"
+
+	// workspaceVolumeName is the claim the workspace serves its files from. Only
+	// the workspace's container mounts it, so nothing the agent runs reaches the
+	// agent's state (ADR 0044).
+	workspaceVolumeName = "workspace"
+
+	// seedContainerName is the init container that copies an upgraded agent's
+	// workspace off its state claim onto its own, once. It is built only on a
+	// StatefulSet carrying seedAnnotation.
+	seedContainerName = "workspace-seed"
+
+	// seedAnnotation marks a StatefulSet created in place of one whose workspace
+	// shared the state claim, which is the only kind whose Pod seeds the
+	// workspace. Its value names the claim the seed copies from.
+	seedAnnotation = "agent.garam.sh/workspace-seed"
+
+	// seedStateMountPath and seedWorkspaceMountPath are where the seed container
+	// reads the state claim and writes the workspace claim. They are this
+	// operator's paths for its own script, so they are not the descriptor's.
+	seedStateMountPath     = "/run/garam/seed/state"
+	seedWorkspaceMountPath = "/run/garam/seed/workspace"
+
+	// seededMarker is the file the seed leaves at the root of the workspace
+	// claim once its copy is durable. It is beside the directory the workspace
+	// serves, not in it.
+	seededMarker = ".seeded"
 
 	// configContentVariable carries the file's whole text to the init container
 	// that writes it. It is this operator's name, set on that container and on no
@@ -143,6 +177,11 @@ func copyCredentialsCommand(descriptor agentTypeDescriptor, placement bool) []st
 		script += "; " + copyFilesCommand(placementSecretMountPath, placementMountPath)
 	}
 
+	return shellCommand(script)
+}
+
+// shellCommand runs script in a shell that stops at the first command to fail.
+func shellCommand(script string) []string {
 	return []string{"/bin/sh", "-ec", script}
 }
 
@@ -167,7 +206,7 @@ func writeConfigCommand(dir string, descriptor agentTypeDescriptor, ego bool) []
 		script += " && " + writeFileCommand(descriptor.egoFileIn(dir), egoContentVariable)
 	}
 
-	return []string{"/bin/sh", "-ec", script}
+	return shellCommand(script)
 }
 
 // writeFileCommand is the shell that writes the text variable holds to file.
@@ -175,16 +214,45 @@ func writeFileCommand(file, variable string) string {
 	return fmt.Sprintf("mkdir -p %s && printf '%%s' \"$%s\" > %s", path.Dir(file), variable, file)
 }
 
+// seedWorkspaceCommand copies the workspace directory from, on the state claim,
+// into to, on the workspace claim, unless marker says it was already copied. It
+// copies and never moves, so the source stays where it was. The marker is
+// written only after a sync makes the copy durable, and synced itself, so a stop
+// at any point leaves either a copy that is done or a marker that is absent and a
+// copy that runs again. A state claim with no workspace directory is seeded with
+// nothing.
+func seedWorkspaceCommand(from, to, marker string) []string {
+	script := fmt.Sprintf("if [ ! -e %[3]s ]; then "+
+		"if [ -d %[1]s ]; then mkdir -p %[2]s && cp -a %[1]s/. %[2]s/; fi; "+
+		"sync && : > %[3]s && sync; fi", from, to, marker)
+
+	return shellCommand(script)
+}
+
+// errReplacing reports that the StatefulSet is being replaced, so there is none
+// to reconcile until the old one is gone.
+var errReplacing = errors.New("the statefulset is being replaced")
+
 // reconcileStatefulSet brings the StatefulSet an Agent describes into being, or
 // brings an existing one back to what the Agent's spec says, and returns it as
-// the cluster now holds it.
+// the cluster now holds it. A StatefulSet whose workspace shares the state claim
+// is replaced first, which returns errReplacing until the old one is gone.
 func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agentv1alpha1.Agent,
 	descriptor agentTypeDescriptor) (*appsv1.StatefulSet, error) {
 	statefulSet := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: agent.Namespace},
 	}
 
+	seed, err := r.replaceSharedShape(ctx, agent, statefulSet)
+	if err != nil {
+		return nil, err
+	}
+
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, statefulSet, func() error {
+		if statefulSet.CreationTimestamp.IsZero() && seed {
+			statefulSet.Annotations = map[string]string{seedAnnotation: stateVolumeName}
+		}
+
 		return r.applyAgent(agent, statefulSet, descriptor)
 	})
 	if err != nil {
@@ -198,18 +266,112 @@ func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agent
 	return statefulSet, nil
 }
 
-// claimedStorageSize is the size of the volume the StatefulSet claims for the
-// agent's state, and the zero quantity when it claims none. A claim template
-// cannot be changed after creation, so this is what an Agent's storage size is
-// worth comparing against.
-func claimedStorageSize(statefulSet *appsv1.StatefulSet) resource.Quantity {
-	for _, claim := range statefulSet.Spec.VolumeClaimTemplates {
-		if claim.Name == stateVolumeName {
-			return *claim.Spec.Resources.Requests.Storage()
+// replaceSharedShape deletes a StatefulSet whose workspace shares the state
+// claim, leaving its Pod and its claims where they are, and reports whether the
+// one to be created in its place seeds the workspace. A claim template cannot be
+// changed after creation, so a second claim needs a second StatefulSet (ADR
+// 0044).
+//
+// The old Pod is the only writer of the state claim throughout. Orphaned, it
+// keeps running alone until the new StatefulSet adopts it by its labels and
+// deletes it to roll it, and its writer fence then holds it until its writers
+// are seen to stop (ADR 0042). The new Pod has the old one's name, so it cannot
+// be created while the old one exists, and the state claim is the same claim by
+// name, so the fence reads the claim the old Pod started on.
+//
+// Whether to seed is read off the cluster rather than remembered, so a manager
+// stopped between the delete and the create decides it again the same way: a
+// StatefulSet created where the state claim exists and the workspace claim does
+// not is one replacing the shared shape. A new agent has neither, and a
+// StatefulSet deleted by hand from the separate shape leaves both.
+func (r *AgentReconciler) replaceSharedShape(ctx context.Context, agent *agentv1alpha1.Agent,
+	statefulSet *appsv1.StatefulSet) (seed bool, err error) {
+	existing := &appsv1.StatefulSet{}
+	err = r.Get(ctx, client.ObjectKeyFromObject(statefulSet), existing)
+	if err == nil {
+		// An existing StatefulSet decided its seed when it was created, and its
+		// annotation carries that decision; only a missing one is decided here.
+		if claimTemplate(existing, workspaceVolumeName) != nil {
+			return false, nil
+		}
+		// A shared-shape StatefulSet still deleting is deleted again, which
+		// changes nothing, and is waited for the same way.
+
+		uid := existing.UID
+		err := r.Delete(ctx, existing, client.PropagationPolicy(metav1.DeletePropagationOrphan),
+			client.Preconditions{UID: &uid})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("delete the statefulset its workspace shares a claim in, leaving its pod: %w", err)
+		}
+		logf.FromContext(ctx).Info("Replacing the StatefulSet to give the workspace a claim of its own",
+			"statefulSet", existing.Name)
+
+		return false, errReplacing
+	}
+	if !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("get statefulset: %w", err)
+	}
+
+	stateClaimed, err := r.claimExists(ctx, agent, stateVolumeName)
+	if err != nil {
+		return false, err
+	}
+	workspaceClaimed, err := r.claimExists(ctx, agent, workspaceVolumeName)
+	if err != nil {
+		return false, err
+	}
+
+	return stateClaimed && !workspaceClaimed, nil
+}
+
+// claimExists reports whether the claim the StatefulSet makes from the template
+// called template exists for the Agent's Pod. It reads uncached, as the fence
+// reads claims.
+func (r *AgentReconciler) claimExists(ctx context.Context, agent *agentv1alpha1.Agent, template string) (bool, error) {
+	name := template + "-" + agentPodName(agent)
+	err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: name}, &corev1.PersistentVolumeClaim{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get claim %q: %w", name, err)
+	}
+
+	return true, nil
+}
+
+// claimTemplate is the StatefulSet's claim template called name, nil where it
+// has none.
+func claimTemplate(statefulSet *appsv1.StatefulSet, name string) *corev1.PersistentVolumeClaim {
+	for i := range statefulSet.Spec.VolumeClaimTemplates {
+		if statefulSet.Spec.VolumeClaimTemplates[i].Name == name {
+			return &statefulSet.Spec.VolumeClaimTemplates[i]
 		}
 	}
 
+	return nil
+}
+
+// claimedStorageSize is the size of the volume the StatefulSet claims from the
+// template called name, and the zero quantity when it claims none. A claim
+// template cannot be changed after creation, so this is what an Agent's storage
+// size is worth comparing against.
+func claimedStorageSize(statefulSet *appsv1.StatefulSet, name string) resource.Quantity {
+	if claim := claimTemplate(statefulSet, name); claim != nil {
+		return *claim.Spec.Resources.Requests.Storage()
+	}
+
 	return resource.Quantity{}
+}
+
+// workspaceStorageSize is the size an Agent asks for its workspace's volume:
+// its own where it names one, and its state's where it does not.
+func workspaceStorageSize(agent *agentv1alpha1.Agent) resource.Quantity {
+	if agent.Spec.WorkspaceStorageSize != nil {
+		return *agent.Spec.WorkspaceStorageSize
+	}
+
+	return agent.Spec.StorageSize
 }
 
 // claimedStorageClass is the storage class the StatefulSet claims the agent's
@@ -249,7 +411,10 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 		statefulSet.Labels = labels
 		statefulSet.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		statefulSet.Spec.Template.Labels = labels
-		statefulSet.Spec.VolumeClaimTemplates = []corev1.PersistentVolumeClaim{stateClaim(agent)}
+		statefulSet.Spec.VolumeClaimTemplates = []corev1.PersistentVolumeClaim{
+			claim(stateVolumeName, agent.Spec.StorageSize, agent),
+			claim(workspaceVolumeName, workspaceStorageSize(agent), agent),
+		}
 	}
 
 	// The agent's state is a single-writer store, so a second replica is never
@@ -391,6 +556,7 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	if err := r.applyConfig(agent, statefulSet, container, descriptor); err != nil {
 		return err
 	}
+	applySeed(r.CopyImage, statefulSet)
 	// After the config container, so that the init containers that run to
 	// completion come first; nothing the adapter reads depends on the order.
 	r.applyAdapter(agent, statefulSet, descriptor)
@@ -536,12 +702,43 @@ func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet, descri
 		// tell the workspace what it is.
 		{Name: descriptor.execUserVariable, Value: strconv.Itoa(agentRunAsUser)},
 	}
-	// The agent's container holds this volume too, so the two processes are
-	// kept to disjoint subtrees of it: workspaceDirName is the workspace's, and
-	// nothing but these names keeps them apart. The credential's copy is not
-	// mounted here — the workspace reads no credential, and every container
+	// The workspace's own claim, at the path the agent holds its state claim at,
+	// so the directory it serves keeps its path, and the agent's memory path does
+	// not exist in this container (ADR 0044). The state claim is not mounted
+	// here: what the workspace runs is the agent's untrusted code. Nor is the
+	// credential's copy — the workspace reads no credential, and every container
 	// mounting it is one more that can.
-	workspace.VolumeMounts = []corev1.VolumeMount{{Name: stateVolumeName, MountPath: descriptor.stateMountPath}}
+	workspace.VolumeMounts = []corev1.VolumeMount{{Name: workspaceVolumeName, MountPath: descriptor.stateMountPath}}
+}
+
+// applySeed builds, on a StatefulSet replacing the shared shape, the init
+// container that copies the workspace off the state claim onto the workspace's
+// own, and builds none on any other. It runs before the agent and the workspace
+// start, runs the operator's script alone and never anything the agent runs, and
+// reads the state claim read-only. It stays for the StatefulSet's life: after
+// the first copy the marker makes it a no-op, and taking it out would roll the
+// Pod a second time for nothing (ADR 0044).
+func applySeed(copyImage string, statefulSet *appsv1.StatefulSet) {
+	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
+	if statefulSet.Annotations[seedAnnotation] == "" {
+		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
+			return initContainer.Name == seedContainerName
+		})
+
+		return
+	}
+
+	seed := containerNamed(initContainers, seedContainerName)
+	seed.Image = copyImage
+	// Always, on the ground the credential's init container carries.
+	seed.ImagePullPolicy = corev1.PullAlways
+	seed.Command = seedWorkspaceCommand(seedStateMountPath+"/"+workspaceDirName,
+		seedWorkspaceMountPath+"/"+workspaceDirName, seedWorkspaceMountPath+"/"+seededMarker)
+	seed.SecurityContext = containerSecurityContext()
+	seed.VolumeMounts = []corev1.VolumeMount{
+		{Name: stateVolumeName, MountPath: seedStateMountPath, ReadOnly: true},
+		{Name: workspaceVolumeName, MountPath: seedWorkspaceMountPath},
+	}
 }
 
 // adapterBuilt reports whether an Agent's Pod carries garam's adapter. It needs
@@ -632,14 +829,15 @@ func containerNamed(containers *[]corev1.Container, name string) *corev1.Contain
 	return &(*containers)[len(*containers)-1]
 }
 
-// stateClaim is the claim the agent's state volume is provisioned from.
-func stateClaim(agent *agentv1alpha1.Agent) corev1.PersistentVolumeClaim {
+// claim is the claim template called name, provisioned at size from the
+// storage class the Agent names.
+func claim(name string, size resource.Quantity, agent *agentv1alpha1.Agent) corev1.PersistentVolumeClaim {
 	return corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: stateVolumeName},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{corev1.ResourceStorage: agent.Spec.StorageSize},
+				Requests: corev1.ResourceList{corev1.ResourceStorage: size},
 			},
 			// nil, never "": an empty string asks for no class at all, where an
 			// Agent naming none asks for the cluster's default.

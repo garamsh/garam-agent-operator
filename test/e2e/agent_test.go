@@ -43,6 +43,12 @@ const (
 	// made, not where the kubelet projects the Secret.
 	credentialsMountPath = "/run/sherlock/credentials"
 	stateMountPath       = "/var/lib/sherlock"
+
+	// memoryDir is the directory sherlock keeps its store in, on the agent's
+	// state volume, and workspaceDir the one the workspace serves, on its own.
+	// Both are the operator's paths for the sherlock type, at the same mount.
+	memoryDir    = stateMountPath + "/memory"
+	workspaceDir = stateMountPath + "/workspace"
 )
 
 // keyfileRule is the rule garam's reader applies to a key file, transcribed from
@@ -114,6 +120,12 @@ func agentCondition(agent, conditionType, field string) (string, error) {
 // execInAgent runs a command inside the agent container of the Agent's Pod.
 func execInAgent(args ...string) (string, error) {
 	return kubectlIn(append([]string{"exec", agentPod, "-c", "agent", "--"}, args...)...)
+}
+
+// execInWorkspace runs a command inside the workspace container of the Agent's
+// Pod, which is where the code the agent decides to run executes.
+func execInWorkspace(args ...string) (string, error) {
+	return kubectlIn(append([]string{"exec", agentPod, "-c", "workspace", "--"}, args...)...)
 }
 
 var _ = Describe("Agent workload", Ordered, func() {
@@ -290,6 +302,29 @@ var _ = Describe("Agent workload", Ordered, func() {
 		uid, err := execInAgent("id", "-u")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(strings.TrimSpace(written)).To(Equal("written-by-" + strings.TrimSpace(uid)))
+	})
+
+	It("leaves the agent's memory out of reach of the workspace, whose own directory it can write", func() {
+		waitForAgentPod()
+
+		// The stand-in agent writes no store, so the agent makes the directory
+		// sherlock keeps its store in, and reads it back: without that, the
+		// workspace failing to find it would say nothing.
+		By("making the memory directory on the agent's state volume, from the agent")
+		_, err := execInAgent("sh", "-ec",
+			"mkdir -p "+memoryDir+" && : > "+memoryDir+"/memory.db && test -e "+memoryDir+"/memory.db")
+		Expect(err).NotTo(HaveOccurred(), "the agent cannot make its own memory directory")
+
+		By("the control: the workspace writes the directory it serves")
+		written, err := execInWorkspace("sh", "-ec",
+			"mkdir -p "+workspaceDir+" && echo written > "+workspaceDir+"/probe && cat "+workspaceDir+"/probe")
+		Expect(err).NotTo(HaveOccurred(), "the workspace cannot write its own directory")
+		Expect(strings.TrimSpace(written)).To(Equal("written"))
+
+		By("finding no memory path in the workspace, at the path the agent holds it")
+		absent, err := execInWorkspace("sh", "-c", "if [ -e "+memoryDir+" ]; then echo present; else echo absent; fi")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(strings.TrimSpace(absent)).To(Equal("absent"))
 	})
 
 	It("creates no replacement for a force-deleted Pod until the fence is released on its writers' evidence", func() {

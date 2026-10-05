@@ -41,12 +41,19 @@ type Agent struct {
 	namespace   string
 	image       string
 	storageSize resource.Quantity
+
+	// workspaceStorageSize is nil where the operator names no workspace size,
+	// and the workspace is then claimed at storageSize.
+	workspaceStorageSize *resource.Quantity
 }
 
 // NewAgent returns an Agent constructing into namespace, giving each agent
-// image to run and storageSize to keep its state on.
-func NewAgent(c client.Client, scheme *runtime.Scheme, namespace, image string, storageSize resource.Quantity) *Agent {
-	return &Agent{client: c, scheme: scheme, namespace: namespace, image: image, storageSize: storageSize}
+// image to run, storageSize to keep its state on, and workspaceStorageSize for
+// its workspace where it is not nil.
+func NewAgent(c client.Client, scheme *runtime.Scheme, namespace, image string,
+	storageSize resource.Quantity, workspaceStorageSize *resource.Quantity) *Agent {
+	return &Agent{client: c, scheme: scheme, namespace: namespace, image: image,
+		storageSize: storageSize, workspaceStorageSize: workspaceStorageSize}
 }
 
 // HasCredential reports whether the Secret an agent's workload mounts exists.
@@ -94,6 +101,7 @@ func (a *Agent) ensureAgent(ctx context.Context, definition garam.Definition,
 			Image:                 a.image,
 			CredentialsSecretName: agentname.CredentialsSecret(string(agent)),
 			StorageSize:           a.storageSize,
+			WorkspaceStorageSize:  a.workspaceStorageSize,
 			Tools:                 agentv1alpha1.ToolSet{Pins: definition.Tools.Pins},
 			Identity:              identityOf(agent, epoch),
 		},
