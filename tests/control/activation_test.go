@@ -36,9 +36,13 @@ func placeAgent(t *testing.T) placedAgent {
 	pair := tls.Certificate{Certificate: [][]byte{parsePEM(t, issued.CertificatePem).Raw}, PrivateKey: key}
 
 	token := name(t, "placement-token")
-	body, err := json.Marshal(map[string]any{
-		"epoch": epoch, "podUid": "pod-1", "pvcUid": "pvc-1", "tokenSha256": sha(token), "previous": nil,
-	})
+	body, err := json.Marshal(struct {
+		Epoch       string  `json:"epoch"`
+		PodUID      string  `json:"podUid"`
+		PVCUID      string  `json:"pvcUid"`
+		TokenSHA256 string  `json:"tokenSha256"`
+		Previous    *string `json:"previous"`
+	}{epoch, "pod-1", "pvc-1", sha(token), nil})
 	require.NoError(t, err)
 	mustPlace(t, grn, string(body), http.StatusCreated)
 	return placedAgent{grn: grn, epoch: epoch, token: token, pair: pair}
@@ -76,7 +80,8 @@ func postAgent(t *testing.T, a placedAgent, pair tls.Certificate, route, body st
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	out := agentAnswer{
-		status: resp.StatusCode, contract: resp.Header.Get("Garam-Contract-Version"), body: map[string]any{}, raw: string(raw),
+		status: resp.StatusCode, contract: resp.Header.Get("Garam-Contract-Version"),
+		body: map[string]any{}, raw: string(raw),
 	}
 	if len(raw) > 0 {
 		require.NoError(t, json.Unmarshal(raw, &out.body), string(raw))
@@ -85,7 +90,12 @@ func postAgent(t *testing.T, a placedAgent, pair tls.Certificate, route, body st
 }
 
 func activationOf(requestID, epoch, generation string) string {
-	b, err := json.Marshal(map[string]string{"requestId": requestID, "epoch": epoch, "generation": generation, "configRevision": "1"})
+	b, err := json.Marshal(struct {
+		RequestID      string `json:"requestId"`
+		Epoch          string `json:"epoch"`
+		Generation     string `json:"generation"`
+		ConfigRevision string `json:"configRevision"`
+	}{requestID, epoch, generation, "1"})
 	if err != nil {
 		panic(err)
 	}
@@ -93,10 +103,16 @@ func activationOf(requestID, epoch, generation string) string {
 }
 
 func statusOf(activation, grn, epoch, generation string) string {
-	b, err := json.Marshal(map[string]string{
-		"activationId": activation, "grn": grn, "epoch": epoch, "generation": generation, "configRevision": "1",
-		"state": "serving", "startedAt": "2026-10-05T10:00:00Z", "observedAt": "2026-10-05T10:00:05Z",
-	})
+	b, err := json.Marshal(struct {
+		ActivationID   string `json:"activationId"`
+		GRN            string `json:"grn"`
+		Epoch          string `json:"epoch"`
+		Generation     string `json:"generation"`
+		ConfigRevision string `json:"configRevision"`
+		State          string `json:"state"`
+		StartedAt      string `json:"startedAt"`
+		ObservedAt     string `json:"observedAt"`
+	}{activation, grn, epoch, generation, "1", "serving", "2026-10-05T10:00:00Z", "2026-10-05T10:00:05Z"})
 	if err != nil {
 		panic(err)
 	}
@@ -181,7 +197,11 @@ func recoverCredential(t *testing.T, a placedAgent) tls.Certificate {
 	t.Helper()
 	key, csr := certificateRequestPEM(t)
 	requestID := name(t, "recovery")
-	body, err := json.Marshal(map[string]string{"requestId": requestID, "epoch": a.epoch, "certificateRequestPem": csr})
+	body, err := json.Marshal(struct {
+		RequestID             string `json:"requestId"`
+		Epoch                 string `json:"epoch"`
+		CertificateRequestPEM string `json:"certificateRequestPem"`
+	}{requestID, a.epoch, csr})
 	require.NoError(t, err)
 	authority, _, err := real.mintAuthority("agent:recover", a.grn, requestID, sha(string(body)))
 	require.NoError(t, err)
