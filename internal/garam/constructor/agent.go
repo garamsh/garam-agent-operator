@@ -206,7 +206,7 @@ func (a *Agent) CorrectSpec(ctx context.Context, agent garam.GRN) (bool, error) 
 	if err != nil {
 		return false, fmt.Errorf("get the agent constructed for %s: %w", agent, err)
 	}
-	if constructed.Status.Agent != string(agent) {
+	if constructed.Status.Agent != string(agent) || heldByControl(constructed) {
 		return false, nil
 	}
 
@@ -233,6 +233,26 @@ func (a *Agent) CorrectSpec(ctx context.Context, agent garam.GRN) (bool, error) 
 		return false, fmt.Errorf("correct the spec of the agent constructed for %s: %w", agent, err)
 	}
 	return true, nil
+}
+
+// HeldByControl implements garam.Constructor.
+func (a *Agent) HeldByControl(ctx context.Context, agent garam.GRN) (bool, error) {
+	existing := &agentv1alpha1.Agent{}
+	err := a.client.Get(ctx, client.ObjectKey{Namespace: a.namespace, Name: Name(agent)}, existing)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get the agent constructed for %s: %w", agent, err)
+	}
+
+	return heldByControl(existing), nil
+}
+
+// heldByControl reports whether an Agent's spec names the control service as
+// its source.
+func heldByControl(agent *agentv1alpha1.Agent) bool {
+	return agent.Spec.Identity != nil && agent.Spec.Identity.Source == agentv1alpha1.DesiredSourceControl
 }
 
 // identityOf is the identity an agent is started under: its GRN, and the epoch

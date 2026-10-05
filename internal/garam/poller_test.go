@@ -58,6 +58,10 @@ type recordingConstructor struct {
 	// refusePlacement is what Construct answers instead of placing the
 	// credential, where it is set.
 	refusePlacement error
+
+	// heldByControl is the agents whose Agent the control service holds, as a
+	// cutover leaves it.
+	heldByControl map[garam.GRN]bool
 }
 
 func newRecordingConstructor() *recordingConstructor {
@@ -67,7 +71,15 @@ func newRecordingConstructor() *recordingConstructor {
 		epochs:   map[garam.GRN]int64{},
 		stale:    map[garam.GRN]bool{},
 		declared: map[garam.GRN]garam.ToolSet{},
+
+		heldByControl: map[garam.GRN]bool{},
 	}
+}
+
+func (c *recordingConstructor) HeldByControl(_ context.Context, agent garam.GRN) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.heldByControl[agent], nil
 }
 
 func (c *recordingConstructor) HasCredential(_ context.Context, agent garam.GRN) (bool, error) {
@@ -411,6 +423,37 @@ func TestPollerCorrectsTheImageOfAnAgentItAlreadyBuilt(t *testing.T) {
 	// Nothing was asked of garam for this agent, so the correction is the poller
 	// reaching an agent it already built and not a second construction.
 	g.Expect(certificatesAsked(stub)).To(BeEmpty())
+}
+
+func TestPollerLeavesAloneAnAgentTheControlServiceHoldsThoughGaramListsIt(t *testing.T) {
+	g := NewWithT(t)
+	// Garam omits a cut-over agent from its listing; this double does not, so
+	// the poller's own check is what is tested.
+	cutOver := garam.GRN("grn:acme:default:agent:7c7c7c7c7c7c7c7c")
+	stub := newStubListener(t, answerDefinitionsAndCertificates(`[
+		{"agentGrn": "`+string(claimedAgent)+`", "values": {}, "claim": {"epoch": 1}},
+		{"agentGrn": "`+string(cutOver)+`", "values": {}, "claim": {"epoch": 1}},
+		{"agentGrn": "`+string(unclaimedAgent)+`", "values": {}}
+	]`, ""))
+	constructor := newRecordingConstructor()
+	constructor.stale[claimedAgent] = true
+	constructor.stale[cutOver] = true
+	constructor.heldByControl[cutOver] = true
+	constructor.heldByControl[unclaimedAgent] = true
+
+	runPoller(t, stub, constructor)
+
+	// The control: a garam-source agent garam lists is corrected and constructed.
+	g.Eventually(func() []garam.GRN { return constructor.stillStale() }, pollTimeout).
+		Should(ConsistOf(cutOver))
+	g.Eventually(func() []string { return certificatesAsked(stub) }, pollTimeout).
+		Should(ContainElement(string(claimedAgent)))
+
+	g.Consistently(func() []string { return certificatesAsked(stub) }, 10*pollInterval).
+		ShouldNot(ContainElement(string(cutOver)))
+	g.Expect(constructor.stillStale()).To(ConsistOf(cutOver))
+	g.Expect(constructor.credentials()).NotTo(HaveKey(cutOver))
+	g.Expect(claims(stub)).NotTo(ContainElement(string(unclaimedAgent)))
 }
 
 // TestPollerConstructsAtTheEpochGaramAnswered carries the value a report to

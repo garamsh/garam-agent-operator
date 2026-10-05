@@ -69,13 +69,20 @@ func (a *Agent) Render(ctx context.Context, agent desired.Agent) error {
 	}
 
 	// One source holds a GRN. An Agent constructed from a garam definition, or
-	// written by a person, is not this source's to write.
+	// written by a person, is not this source's to write — except a garam-source
+	// one the control service took over by a cutover, which this render moves to
+	// the control source (#217). The move is one way, which the API server
+	// enforces (ADR 0043), and it is made in the same patch as the render, so no
+	// Agent is ever on the control source with the spec garam's side built.
 	identity := existing.Spec.Identity
-	if identity == nil || identity.GRN != agent.GRN || identity.Source != agentv1alpha1.DesiredSourceControl {
+	cutover := agent.Origin == desired.OriginCutover && identity != nil && identity.GRN == agent.GRN &&
+		identity.Source != agentv1alpha1.DesiredSourceControl
+	if !cutover && (identity == nil || identity.GRN != agent.GRN || identity.Source != agentv1alpha1.DesiredSourceControl) {
 		return desired.ErrNotControlSource
 	}
 
 	rendered := existing.DeepCopy()
+	rendered.Spec.Identity.Source = agentv1alpha1.DesiredSourceControl
 	rendered.Spec.Image = spec.Image
 	rendered.Spec.StorageSize = spec.StorageSize
 	rendered.Spec.StorageClassName = spec.StorageClassName
@@ -101,6 +108,10 @@ func (a *Agent) Render(ctx context.Context, agent desired.Agent) error {
 func (a *Agent) specOf(agent desired.Agent) (agentv1alpha1.AgentSpec, error) {
 	if agent.GRN == "" {
 		return agentv1alpha1.AgentSpec{}, fmt.Errorf("%w: an agent with no GRN", desired.ErrMalformed)
+	}
+	// A closed set (ADR 0050): a value nobody defined is not one to act on.
+	if agent.Origin != "" && agent.Origin != desired.OriginCutover {
+		return agentv1alpha1.AgentSpec{}, fmt.Errorf("%w: origin %q", desired.ErrMalformed, agent.Origin)
 	}
 	storageSize, err := resource.ParseQuantity(agent.Profile.StorageSize)
 	if err != nil {
