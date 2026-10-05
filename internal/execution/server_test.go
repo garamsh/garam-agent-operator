@@ -100,8 +100,10 @@ type garam struct {
 	proveEpoch string
 	wrongGRN   string
 	delay      time.Duration
-	calls      []execution.ActivationCall
-	issued     int
+	// generationAnswer, where set, is the standing introspection answers for a supplied generation.
+	generationAnswer string
+	calls            []execution.ActivationCall
+	issued           int
 }
 
 func newGaram() *garam {
@@ -123,6 +125,8 @@ func (g *garam) Introspect(_ context.Context, grn string, leafPEM []byte, gen st
 		i.ActivationID = g.active.id
 	}
 	switch {
+	case gen != "" && g.generationAnswer != "":
+		i.Generation = g.generationAnswer
 	case gen == "":
 		i.Generation = "not_supplied"
 	case i.ActivationID != "" && g.active.generation == gen:

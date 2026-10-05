@@ -102,6 +102,12 @@ func TestReportStatus_RefusesWhatTheContractRefuses(t *testing.T) {
 			e.garam.set(func(g *garam) { g.assignee = "grn:acme:default:operator:other" })
 		}, valid, http.StatusConflict, kindGenerationNotCurrent},
 		{"an ended activation", func(e *env) { e.garam.end() }, valid, http.StatusConflict, kindGenerationNotCurrent},
+		{"garam answering the generation not current", func(e *env) {
+			e.garam.set(func(g *garam) { g.generationAnswer = "not_current" })
+		}, valid, http.StatusConflict, kindGenerationNotCurrent},
+		{"garam holding another activation of the generation", func(e *env) {
+			e.garam.set(func(g *garam) { g.active = &activation{id: "activation-9", generation: generation} })
+		}, valid, http.StatusConflict, kindGenerationNotCurrent},
 		{"an activation control did not make", func(e *env) {
 			e.garam.set(func(g *garam) { g.active = &activation{id: "activation-9", generation: generation} })
 		}, statusBody("activation-9", generation, "1", "serving"), http.StatusConflict, kindGenerationNotCurrent},

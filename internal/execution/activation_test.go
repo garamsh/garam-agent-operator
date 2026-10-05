@@ -97,7 +97,9 @@ func TestActivate_RefusesWhatTheContractRefuses(t *testing.T) {
 		{"an agent assigned elsewhere", func(_ *testing.T, e *env) {
 			e.garam.set(func(g *garam) { g.assignee = "grn:acme:default:operator:other" })
 		}, activate, http.StatusForbidden, kindPlacementNotCurrent},
-		{"garam's epoch another than the placement's", func(_ *testing.T, e *env) { e.garam.set(func(g *garam) { g.epoch = "8" }) },
+		{"garam's epoch another than the placement's", func(_ *testing.T, e *env) {
+			e.garam.set(func(g *garam) { g.epoch, g.proveEpoch = "8", epoch })
+		},
 			activate, http.StatusConflict, kindEpochSuperseded},
 		{"garam refusing control's authority", func(_ *testing.T, e *env) {
 			e.garam.set(func(g *garam) { g.introspect = execution.ErrNotAuthorized })
@@ -127,7 +129,7 @@ func TestActivate_RefusesWhatTheContractRefuses(t *testing.T) {
 			// answers it unrefused.
 			e.garam.set(func(g *garam) {
 				g.fenced, g.assignee, g.epoch = map[string]bool{}, controller, epoch
-				g.introspect, g.prove, g.activate = nil, nil, nil
+				g.introspect, g.prove, g.activate, g.proveEpoch = nil, nil, nil, ""
 			})
 			accepted := e.activate(t, e.adapter, requestID, generation, "1")
 			assert.Contains(t, []int{http.StatusCreated, http.StatusOK}, accepted.status, accepted.raw)
