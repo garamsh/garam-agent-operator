@@ -1,6 +1,6 @@
 # ADR 0044: Give an agent's state and its workspace separate claims, and replace an existing StatefulSet without losing either
 
-> Status: accepted
+> Status: accepted; the replacement of every shared-shape StatefulSet superseded in part by ADR-0047
 > Date: 2026-10-05
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
