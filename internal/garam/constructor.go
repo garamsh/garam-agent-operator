@@ -43,4 +43,10 @@ type Constructor interface {
 	// An Agent this operator did not construct is left alone: its spec is its
 	// author's.
 	CorrectSpec(ctx context.Context, agent GRN) (bool, error)
+
+	// HeldByControl reports whether the Agent built for agent takes its desired
+	// state from the control service: its spec's source is Control, as a cutover
+	// leaves it (#217). Such an agent is not this side's to claim, correct,
+	// construct or report, whatever garam lists. It reads the spec, never status.
+	HeldByControl(ctx context.Context, agent GRN) (bool, error)
 }

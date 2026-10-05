@@ -30,7 +30,17 @@ type Agent struct {
 
 	Profile       Profile
 	Configuration Configuration
+
+	// Origin is OriginCutover for an agent whose revisions began with a
+	// switched cutover import, and empty for every other (ADR 0050, #217). It is
+	// carried as the wire has it: a value outside that set is the renderer's to
+	// refuse.
+	Origin string
 }
+
+// OriginCutover is the origin of an agent garam recorded as switched from the
+// source it was built from: the manager takes such an agent over (#217).
+const OriginCutover = "cutover"
 
 // Profile is the execution settings of the profile version a revision names.
 type Profile struct {

@@ -33,6 +33,11 @@ func (a *Agent) Observations(ctx context.Context) ([]garam.Observation, error) {
 		if constructed.Status.Agent == "" || constructed.Status.Epoch == 0 {
 			continue
 		}
+		// An agent cut over to the control service is no longer garam's legacy
+		// route's to hear about: its status goes to the control service (#217).
+		if heldByControl(constructed) {
+			continue
+		}
 		observations = append(observations, garam.Observation{
 			Agent:     garam.GRN(constructed.Status.Agent),
 			Epoch:     constructed.Status.Epoch,

@@ -58,6 +58,7 @@ type (
 		Epoch         string            `json:"epoch"`
 		Profile       wireProfile       `json:"profile"`
 		Configuration wireConfiguration `json:"configuration"`
+		Origin        string            `json:"origin"`
 	}
 	wireProfile struct {
 		Name             string                      `json:"name"`
@@ -152,6 +153,7 @@ func (c *Client) Desired(ctx context.Context, after string, wait time.Duration) 
 				},
 				Ego: agent.Configuration.Ego, Tools: agent.Configuration.Tools,
 			},
+			Origin: agent.Origin,
 		})
 	}
 
