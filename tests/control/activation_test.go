@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -249,4 +250,50 @@ func TestActivation_RecoveredLineageRefused(t *testing.T) {
 	next := postAgent(t, a, recovered, "activations", nextBody)
 	assert.Equal(t, http.StatusCreated, next.status, next.raw)
 	assert.NotEqual(t, activation, next.body["activationId"])
+}
+
+// TestActivation_ConcurrentGenerationsAreSerialized has two runtime generations activated at once.
+// One at a time, the second reads the first as its anchor. Revision 1 was reported effective only
+// under the activation before both, so for the second it is pending and is sent under the
+// creation's reference, which garam takes for a first activation alone: 403 (#218, #1167).
+// Unserialized, both would read the same anchor and garam would refuse one as superseded.
+func TestActivation_ConcurrentGenerationsAreSerialized(t *testing.T) {
+	a := placeAgent(t)
+	reported := strings.Repeat("e", 32)
+	first := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), a.epoch, reported))
+	require.Equal(t, http.StatusCreated, first.status, first.raw)
+	activation := first.body["activationId"].(string)
+	require.Equal(t, http.StatusNoContent,
+		postAgent(t, a, a.pair, "runtime-status", statusOf(activation, a.grn, a.epoch, reported)).status)
+
+	kinds := make([]string, 2)
+	statuses := make([]int, 2)
+	var wg sync.WaitGroup
+	for i, generation := range []string{strings.Repeat("1", 32), strings.Repeat("2", 32)} {
+		body := activationOf(name(t, "activation"), a.epoch, generation)
+		wg.Go(func() {
+			answer := postAgent(t, a, a.pair, "activations", body)
+			statuses[i] = answer.status
+			kinds[i], _ = answer.body["kind"].(string)
+		})
+	}
+	wg.Wait()
+	assert.ElementsMatch(t, []int{http.StatusCreated, http.StatusForbidden}, statuses)
+	assert.ElementsMatch(t, []string{"", "not_authorized"}, kinds)
+
+	// The anchors chain: one on the reported activation, the other on the one activated first.
+	rows, err := pool.Query(t.Context(), `SELECT replaces_activation_id, COALESCE(activation_id, '')
+FROM activation_requests WHERE agent = $1 AND generation <> $2`, a.grn, reported)
+	require.NoError(t, err)
+	anchors := map[string]string{}
+	for rows.Next() {
+		var anchor, activated string
+		require.NoError(t, rows.Scan(&anchor, &activated))
+		anchors[anchor] = activated
+	}
+	require.NoError(t, rows.Err())
+	require.Len(t, anchors, 2, "both requests were sent under the same anchor")
+	activatedFirst := anchors[activation]
+	require.NotEmpty(t, activatedFirst)
+	assert.Contains(t, anchors, activatedFirst)
 }
