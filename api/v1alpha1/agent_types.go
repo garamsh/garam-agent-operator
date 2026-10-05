@@ -369,11 +369,6 @@ const (
 	// the workload's volume cannot be changed to.
 	ReasonStorageClassImmutable = "StorageClassImmutable"
 
-	// ReasonReplacementDeferred is set while a suspended Agent's StatefulSet
-	// still shares one claim between the agent's state and its workspace. It
-	// is scaled to no replica and not replaced until suspended is cleared.
-	ReasonReplacementDeferred = "ReplacementDeferred"
-
 	// ReasonTypeUnimplemented is set when the spec names an admitted type the
 	// controller has not yet learned to build. The workload is not built until
 	// a controller version that knows the type is deployed.
