@@ -20,6 +20,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/agentname"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
@@ -45,7 +46,7 @@ const (
 	// between garam and the agent's gateway. It is a native sidecar, an init
 	// container that keeps running, because it has to outlive the agent while
 	// the Pod shuts down (garam@fdfb76d:docs/architecture/adapter.md:28-33).
-	adapterContainerName = "adapter"
+	adapterContainerName = agentname.AdapterContainer
 
 	// adapterCredentialsMountPath is where the adapter reads the agent's
 	// credential. It is this operator's path for garam's process, the same

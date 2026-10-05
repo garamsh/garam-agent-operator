@@ -37,3 +37,35 @@ func CredentialsSecret(grn string) string {
 func CredentialRequestSecret(grn string) string {
 	return Agent(grn) + credentialRequestSecretSuffix
 }
+
+// The names the workload's controller writes onto an agent's objects and the
+// placement registrar reads off them. Both are the manager's, in different
+// domains, so the names sit below both.
+const (
+	// PVCUIDAnnotation records on an agent's Pod the UID of the state claim it
+	// started on, written once by the writer fence (ADR 0042).
+	PVCUIDAnnotation = "agent.garam.sh/pvc-uid"
+
+	// PreviousPodUIDAnnotation and PreviousWriterStoppedAnnotation record on an
+	// agent's placement Secret the Pod the current token's placement replaces,
+	// and the hex SHA-256 over the RFC 8785 canonical JSON of the writer-stopped
+	// evidence its release recorded. They are written in the patch that mints
+	// that token, and absent before the first release.
+	PreviousPodUIDAnnotation        = "agent.garam.sh/previous-pod-uid"
+	PreviousWriterStoppedAnnotation = "agent.garam.sh/previous-writer-stopped-sha256"
+
+	// PlacementTokenKey is the one key of an agent's placement Secret.
+	PlacementTokenKey = "token"
+
+	// AdapterContainer is the name of garam's adapter in an agent's Pod: the
+	// one container that reads the placement token.
+	AdapterContainer = "adapter"
+
+	placementSecretSuffix = "-placement"
+)
+
+// PlacementSecret is what the Secret holding the agent's placement token is
+// called, for the Agent named agent.
+func PlacementSecret(agent string) string {
+	return agent + placementSecretSuffix
+}

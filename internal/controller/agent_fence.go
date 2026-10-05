@@ -3,9 +3,13 @@ package controller
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/gowebpki/jcs"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -15,6 +19,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/agentname"
 )
 
 const (
@@ -32,13 +37,12 @@ const (
 	// pvcUIDAnnotation records on the Pod the UID of the state volume's claim
 	// the first time the controller sees the Pod running. It is fence evidence,
 	// kept on the object the fence holds rather than in the Agent's status,
-	// which the controller does not read back.
-	pvcUIDAnnotation = "agent.garam.sh/pvc-uid"
+	// which the controller does not read back. The placement registrar reads it
+	// too, so the name is agentname's.
+	pvcUIDAnnotation = agentname.PVCUIDAnnotation
 
-	// placementSecretSuffix names the Secret holding an Agent's placement token
-	// after the Agent, and placementTokenKey is its one key.
-	placementSecretSuffix = "-placement"
-	placementTokenKey     = "token"
+	// placementTokenKey is the one key of an Agent's placement Secret.
+	placementTokenKey = agentname.PlacementTokenKey
 
 	// placementTokenBytes is how much randomness a placement token carries.
 	placementTokenBytes = 32
@@ -67,7 +71,7 @@ func stateClaimName(agent *agentv1alpha1.Agent) string {
 
 // placementSecretName is the Secret an Agent's placement token is minted into.
 func placementSecretName(agent *agentv1alpha1.Agent) string {
-	return agent.Name + placementSecretSuffix
+	return agentname.PlacementSecret(agent.Name)
 }
 
 // reconcileFence reads the Agent's Pod and acts on its fence. A running Pod has
@@ -121,9 +125,19 @@ func (r *AgentReconciler) releaseFence(ctx context.Context, agent *agentv1alpha1
 	}
 
 	// The next Pod the StatefulSet creates is the next placement, and it copies
-	// the token at start; minting it here is what makes it that placement's.
+	// the token at start; minting it here is what makes it that placement's. The
+	// placement it replaces, and the digest of the evidence just recorded for
+	// it, are written in the same patch, so the token and the previous placement
+	// the next registration names change together.
 	if r.adapterBuilt(agent) {
-		if err := r.mintPlacementToken(ctx, agent); err != nil {
+		digest, err := writerStoppedDigest(evidence)
+		if err != nil {
+			return err
+		}
+		if err := r.mintPlacementToken(ctx, agent, map[string]string{
+			agentname.PreviousPodUIDAnnotation:        string(pod.UID),
+			agentname.PreviousWriterStoppedAnnotation: digest,
+		}); err != nil {
 			return err
 		}
 	}
@@ -319,6 +333,13 @@ func (r *AgentReconciler) recordPlacement(ctx context.Context, agent *agentv1alp
 // none, before its first Pod is created. Later placements are minted when the
 // previous Pod's fence is released.
 func (r *AgentReconciler) ensurePlacementToken(ctx context.Context, agent *agentv1alpha1.Agent) error {
+	return r.createPlacementToken(ctx, agent, nil)
+}
+
+// createPlacementToken creates the Agent's placement Secret with a new token,
+// annotated with previous, where it does not exist.
+func (r *AgentReconciler) createPlacementToken(ctx context.Context, agent *agentv1alpha1.Agent,
+	previous map[string]string) error {
 	existing := &metav1.PartialObjectMetadata{}
 	existing.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
 	err := r.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: placementSecretName(agent)}, existing)
@@ -334,7 +355,7 @@ func (r *AgentReconciler) ensurePlacementToken(ctx context.Context, agent *agent
 		return err
 	}
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: placementSecretName(agent), Namespace: agent.Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: placementSecretName(agent), Namespace: agent.Namespace, Annotations: previous},
 		Data:       map[string][]byte{placementTokenKey: token},
 	}
 	if err := controllerutil.SetControllerReference(agent, secret, r.Scheme); err != nil {
@@ -348,9 +369,11 @@ func (r *AgentReconciler) ensurePlacementToken(ctx context.Context, agent *agent
 }
 
 // mintPlacementToken replaces the token in the Agent's placement Secret, or
-// creates it, with a new random one. It names no resource version: the token
-// is this controller's alone, and any newer value is as good as this one.
-func (r *AgentReconciler) mintPlacementToken(ctx context.Context, agent *agentv1alpha1.Agent) error {
+// creates it, with a new random one, and records previous on it as its
+// annotations in the same write. It names no resource version: the token is
+// this controller's alone, and any newer value is as good as this one.
+func (r *AgentReconciler) mintPlacementToken(ctx context.Context, agent *agentv1alpha1.Agent,
+	previous map[string]string) error {
 	token, err := newPlacementToken()
 	if err != nil {
 		return err
@@ -359,15 +382,35 @@ func (r *AgentReconciler) mintPlacementToken(ctx context.Context, agent *agentv1
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: placementSecretName(agent), Namespace: agent.Namespace}}
 	minted := secret.DeepCopy()
 	minted.Data = map[string][]byte{placementTokenKey: token}
+	minted.Annotations = previous
 	err = r.Patch(ctx, minted, client.MergeFrom(secret))
 	if apierrors.IsNotFound(err) {
-		return r.ensurePlacementToken(ctx, agent)
+		return r.createPlacementToken(ctx, agent, previous)
 	}
 	if err != nil {
 		return fmt.Errorf("mint the placement token: %w", err)
 	}
 
 	return nil
+}
+
+// writerStoppedDigest is the hex SHA-256 over the RFC 8785 canonical JSON of
+// the writer-stopped evidence, as it is written to status.writerStopped: the
+// form the control service stores for the placement it replaces (#218). The
+// canonical form is github.com/gowebpki/jcs's, the maintained fork of the RFC
+// author's reference implementation.
+func writerStoppedDigest(evidence *agentv1alpha1.WriterStoppedEvidence) (string, error) {
+	written, err := json.Marshal(evidence)
+	if err != nil {
+		return "", fmt.Errorf("encode the writer-stopped evidence: %w", err)
+	}
+	canonical, err := jcs.Transform(written)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize the writer-stopped evidence: %w", err)
+	}
+	sum := sha256.Sum256(canonical)
+
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // newPlacementToken is a random token, hex-encoded so the file holding it is
