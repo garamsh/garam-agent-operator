@@ -1,6 +1,7 @@
 package definition
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strconv"
@@ -321,6 +322,22 @@ var (
 	// as SecretRef states it, which the manager could not render.
 	ErrInvalidSecretRef = errors.New("model key reference is not <secret-name>/<key>")
 
+	// ErrPlacementSuperseded is returned for a placement registration naming a Pod whose
+	// placement was replaced. Nothing revives it: not a repeat, and not a refresh of its leaf.
+	ErrPlacementSuperseded = errors.New("the placement was superseded")
+
+	// ErrPreviousMismatch is returned for a placement registration whose previous placement is
+	// not the one held for the agent, including one naming none while one is held.
+	ErrPreviousMismatch = errors.New("the previous placement is not the one held for the agent")
+
+	// ErrEvidenceMissing is returned for a placement registration replacing the held placement
+	// without the digest of its writer-stopped evidence.
+	ErrEvidenceMissing = errors.New("the replaced placement carries no writer-stopped evidence")
+
+	// ErrPlacementConflict is returned for a registration of the held placement that differs
+	// from how it was registered in anything but the leaf.
+	ErrPlacementConflict = errors.New("the placement was registered differently")
+
 	// ErrIssuanceUndecided is wrapped by an Issuer garam did not answer with a decision. The
 	// certificate request's outcome is unknown, so it stays pending and is sent again unchanged.
 	ErrIssuanceUndecided = errors.New("certificate issuance undecided")
@@ -389,4 +406,86 @@ type IssuanceRefusedError struct {
 
 func (e *IssuanceRefusedError) Error() string {
 	return "garam refused the certificate request: " + e.Kind + ": " + e.Message
+}
+
+// PlacementRequest is a placement as a controller registers it: the Pod, the state claim it
+// started on, the assignment epoch, the digest of the Pod's placement token, and the placement it
+// replaces. Two registrations are of the same placement only when every field is equal.
+type PlacementRequest struct {
+	PodUID      string
+	PVCUID      string
+	Epoch       string
+	TokenSHA256 string
+	// Previous is the zero value for an agent's first placement.
+	Previous PreviousPlacement
+}
+
+// PreviousPlacement is the placement a registration replaces, and the digest of the evidence that
+// its writers stopped.
+type PreviousPlacement struct {
+	PodUID              string
+	WriterStoppedSHA256 string
+}
+
+// PlacementInput registers a placement of agent by controller, whose leaf certificate in that
+// handshake was LeafDER.
+type PlacementInput struct {
+	Agent      GRN
+	Controller string
+	Request    PlacementRequest
+	LeafDER    []byte
+}
+
+// Placement is a stored placement. One per agent is current; every one it replaced is kept,
+// superseded, so that none is registered again.
+type Placement struct {
+	Agent      GRN
+	Controller string
+	Request    PlacementRequest
+	LeafDER    []byte
+	Superseded bool
+}
+
+// PlacementAction is what a registration does to the stored placements.
+type PlacementAction int
+
+const (
+	// PlacementRepeat answers the current placement as stored.
+	PlacementRepeat PlacementAction = iota + 1
+	// PlacementRefresh replaces the current placement's leaf, and nothing else of it.
+	PlacementRefresh
+	// PlacementRegister supersedes the current placement, if any, and makes this one current.
+	PlacementRegister
+)
+
+// DecidePlacement decides a registration against the agent's current placement and the stored
+// placement of the same Pod, either nil where there is none. Both stores apply it inside the one
+// step that reads what it is given, so a registration is decided against what it changes.
+func DecidePlacement(current, same *Placement, in PlacementInput) (PlacementAction, error) {
+	if same != nil {
+		if same.Superseded {
+			return 0, ErrPlacementSuperseded
+		}
+		if same.Request != in.Request || same.Controller != in.Controller {
+			return 0, ErrPlacementConflict
+		}
+		if bytes.Equal(same.LeafDER, in.LeafDER) {
+			return PlacementRepeat, nil
+		}
+		return PlacementRefresh, nil
+	}
+	previous := in.Request.Previous
+	if previous == (PreviousPlacement{}) {
+		if current != nil {
+			return 0, ErrPreviousMismatch
+		}
+		return PlacementRegister, nil
+	}
+	if current == nil || current.Request.PodUID != previous.PodUID {
+		return 0, ErrPreviousMismatch
+	}
+	if previous.WriterStoppedSHA256 == "" {
+		return 0, ErrEvidenceMissing
+	}
+	return PlacementRegister, nil
 }

@@ -74,26 +74,8 @@ func (s *server) requestCertificate(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	latest, err := s.definitions.GetDefinition(r.Context(), definition.GRN(agent))
-	if err != nil {
+	if err := s.provePlacedAt(r, c, agent, in.Epoch); err != nil {
 		s.respondError(w, err)
-		return
-	}
-	if latest.Assignment == nil || latest.Assignment.Operator != c.grn {
-		s.respondError(w, errNotPlaced)
-		return
-	}
-	proved, err := s.provedEpoch(r.Context(), c, agent)
-	if errors.Is(err, ErrNotProved) {
-		s.respondError(w, errNotPlaced)
-		return
-	}
-	if err != nil {
-		s.respondError(w, err)
-		return
-	}
-	if proved != in.Epoch || proved != latest.Assignment.Epoch {
-		s.respondError(w, errEpochSuperseded)
 		return
 	}
 	stored, first, err := s.definitions.RequestInitialCertificate(r.Context(), definition.InitialCertificateInput{

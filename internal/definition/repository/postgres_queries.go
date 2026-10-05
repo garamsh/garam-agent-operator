@@ -125,4 +125,24 @@ WHERE agent = $1`
 	clearCertificate = `
 DELETE FROM initial_certificates
 WHERE agent = $1 AND state = 'pending' AND request_id = $2 AND epoch = $3 AND certificate_request_pem = $4`
+
+	placementColumns = `controller, epoch, pvc_uid, token_sha256, previous_pod_uid, previous_writer_stopped_sha256,
+    leaf_der, revoked_at IS NOT NULL, pod_uid`
+
+	lockCurrentPlacement = `SELECT ` + placementColumns + ` FROM placements
+WHERE agent = $1 AND revoked_at IS NULL FOR UPDATE`
+
+	lockPodPlacement = `SELECT ` + placementColumns + ` FROM placements
+WHERE agent = $1 AND pod_uid = $2 FOR UPDATE`
+
+	refreshPlacement = `
+UPDATE placements SET leaf_der = $3 WHERE agent = $1 AND pod_uid = $2 AND revoked_at IS NULL`
+
+	revokePlacement = `
+UPDATE placements SET revoked_at = now() WHERE agent = $1 AND revoked_at IS NULL`
+
+	insertPlacement = `
+INSERT INTO placements (agent, pod_uid, controller, epoch, pvc_uid, token_sha256, previous_pod_uid,
+    previous_writer_stopped_sha256, leaf_der)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 )

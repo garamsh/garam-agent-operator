@@ -13,6 +13,7 @@ type Service interface {
 	Desired(ctx context.Context, operator string, limit int) (DesiredPage, error)
 	RecordStatus(ctx context.Context, agent GRN, observed, rendered Revision) (Status, error)
 	RequestInitialCertificate(ctx context.Context, in InitialCertificateInput) (c InitialCertificate, first bool, err error)
+	RegisterPlacement(ctx context.Context, in PlacementInput) (p Placement, first bool, err error)
 }
 
 type service struct {

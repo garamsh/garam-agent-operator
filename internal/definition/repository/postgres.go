@@ -543,6 +543,95 @@ func scanCertificate(row pgx.Row, agent definition.GRN) (definition.InitialCerti
 	return c, nil
 }
 
+// placementAttempts bounds how often a registration is decided again after losing a race to
+// another one for the same agent, which a unique violation reports.
+const placementAttempts = 3
+
+func (p *Postgres) RegisterPlacement(ctx context.Context, in definition.PlacementInput) (definition.Placement, bool, error) {
+	for attempt := 1; ; attempt++ {
+		placement, stored, err := p.registerPlacement(ctx, in)
+		// Another registration for the agent committed between this one's reads and its write:
+		// the decision is taken again, against what that one left.
+		if isUniqueViolation(err) && attempt < placementAttempts {
+			continue
+		}
+		if isPlacementRefusal(err) {
+			return definition.Placement{}, false, err
+		}
+		if err != nil {
+			return definition.Placement{}, false, storeError("register placement", err)
+		}
+		return placement, stored, nil
+	}
+}
+
+func (p *Postgres) registerPlacement(ctx context.Context, in definition.PlacementInput) (definition.Placement, bool, error) {
+	var (
+		placement definition.Placement
+		stored    bool
+	)
+	err := p.inTx(ctx, func(tx pgx.Tx) error {
+		current, err := scanPlacement(tx.QueryRow(ctx, lockCurrentPlacement, string(in.Agent)), in.Agent)
+		if err != nil {
+			return err
+		}
+		same, err := scanPlacement(tx.QueryRow(ctx, lockPodPlacement, string(in.Agent), in.Request.PodUID), in.Agent)
+		if err != nil {
+			return err
+		}
+		action, err := definition.DecidePlacement(current, same, in)
+		if err != nil {
+			return err
+		}
+		switch action {
+		case definition.PlacementRepeat:
+			placement = *same
+			return nil
+		case definition.PlacementRefresh:
+			if _, err := tx.Exec(ctx, refreshPlacement, string(in.Agent), in.Request.PodUID, in.LeafDER); err != nil {
+				return err
+			}
+			placement, placement.LeafDER = *same, in.LeafDER
+			return nil
+		}
+		// Revoked first: the index admits one current placement per agent.
+		if _, err := tx.Exec(ctx, revokePlacement, string(in.Agent)); err != nil {
+			return err
+		}
+		r := in.Request
+		if _, err := tx.Exec(ctx, insertPlacement, string(in.Agent), r.PodUID, in.Controller, r.Epoch, r.PVCUID,
+			r.TokenSHA256, r.Previous.PodUID, r.Previous.WriterStoppedSHA256, in.LeafDER); err != nil {
+			return err
+		}
+		placement = definition.Placement{Agent: in.Agent, Controller: in.Controller, Request: r, LeafDER: in.LeafDER}
+		stored = true
+		return nil
+	})
+	return placement, stored, err
+}
+
+// isPlacementRefusal reports whether err is DecidePlacement's refusal, which is the caller's to
+// answer and is returned as it is.
+func isPlacementRefusal(err error) bool {
+	return errors.Is(err, definition.ErrPlacementSuperseded) || errors.Is(err, definition.ErrPreviousMismatch) ||
+		errors.Is(err, definition.ErrEvidenceMissing) || errors.Is(err, definition.ErrPlacementConflict)
+}
+
+// scanPlacement reads one placements row, nil where there is none.
+func scanPlacement(row pgx.Row, agent definition.GRN) (*definition.Placement, error) {
+	p := definition.Placement{Agent: agent}
+	r := &p.Request
+	err := row.Scan(&p.Controller, &r.Epoch, &r.PVCUID, &r.TokenSHA256, &r.Previous.PodUID,
+		&r.Previous.WriterStoppedSHA256, &p.LeafDER, &p.Superseded, &r.PodUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 // inTx runs fn in one transaction, committed when fn returns nil.
 func (p *Postgres) inTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	return pgx.BeginFunc(ctx, p.pool, fn)

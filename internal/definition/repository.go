@@ -54,6 +54,12 @@ type Repository interface {
 	IssueInitialCertificate(
 		ctx context.Context, agent GRN, r CertificateRequest, issued IssuedCertificate,
 	) (InitialCertificate, bool, error)
+	// RegisterPlacement decides in with DecidePlacement against the agent's current placement and
+	// the stored placement of the same Pod, and applies the decision in the same step: a new
+	// placement supersedes the current one, revoking its token digest, before it is stored. It
+	// returns the placement now current for the Pod, and reports whether this call stored it.
+	RegisterPlacement(ctx context.Context, in PlacementInput) (Placement, bool, error)
+
 	// ClearInitialCertificate removes agent's stored request when it is still pending and equal
 	// to r, deciding and removing it in one step. Anything else is left as it is.
 	ClearInitialCertificate(ctx context.Context, agent GRN, r CertificateRequest) error
