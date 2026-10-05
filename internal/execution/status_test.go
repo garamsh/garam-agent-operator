@@ -49,7 +49,7 @@ func (e *env) applied(t *testing.T) (definition.RuntimeApplied, bool) {
 
 func TestReportStatus_AcceptsTheActivatedGenerationAndRecordsWhatItServes(t *testing.T) {
 	e := activated(t)
-	body := statusBody("activation-1", generation, "1", "serving")
+	body := statusBody(firstActivation, generation, "1", "serving")
 
 	for range 2 {
 		accepted := e.report(t, e.adapter, body)
@@ -58,15 +58,15 @@ func TestReportStatus_AcceptsTheActivatedGenerationAndRecordsWhatItServes(t *tes
 	}
 	applied, ok := e.applied(t)
 	require.True(t, ok)
-	assert.Equal(t, definition.RuntimeApplied{Revision: 1, ActivationID: "activation-1"}, applied)
+	assert.Equal(t, definition.RuntimeApplied{Revision: 1, ActivationID: firstActivation}, applied)
 	assert.Equal(t, 1, e.garam.callCount(), "a report activated something")
 }
 
 func TestReportStatus_AnUnknownRevisionIsNoEvidence(t *testing.T) {
 	for name, body := range map[string]string{
-		"an empty revision":  statusBody("activation-1", generation, "", "serving"),
-		"a draining runtime": statusBody("activation-1", generation, "1", "draining"),
-		"a revision unknown": statusBody("activation-1", generation, "9", "serving"),
+		"an empty revision":  statusBody(firstActivation, generation, "", "serving"),
+		"a draining runtime": statusBody(firstActivation, generation, "1", "draining"),
+		"a revision unknown": statusBody(firstActivation, generation, "9", "serving"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := activated(t)
@@ -76,7 +76,7 @@ func TestReportStatus_AnUnknownRevisionIsNoEvidence(t *testing.T) {
 			assert.False(t, ok, "the revision was recorded as applied")
 
 			// Control: a serving runtime reporting a revision the agent has is recorded.
-			e.report(t, e.adapter, statusBody("activation-1", generation, "1", "serving"))
+			e.report(t, e.adapter, statusBody(firstActivation, generation, "1", "serving"))
 			_, ok = e.applied(t)
 			assert.True(t, ok)
 		})
@@ -84,7 +84,7 @@ func TestReportStatus_AnUnknownRevisionIsNoEvidence(t *testing.T) {
 }
 
 func TestReportStatus_RefusesWhatTheContractRefuses(t *testing.T) {
-	valid := statusBody("activation-1", generation, "1", "serving")
+	valid := statusBody(firstActivation, generation, "1", "serving")
 	tests := []struct {
 		name   string
 		setup  func(e *env)
@@ -92,7 +92,7 @@ func TestReportStatus_RefusesWhatTheContractRefuses(t *testing.T) {
 		status int
 		kind   string
 	}{
-		{"another generation than the active one", nil, statusBody("activation-1", strings.Repeat("b", 32), "1", "serving"),
+		{"another generation than the active one", nil, statusBody(firstActivation, strings.Repeat("b", 32), "1", "serving"),
 			http.StatusConflict, kindGenerationNotCurrent},
 		{"another activation than the active one", nil, statusBody("activation-9", generation, "1", "serving"),
 			http.StatusConflict, kindGenerationNotCurrent},
@@ -102,6 +102,9 @@ func TestReportStatus_RefusesWhatTheContractRefuses(t *testing.T) {
 			e.garam.set(func(g *garam) { g.assignee = "grn:acme:default:operator:other" })
 		}, valid, http.StatusConflict, kindGenerationNotCurrent},
 		{"an ended activation", func(e *env) { e.garam.end() }, valid, http.StatusConflict, kindGenerationNotCurrent},
+		{"an activation control did not make", func(e *env) {
+			e.garam.set(func(g *garam) { g.active = &activation{id: "activation-9", generation: generation} })
+		}, statusBody("activation-9", generation, "1", "serving"), http.StatusConflict, kindGenerationNotCurrent},
 		{"a fenced credential", func(e *env) { e.garam.set(func(g *garam) { g.fenced[string(e.leafPEM)] = true }) }, valid,
 			http.StatusForbidden, kindCredentialFenced},
 		{"garam refusing control's authority", func(e *env) {
@@ -111,7 +114,7 @@ func TestReportStatus_RefusesWhatTheContractRefuses(t *testing.T) {
 			http.StatusServiceUnavailable, kindUndecided},
 		{"another agent named in the body", nil, strings.Replace(valid, agent, "grn:acme:default:agent:other", 1),
 			http.StatusBadRequest, kindInvalidRequest},
-		{"a state the runtime does not report", nil, statusBody("activation-1", generation, "1", "stopped"),
+		{"a state the runtime does not report", nil, statusBody(firstActivation, generation, "1", "stopped"),
 			http.StatusBadRequest, kindInvalidRequest},
 	}
 	for _, tt := range tests {
@@ -135,11 +138,11 @@ func TestReportStatus_RefusesWhatTheContractRefuses(t *testing.T) {
 
 func TestReportStatus_NeverActivatesAnything(t *testing.T) {
 	e := newEnv(t)
-	refused := e.report(t, e.adapter, statusBody("activation-1", generation, "1", "serving"))
+	refused := e.report(t, e.adapter, statusBody(firstActivation, generation, "1", "serving"))
 	assert.Equal(t, http.StatusConflict, refused.status, refused.raw)
 	assert.Equal(t, 0, e.garam.callCount())
 
 	// Control: once activated, the same report is accepted.
 	require.Equal(t, http.StatusCreated, e.activate(t, e.adapter, requestID, generation, "1").status)
-	assert.Equal(t, http.StatusNoContent, e.report(t, e.adapter, statusBody("activation-1", generation, "1", "serving")).status)
+	assert.Equal(t, http.StatusNoContent, e.report(t, e.adapter, statusBody(firstActivation, generation, "1", "serving")).status)
 }

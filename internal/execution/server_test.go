@@ -46,6 +46,9 @@ const (
 	kindGenerationNotCurrent = "generation_not_current"
 	kindUndecided            = "undecided"
 
+	// firstActivation is the activation the garam double makes first.
+	firstActivation = "activation-1"
+
 	// keyConfigRevision and keyEpoch are members of both routes' bodies.
 	keyConfigRevision = "configRevision"
 	keyEpoch          = "epoch"
@@ -92,8 +95,13 @@ type garam struct {
 	introspect  error
 	prove       error
 	activate    error
-	calls       []execution.ActivationCall
-	issued      int
+	// proveEpoch, where set, is the epoch the controller proof names; wrongGRN, where set, is the
+	// agent garam's activation answer names; delay holds every activation that long.
+	proveEpoch string
+	wrongGRN   string
+	delay      time.Duration
+	calls      []execution.ActivationCall
+	issued     int
 }
 
 func newGaram() *garam {
@@ -131,12 +139,23 @@ func (g *garam) ProveController(_ context.Context, c string, _ []byte, grn strin
 	if g.prove != nil {
 		return execution.ControllerProof{}, g.prove
 	}
-	return execution.ControllerProof{Operator: c, Agent: grn, Epoch: g.epoch}, nil
+	proved := g.epoch
+	if g.proveEpoch != "" {
+		proved = g.proveEpoch
+	}
+	return execution.ControllerProof{Operator: c, Agent: grn, Epoch: proved}, nil
 }
 
 func (g *garam) Activate(_ context.Context, grn string, call execution.ActivationCall) (execution.Activation, bool, error) {
 	g.mu.Lock()
+	delay := g.delay
+	g.mu.Unlock()
+	time.Sleep(delay)
+	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.wrongGRN != "" {
+		grn = g.wrongGRN
+	}
 	g.calls = append(g.calls, call)
 	if g.activate != nil {
 		return execution.Activation{}, false, g.activate

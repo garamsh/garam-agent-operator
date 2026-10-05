@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,14 +23,14 @@ func TestActivate_ActivatesAndRemintsTheSameActivationOnRetry(t *testing.T) {
 	require.Equal(t, http.StatusCreated, first.status, first.raw)
 	assert.Equal(t, execution.Contract, first.contract)
 	assert.Equal(t, map[string]any{
-		"activationId": "activation-1", "tokenVersion": float64(1), "token": "token-activation-1-1",
+		"activationId": firstActivation, "tokenVersion": float64(1), "token": "token-activation-1-1",
 		"grn": agent, keyEpoch: epoch, keyGeneration: generation, keyConfigRevision: "1",
 	}, first.body)
 
 	// The adapter's retry after a lost answer: the same activation, a newer token.
 	retry := e.activate(t, e.adapter, requestID, generation, "1")
 	require.Equal(t, http.StatusOK, retry.status, retry.raw)
-	assert.Equal(t, "activation-1", retry.body["activationId"])
+	assert.Equal(t, firstActivation, retry.body["activationId"])
 	assert.Equal(t, float64(2), retry.body["tokenVersion"])
 
 	// Both attempts sent garam the same request, the first activation under the creation's reference.
@@ -177,7 +179,7 @@ func TestActivate_SendsTheReferenceOfTheRevisionItRuns(t *testing.T) {
 	second := strings.Repeat("b", 32)
 	require.Equal(t, http.StatusCreated, e.activate(t, e.adapter, "request-2", second, "2").status)
 	assert.Equal(t, "configure-ref-2", e.garam.calls[1].OperationRef)
-	assert.Equal(t, "activation-1", e.garam.calls[1].ReplacesActivationID)
+	assert.Equal(t, firstActivation, e.garam.calls[1].ReplacesActivationID)
 	e.garam.set(func(g *garam) { g.refusedRefs["configure-ref-2"] = true })
 
 	restart := e.activate(t, e.adapter, "request-3", strings.Repeat("c", 32), "2")
@@ -235,5 +237,47 @@ func TestActivate_RenewalExpiryAndRestart(t *testing.T) {
 	// Control: a new generation under the recovered lineage is a new activation, anchored on the ended one.
 	fresh := e.activate(t, recovered, "request-fresh", strings.Repeat("e", 32), "1")
 	assert.Equal(t, http.StatusCreated, fresh.status, fresh.raw)
-	assert.Equal(t, "activation-1", e.garam.calls[len(e.garam.calls)-1].ReplacesActivationID)
+	assert.Equal(t, firstActivation, e.garam.calls[len(e.garam.calls)-1].ReplacesActivationID)
+}
+
+func TestActivate_ControllerProvedUnderAnotherEpochRefused(t *testing.T) {
+	e := newEnv(t)
+	e.garam.set(func(g *garam) { g.proveEpoch = "8" })
+	refused := e.activate(t, e.adapter, requestID, generation, "1")
+	assert.Equal(t, http.StatusConflict, refused.status, refused.raw)
+	assert.Equal(t, kindEpochSuperseded, refused.kind())
+	assert.Equal(t, 0, e.garam.callCount())
+
+	// Control: the controller proved under the placement's epoch.
+	e.garam.set(func(g *garam) { g.proveEpoch = "" })
+	assert.Equal(t, http.StatusCreated, e.activate(t, e.adapter, requestID, generation, "1").status)
+}
+
+func TestActivate_AnActivationOfAnotherBindingIsNotPassedOn(t *testing.T) {
+	e := newEnv(t)
+	e.garam.set(func(g *garam) { g.wrongGRN = "grn:acme:default:agent:other" })
+	refused := e.activate(t, e.adapter, requestID, generation, "1")
+	assert.Equal(t, http.StatusInternalServerError, refused.status, refused.raw)
+	assert.NotContains(t, refused.raw, "token-", "a token of another binding was handed out")
+
+	// Control: garam's answer naming this agent is passed on.
+	e.garam.set(func(g *garam) { g.wrongGRN = "" })
+	assert.Equal(t, http.StatusOK, e.activate(t, e.adapter, requestID, generation, "1").status)
+}
+
+// TestActivate_ConcurrentActivationsAreSerialized has two generations activated at once: one at a
+// time, the second reads the first as its anchor, so both are activated. Unserialized, both would
+// name no anchor and garam would refuse one.
+func TestActivate_ConcurrentActivationsAreSerialized(t *testing.T) {
+	e := newEnv(t)
+	e.garam.set(func(g *garam) { g.delay = 50 * time.Millisecond })
+	statuses := make([]int, 2)
+	var wg sync.WaitGroup
+	for i, gen := range []string{strings.Repeat("a", 32), strings.Repeat("b", 32)} {
+		wg.Go(func() { statuses[i] = e.activate(t, e.adapter, fmt.Sprintf("request-%d", i), gen, "1").status })
+	}
+	wg.Wait()
+	assert.Equal(t, []int{http.StatusCreated, http.StatusCreated}, statuses)
+	anchors := []string{e.garam.calls[0].ReplacesActivationID, e.garam.calls[1].ReplacesActivationID}
+	assert.ElementsMatch(t, []string{"", firstActivation}, anchors)
 }
