@@ -2,6 +2,7 @@ package constructor_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -636,4 +637,65 @@ func TestCorrectSpecCorrectsNothingWhereNoAgentIsBuilt(t *testing.T) {
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(corrected).To(BeFalse())
+}
+
+// ownersOf is every field manager the Agent's managedFields record as owning
+// the field at path, each step written as the API server writes it ("f:spec").
+func ownersOf(t *testing.T, agent *agentv1alpha1.Agent, path ...string) []string {
+	t.Helper()
+
+	var owners []string
+	for _, entry := range agent.ManagedFields {
+		if entry.FieldsV1 == nil {
+			continue
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(entry.FieldsV1.GetRawBytes(), &fields); err != nil {
+			t.Fatalf("read the fields %s manages: %v", entry.Manager, err)
+		}
+		owned := true
+		for _, step := range path {
+			next, ok := fields[step].(map[string]any)
+			if !ok {
+				owned = false
+				break
+			}
+			fields = next
+		}
+		if owned {
+			owners = append(owners, entry.Manager)
+		}
+	}
+	return owners
+}
+
+// TestCorrectSpecLeavesSuspendedToThePersonWhoSetIt holds the poller to ADR
+// 0046: spec.suspended is a person's, and the correction this operator makes on
+// the poller's clock never writes it.
+func TestCorrectSpecLeavesSuspendedToThePersonWhoSetIt(t *testing.T) {
+	g := NewWithT(t)
+	scheme := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&agentv1alpha1.Agent{}).WithReturnManagedFields().Build()
+	ctx := context.Background()
+
+	g.Expect(newConstructor(t, scheme, c).Construct(ctx, definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	key := client.ObjectKey{Namespace: namespace, Name: constructor.Name(sampleAgent)}
+	constructed := &agentv1alpha1.Agent{}
+	g.Expect(c.Get(ctx, key, constructed)).To(Succeed())
+	suspended := constructed.DeepCopy()
+	suspended.Spec.Suspended = true
+	g.Expect(c.Patch(ctx, suspended, client.MergeFrom(constructed), client.FieldOwner("kubectl-edit"))).To(Succeed())
+
+	corrected, err := newCorrector(t, scheme, c).CorrectSpec(ctx, sampleAgent)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(corrected).To(BeTrue())
+
+	read := &agentv1alpha1.Agent{}
+	g.Expect(c.Get(ctx, key, read)).To(Succeed())
+	g.Expect(read.Spec.Image).To(Equal(laterImage))
+	g.Expect(read.Spec.Suspended).To(BeTrue(), "the correction cleared spec.suspended")
+	// The control: the constructor is recorded as the owner of the field it corrected.
+	g.Expect(ownersOf(t, read, "f:spec", "f:image")).To(ConsistOf("garam-operator-constructor"))
+	g.Expect(ownersOf(t, read, "f:spec", "f:suspended")).To(ConsistOf("kubectl-edit"))
 }

@@ -241,6 +241,16 @@ func seedWorkspaceCommand(from, to, marker string) []string {
 // to reconcile until the old one is gone.
 var errReplacing = errors.New("the statefulset is being replaced")
 
+// replicasFor is the number of replicas the Agent's workload runs: one, or none
+// while it is suspended.
+func replicasFor(agent *agentv1alpha1.Agent) int32 {
+	if agent.Spec.Suspended {
+		return 0
+	}
+
+	return 1
+}
+
 // reconcileStatefulSet brings the StatefulSet an Agent describes into being, or
 // brings an existing one back to what the Agent's spec says, and returns it as
 // the cluster now holds it. A StatefulSet whose workspace shares the state claim
@@ -437,8 +447,9 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	}
 
 	// The agent's state is a single-writer store, so a second replica is never
-	// correct.
-	statefulSet.Spec.Replicas = ptr.To[int32](1)
+	// correct. A suspended agent has none, and its Pod is released by its writer
+	// fence (ADR 0046).
+	statefulSet.Spec.Replicas = ptr.To(replicasFor(agent))
 
 	// Every Pod the StatefulSet creates carries the writer fence, so a deleted
 	// one is held until its writers are seen to stop (ADR 0042).

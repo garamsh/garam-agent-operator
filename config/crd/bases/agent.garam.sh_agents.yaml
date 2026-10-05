@@ -27,6 +27,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="StateIsolated")].status
       name: Isolated
       type: string
+    - jsonPath: .status.conditions[?(@.type=="Suspended")].status
+      name: Suspended
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -253,6 +256,14 @@ spec:
                 x-kubernetes-validations:
                 - message: storageSize must be greater than zero
                   rule: quantity(string(self)).isGreaterThan(quantity('0'))
+              suspended:
+                description: |-
+                  suspended stops the agent without deleting anything: its workload is
+                  scaled to no replica, and its Pod is released only once its writers are
+                  seen to stop. The Agent, its credential and its volumes are kept, and
+                  clearing the field starts the agent again on the same volumes. It is a
+                  person's to set: this operator never writes it.
+                type: boolean
               tools:
                 description: |-
                   tools declares the tool set this agent accepts. Unset declares none, and

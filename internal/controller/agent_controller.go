@@ -110,7 +110,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// The fence first: a Pod being deleted is held or released on what it shows,
 	// whatever the spec now asks of the workload.
-	_, unverified, err := r.reconcileFence(ctx, &agent)
+	podGone, unverified, err := r.reconcileFence(ctx, &agent)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -118,6 +118,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err := r.reconcileWorkload(ctx, &agent); err != nil {
 		return ctrl.Result{}, err
 	}
+	setSuspendedFromPod(&agent, podGone)
 	agent.Status.ObservedGeneration = agent.Generation
 
 	if err := r.writeStatus(ctx, &agent, held); err != nil {

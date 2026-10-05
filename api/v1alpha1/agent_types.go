@@ -61,6 +61,14 @@ type AgentSpec struct {
 	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="workspaceStorageSize must be greater than zero"
 	WorkspaceStorageSize *resource.Quantity `json:"workspaceStorageSize,omitempty"`
 
+	// suspended stops the agent without deleting anything: its workload is
+	// scaled to no replica, and its Pod is released only once its writers are
+	// seen to stop. The Agent, its credential and its volumes are kept, and
+	// clearing the field starts the agent again on the same volumes. It is a
+	// person's to set: this operator never writes it.
+	// +optional
+	Suspended bool `json:"suspended,omitempty"`
+
 	// storageClassName is the StorageClass the agent's persistent volumes are
 	// provisioned from, its state's and its workspace's. Unset means the
 	// cluster's default StorageClass.
@@ -384,6 +392,27 @@ const (
 	// ReasonWorkloadNotObserved is set when the controller stopped before
 	// reconciling a workload, so it read none and observed no readiness.
 	ReasonWorkloadNotObserved = "WorkloadNotObserved"
+
+	// ReasonSuspended is set on Available while the spec suspends the agent,
+	// which asks for no replica.
+	ReasonSuspended = "Suspended"
+)
+
+// ConditionSuspended is the condition type reporting whether the agent is
+// stopped as its spec asks. True means the spec suspends it and its Pod is
+// gone, so its volumes are mounted by nothing: the point at which its state
+// can be copied.
+const ConditionSuspended = "Suspended"
+
+// Reasons for the Suspended condition. ReasonSuspended, shared with
+// Available, is the True one.
+const (
+	// ReasonSuspending is set while the spec suspends the agent and its Pod
+	// still exists: running, or held by its writer fence.
+	ReasonSuspending = "Suspending"
+
+	// ReasonNotSuspended is set while the spec does not suspend the agent.
+	ReasonNotSuspended = "NotSuspended"
 )
 
 // ConditionWriterFence is the condition type reporting the controller's last
@@ -450,6 +479,7 @@ const (
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Synced")].reason`
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
 // +kubebuilder:printcolumn:name="Isolated",type=string,JSONPath=`.status.conditions[?(@.type=="StateIsolated")].status`
+// +kubebuilder:printcolumn:name="Suspended",type=string,JSONPath=`.status.conditions[?(@.type=="Suspended")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Agent is the Schema for the agents API

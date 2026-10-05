@@ -294,3 +294,58 @@ func feedAnswer(cursor string, agents ...desired.Agent) string {
 
 	return string(raw)
 }
+
+// ownersOf is every field manager the Agent's managedFields record as owning
+// the field at path, each step written as the API server writes it ("f:spec").
+func ownersOf(agent *agentv1alpha1.Agent, path ...string) []string {
+	GinkgoHelper()
+
+	var owners []string
+	for _, entry := range agent.ManagedFields {
+		if entry.FieldsV1 == nil {
+			continue
+		}
+		var fields map[string]any
+		Expect(json.Unmarshal(entry.FieldsV1.GetRawBytes(), &fields)).To(Succeed())
+		owned := true
+		for _, step := range path {
+			next, ok := fields[step].(map[string]any)
+			if !ok {
+				owned = false
+				break
+			}
+			fields = next
+		}
+		if owned {
+			owners = append(owners, entry.Manager)
+		}
+	}
+
+	return owners
+}
+
+var _ = Describe("Renderer and a suspended agent", func() {
+	It("leaves spec.suspended to the person who set it, while it renders every field it owns", func() {
+		grn := "grn:acme:default:agent:5555555555555555"
+		rendering := renderer.NewAgent(k8sClient, namespace, image)
+		Expect(rendering.Render(ctx, revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, "first"))).
+			To(Succeed())
+
+		By("a person suspending the agent")
+		created := agentFor(grn)
+		suspended := created.DeepCopy()
+		suspended.Spec.Suspended = true
+		Expect(k8sClient.Patch(ctx, suspended, client.MergeFrom(created), client.FieldOwner("kubectl-edit"))).To(Succeed())
+
+		By("a later revision, rendered while the agent is suspended")
+		Expect(rendering.Render(ctx, revision(grn, "2", "8", map[string]string{otherTool: secondPin}, "second"))).
+			To(Succeed())
+		rendered := agentFor(grn)
+		Expect(rendered.Spec.Ego).To(Equal("second"))
+		Expect(rendered.Spec.Suspended).To(BeTrue(), "rendering cleared spec.suspended")
+
+		By("the control: the renderer is recorded as the owner of what it renders")
+		Expect(ownersOf(rendered, "f:spec", "f:ego")).To(ConsistOf("garam-operator-renderer"))
+		Expect(ownersOf(rendered, "f:spec", "f:suspended")).To(ConsistOf("kubectl-edit"))
+	})
+})

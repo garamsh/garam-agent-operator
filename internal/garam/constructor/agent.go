@@ -23,6 +23,13 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
+// fieldOwnerName is the field manager every write this constructor makes to an
+// Agent is recorded under, so an Agent's managedFields show which fields it
+// owns: never spec.suspended, which is a person's (ADR 0046).
+const fieldOwnerName = "garam-operator-constructor"
+
+var fieldOwner = client.FieldOwner(fieldOwnerName)
+
 // Agent constructs the agents garam assigned this operator, keeps the image it
 // wrote for them current, and observes the ones it has constructed.
 //
@@ -107,7 +114,7 @@ func (a *Agent) ensureAgent(ctx context.Context, definition garam.Definition,
 		},
 	}
 
-	err := a.client.Create(ctx, constructed)
+	err := a.client.Create(ctx, constructed, fieldOwner)
 	if apierrors.IsAlreadyExists(err) {
 		if err := a.client.Get(ctx, client.ObjectKeyFromObject(constructed), constructed); err != nil {
 			return nil, fmt.Errorf("get the agent constructed for %s: %w", agent, err)
@@ -138,7 +145,7 @@ func (a *Agent) ensureAgent(ctx context.Context, definition garam.Definition,
 		return nil, fmt.Errorf("render the report of %s: %w", agent, err)
 	}
 	if err := a.client.Status().Patch(ctx, constructed,
-		client.RawPatch(types.MergePatchType, patch)); err != nil {
+		client.RawPatch(types.MergePatchType, patch), client.FieldOwner(fieldOwnerName)); err != nil {
 		return nil, fmt.Errorf("report %s on the agent constructed for it: %w", agent, err)
 	}
 	constructed.Status.Agent = string(agent)
@@ -222,7 +229,7 @@ func (a *Agent) CorrectSpec(ctx context.Context, agent garam.GRN) (bool, error) 
 		return false, fmt.Errorf("render the corrections of %s: %w", agent, err)
 	}
 	if err := a.client.Patch(ctx, constructed,
-		client.RawPatch(types.MergePatchType, patch)); err != nil {
+		client.RawPatch(types.MergePatchType, patch), fieldOwner); err != nil {
 		return false, fmt.Errorf("correct the spec of the agent constructed for %s: %w", agent, err)
 	}
 	return true, nil

@@ -81,6 +81,12 @@ func setStateIsolatedFromWorkload(agent *agentv1alpha1.Agent, statefulSet *appsv
 // carries no readiness probe, so a container that started is ready whatever it
 // is running.
 func setAvailableFromWorkload(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet) {
+	if agent.Spec.Suspended {
+		setAvailable(agent, metav1.ConditionFalse, agentv1alpha1.ReasonSuspended,
+			fmt.Sprintf("The spec suspends the agent, so StatefulSet %q asks for no replica", statefulSet.Name))
+
+		return
+	}
 	// One replica is the whole workload, per ADR 0005, so a ready replica is
 	// every replica.
 	if statefulSet.Status.ReadyReplicas > 0 {
@@ -94,6 +100,28 @@ func setAvailableFromWorkload(agent *agentv1alpha1.Agent, statefulSet *appsv1.St
 	setAvailable(agent, metav1.ConditionFalse, agentv1alpha1.ReasonReplicaNotReady,
 		fmt.Sprintf("StatefulSet %q reports no ready replica. This covers a replica still starting as much as one that cannot start, and does not say which",
 			statefulSet.Name))
+}
+
+// setSuspendedFromPod records whether the agent is stopped as its spec asks.
+// True needs its Pod gone, not only asked to go: until then the Pod may still
+// hold the state volume, and its writer fence says why it is held.
+func setSuspendedFromPod(agent *agentv1alpha1.Agent, podGone bool) {
+	condition := metav1.Condition{
+		Type:               agentv1alpha1.ConditionSuspended,
+		Status:             metav1.ConditionFalse,
+		Reason:             agentv1alpha1.ReasonNotSuspended,
+		Message:            "The spec does not suspend the agent",
+		ObservedGeneration: agent.Generation,
+	}
+	switch {
+	case agent.Spec.Suspended && podGone:
+		condition.Status, condition.Reason = metav1.ConditionTrue, agentv1alpha1.ReasonSuspended
+		condition.Message = fmt.Sprintf("The spec suspends the agent and Pod %q is gone, so nothing mounts its volumes", agentPodName(agent))
+	case agent.Spec.Suspended:
+		condition.Reason = agentv1alpha1.ReasonSuspending
+		condition.Message = fmt.Sprintf("The spec suspends the agent and Pod %q still exists. WriterFence says whether it is held", agentPodName(agent))
+	}
+	meta.SetStatusCondition(&agent.Status.Conditions, condition)
 }
 
 // writeStatus writes the status this reconcile observed, and only when it says
