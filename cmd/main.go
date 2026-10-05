@@ -61,7 +61,7 @@ func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
-	var enableLeaderElection, agentAssignmentEpoch bool
+	var enableLeaderElection, agentAssignmentEpoch, agentInstructionsFile bool
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
@@ -145,6 +145,11 @@ func main() {
 			"garam's own image, whose adapter subcommand carries messages between garam and the agent. "+
 			"It is built only where garam-address is set too. Unset builds agents' Pods carrying no adapter, "+
 			"which is an agent garam delivers no message to.")
+	flag.BoolVar(&agentInstructionsFile, "agent-instructions-file", false,
+		"Give every agent with garam's adapter garam's reply instruction as an operator instructions file, "+
+			"passed as --instructions-file, and leave its ego as its spec declares it. Off by default, which "+
+			"joins the instruction to the ego instead: set it only once the agent image this deployment runs "+
+			"accepts the flag (sherlock v0.1.0 or later), because an image that does not refuses to start on it.")
 	flag.BoolVar(&agentAssignmentEpoch, "agent-assignment-epoch", false,
 		"Pass every agent this operator constructed its assignment epoch on the command line, as "+
 			"--assignment-epoch. Off by default: set it only once the agent image this deployment runs "+
@@ -283,7 +288,8 @@ func main() {
 		AdapterImage:   agentAdapterImage,
 		GaramAddress:   garamAddress,
 
-		RenderAssignmentEpoch: agentAssignmentEpoch,
+		RenderAssignmentEpoch:  agentAssignmentEpoch,
+		RenderInstructionsFile: agentInstructionsFile,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)

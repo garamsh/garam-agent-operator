@@ -172,6 +172,20 @@ func reconcileAgentWithAdapter(name string) (reconcile.Result, error) {
 	})
 }
 
+// reconcileAgentWithInstructions runs one reconcile for the named Agent, with
+// this operator placing garam's adapter and rendering garam's reply instruction
+// as an instructions file.
+func reconcileAgentWithInstructions(name string) (reconcile.Result, error) {
+	return runReconcile(name, &AgentReconciler{
+		Client:                 k8sClient,
+		Scheme:                 k8sClient.Scheme(),
+		CopyImage:              testCopyImage,
+		AdapterImage:           testAdapterImage,
+		GaramAddress:           testGaramAddress,
+		RenderInstructionsFile: true,
+	})
+}
+
 // reconcileAgentRenderingEpoch runs one reconcile for the named Agent, with this
 // operator passing agents their assignment epoch.
 func reconcileAgentRenderingEpoch(name string) (reconcile.Result, error) {

@@ -55,6 +55,13 @@ type AgentReconciler struct {
 	// line. It is off until the agent image the deployment runs accepts the flag,
 	// because one that does not refuses to start on it.
 	RenderAssignmentEpoch bool
+
+	// RenderInstructionsFile writes garam's reply instruction into an operator
+	// instructions file the agent is passed as --instructions-file, wherever the
+	// adapter is placed, and leaves the ego the spec's alone. It is off until the
+	// agent image the deployment runs accepts the flag, which sherlock does from
+	// v0.1.0, because one that does not refuses to start on it (ADR 0045).
+	RenderInstructionsFile bool
 }
 
 // +kubebuilder:rbac:groups=agent.garam.sh,resources=agents,verbs=get;list;watch;patch
