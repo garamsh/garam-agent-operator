@@ -42,9 +42,12 @@ var (
 	pinPrefix = "tools.pins."
 )
 
-// stageRequest is the body of the freeze, the switch and the rollback.
+// stageRequest is the body of the freeze, the switch and the rollback. The switch also names the
+// request id its agent:configure authority was minted under: garam binds a request id to one
+// operation, so the two authorities the switch carries cannot share one.
 type stageRequest struct {
-	RequestID string `json:"requestId"`
+	RequestID          string `json:"requestId"`
+	ConfigureRequestID string `json:"configureRequestId,omitempty"`
 }
 
 // importRequest is the body of the import: the profile revision 1 runs under, and the
@@ -263,7 +266,7 @@ func (s *server) switchCutover(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	if configure.RequestID != b.RequestID {
+	if configure.RequestID != b.configureRequestID {
 		s.respondError(w, &MismatchError{Field: "configure authority's request id"})
 		return
 	}
@@ -302,10 +305,12 @@ func (s *server) rollBackCutover(w http.ResponseWriter, r *http.Request) {
 	s.answerCutover(w, imp, false)
 }
 
-// stagedBinding is an authorized stage request's binding, with the body it was authorized for.
+// stagedBinding is an authorized stage request's binding, with the body it was authorized for and
+// the switch's configure request id.
 type stagedBinding struct {
 	Binding
-	body []byte
+	body               []byte
+	configureRequestID string
 }
 
 // stage authorizes a freeze, a switch or a rollback, and reads the agent's import.
@@ -315,7 +320,8 @@ func (s *server) stage(w http.ResponseWriter, r *http.Request, stage Stage) (str
 		return "", stagedBinding{}, definition.CutoverImport{}, false
 	}
 	var in stageRequest
-	if err := decodeStrict(body, &in); err != nil || in.RequestID != b.RequestID {
+	if err := decodeStrict(body, &in); err != nil || in.RequestID != b.RequestID ||
+		(stage == StageSwitch) != (in.ConfigureRequestID != "") || in.ConfigureRequestID == in.RequestID {
 		s.respondError(w, errInvalidBody)
 		return "", stagedBinding{}, definition.CutoverImport{}, false
 	}
@@ -324,7 +330,7 @@ func (s *server) stage(w http.ResponseWriter, r *http.Request, stage Stage) (str
 		s.respondError(w, err)
 		return "", stagedBinding{}, definition.CutoverImport{}, false
 	}
-	return agent, stagedBinding{Binding: b, body: body}, imp, true
+	return agent, stagedBinding{Binding: b, body: body, configureRequestID: in.ConfigureRequestID}, imp, true
 }
 
 func (s *server) answerCutover(w http.ResponseWriter, imp definition.CutoverImport, first bool) {

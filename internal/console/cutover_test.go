@@ -249,6 +249,15 @@ func stageBody(requestID string) []byte {
 	return b
 }
 
+// switchBody is a switch under requestID, naming its configure authority's request id.
+func switchBody(requestID string) []byte {
+	b, _ := json.Marshal(struct {
+		RequestID          string `json:"requestId"`
+		ConfigureRequestID string `json:"configureRequestId"`
+	}{requestID, "configure-" + requestID})
+	return b
+}
+
 // doImport imports the agent, as garam's read stage authorizes it.
 func (e *cutoverEnv) doImport(t *testing.T, requestID string, dispositions map[string]string) stageAnswer {
 	t.Helper()
@@ -261,10 +270,13 @@ func (e *cutoverEnv) doImport(t *testing.T, requestID string, dispositions map[s
 func (e *cutoverEnv) doStage(t *testing.T, stage console.Stage, requestID string) stageAnswer {
 	t.Helper()
 	body := stageBody(requestID)
+	if stage == console.StageSwitch {
+		body = switchBody(requestID)
+	}
 	authority := e.authority(console.OperationCutover, e.cutover.Target(legacy, stage), requestID, body, string(stage)+"-ref")
 	var configure console.Authority
 	if stage == console.StageSwitch {
-		configure = e.authority(console.OperationConfigure, "", requestID, body, configureRef)
+		configure = e.authority(console.OperationConfigure, "", "configure-"+requestID, body, configureRef)
 	}
 	return e.post(t, string(stage), body, authority, configure)
 }
@@ -329,9 +341,9 @@ func TestCutover_AReferenceForAnotherStageRefused(t *testing.T) {
 	require.Equal(t, http.StatusCreated, e.doImport(t, importID, nil).status)
 	require.Equal(t, http.StatusOK, e.doStage(t, console.StageFreeze, "freeze-1").status)
 
-	body := stageBody("switch-1")
+	body := switchBody("switch-1")
 	freezeAuthority := e.authority(console.OperationCutover, e.cutover.Target(legacy, console.StageFreeze), "switch-1", body, "freeze-ref")
-	configure := e.authority(console.OperationConfigure, "", "switch-1", body, configureRef)
+	configure := e.authority(console.OperationConfigure, "", "configure-switch-1", body, configureRef)
 	refused := e.post(t, "switch", body, freezeAuthority, configure)
 	assert.Equal(t, http.StatusForbidden, refused.status, refused.raw)
 	assert.Contains(t, refused.raw, "request target")
@@ -464,7 +476,7 @@ func TestCutover_TheSwitchNeedsAFrozenImportAndItsConfigureAuthority(t *testing.
 	assert.Equal(t, 0, e.cutover.callsTo(console.StageSwitch))
 	require.Equal(t, http.StatusOK, e.doStage(t, console.StageFreeze, "freeze-1").status)
 
-	body := stageBody("switch-1")
+	body := switchBody("switch-1")
 	authority := e.authority(console.OperationCutover, e.cutover.Target(legacy, console.StageSwitch), "switch-1", body, "switch-ref")
 	withoutConfigure := e.post(t, "switch", body, authority, "")
 	assert.Equal(t, http.StatusUnauthorized, withoutConfigure.status, withoutConfigure.raw)
