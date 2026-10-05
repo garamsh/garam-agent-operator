@@ -28,6 +28,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/controller"
 	"github.com/garamsh/garam-agent-operator/internal/desired"
 	"github.com/garamsh/garam-agent-operator/internal/desired/credential"
+	"github.com/garamsh/garam-agent-operator/internal/desired/placement"
 	"github.com/garamsh/garam-agent-operator/internal/desired/renderer"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
@@ -428,6 +429,15 @@ func main() {
 			credential.NewSecrets(mgr.GetClient(), mgr.GetAPIReader(), mgr.GetScheme(), namespace))
 		if err := mgr.Add(issuer); err != nil {
 			setupLog.Error(err, "Failed to add the managed-credential issuer", "address", controlAddress)
+			os.Exit(1)
+		}
+		// Each managed agent's placement is registered with the control service,
+		// and presented again under each renewed leaf (#212, #218).
+		registrar := desired.NewRegistrar(controlClient,
+			placement.NewPods(mgr.GetClient(), mgr.GetAPIReader(), namespace),
+			desired.LeafFingerprint(garamCertificateFile))
+		if err := mgr.Add(registrar); err != nil {
+			setupLog.Error(err, "Failed to add the placement registrar", "address", controlAddress)
 			os.Exit(1)
 		}
 	} else {

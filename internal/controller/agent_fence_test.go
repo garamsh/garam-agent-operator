@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/agentname"
 )
 
 // fenceStates are the container states a spec gives an agent's Pod.
@@ -468,7 +469,7 @@ var _ = Describe("Placement token", func() {
 
 		By("the copy lives in memory")
 		Expect(volumeNamed(pod, placementVolumeName).EmptyDir).To(HaveField("Medium", corev1.StorageMediumMemory))
-		Expect(volumeNamed(pod, placementSecretVolumeName).Secret.SecretName).To(Equal(name + placementSecretSuffix))
+		Expect(volumeNamed(pod, placementSecretVolumeName).Secret.SecretName).To(Equal(agentname.PlacementSecret(name)))
 	})
 
 	It("mints a token for the first placement, keeps it across a restart in the same Pod, and mints the next one at the fence", func() {
@@ -483,7 +484,7 @@ var _ = Describe("Placement token", func() {
 
 		tokenOf := func() string {
 			secret := &corev1.Secret{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: agentNamespace, Name: name + placementSecretSuffix}, secret)).
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: agentNamespace, Name: agentname.PlacementSecret(name)}, secret)).
 				To(Succeed())
 
 			return string(secret.Data[placementTokenKey])
@@ -492,7 +493,7 @@ var _ = Describe("Placement token", func() {
 		Expect(first).To(MatchRegexp("^[0-9a-f]{64}$"))
 		DeferCleanup(func() {
 			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx,
-				&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + placementSecretSuffix, Namespace: agentNamespace}}))).
+				&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: agentname.PlacementSecret(name), Namespace: agentNamespace}}))).
 				To(Succeed())
 		})
 
@@ -517,6 +518,52 @@ var _ = Describe("Placement token", func() {
 		Expect(tokenOf()).To(SatisfyAll(MatchRegexp("^[0-9a-f]{64}$"), Not(Equal(first))))
 	})
 
+	It("records on the next token the placement it replaces and the digest of the evidence its release recorded", func() {
+		createNode("previous-node", corev1.ConditionTrue)
+		name := "records-previous"
+		createSecret(credentialsSecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(agent)
+		_, err := reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+		placement := func() *corev1.Secret {
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: agentNamespace, Name: agentname.PlacementSecret(name)}, secret)).
+				To(Succeed())
+
+			return secret
+		}
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx,
+				&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: agentname.PlacementSecret(name), Namespace: agentNamespace}}))).
+				To(Succeed())
+		})
+
+		By("the control: the first placement's token names no previous placement")
+		Expect(placement().Annotations).NotTo(HaveKey(agentname.PreviousPodUIDAnnotation))
+		Expect(placement().Annotations).NotTo(HaveKey(agentname.PreviousWriterStoppedAnnotation))
+
+		createClaim(name)
+		pod := startPod(name, "previous-node", map[string]corev1.ContainerState{
+			agentContainerName: runningState, adapterContainerName: runningState,
+		})
+		_, err = reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+		reportContainers(pod, map[string]corev1.ContainerState{agentContainerName: terminatedState, adapterContainerName: terminatedState})
+		deletePod(pod)
+		_, err = reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+		expectReleased(name, string(pod.UID))
+
+		By("the next token naming that Pod, and the digest of the evidence recorded for it, read back")
+		recorded := readAgent(name).Status.WriterStopped
+		digest, err := writerStoppedDigest(recorded)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(placement().Annotations).To(HaveKeyWithValue(agentname.PreviousPodUIDAnnotation, string(pod.UID)))
+		Expect(placement().Annotations).To(HaveKeyWithValue(agentname.PreviousWriterStoppedAnnotation, digest))
+	})
+
 	It("holds a Pod whose adapter still runs, though its agent stopped", func() {
 		createNode("token-node-adapter", corev1.ConditionTrue)
 		name := "fence-adapter-running"
@@ -528,7 +575,7 @@ var _ = Describe("Placement token", func() {
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() {
 			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx,
-				&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + placementSecretSuffix, Namespace: agentNamespace}}))).
+				&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: agentname.PlacementSecret(name), Namespace: agentNamespace}}))).
 				To(Succeed())
 		})
 		createClaim(name)

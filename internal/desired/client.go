@@ -22,6 +22,7 @@ const (
 	routeDesired             = "desired"
 	routeStatus              = "status"
 	routeCertificateRequests = "certificate_requests"
+	routePlacements          = "placements"
 )
 
 // requestMargin is how long past a long poll's wait a request may take before
@@ -92,6 +93,17 @@ type (
 		IssuerPEM      string    `json:"issuerPem"`
 		ServerRootPEM  string    `json:"serverRootPem"`
 		NotAfter       time.Time `json:"notAfter"`
+	}
+	wirePlacement struct {
+		Epoch       string                 `json:"epoch"`
+		PodUID      string                 `json:"podUid"`
+		PVCUID      string                 `json:"pvcUid"`
+		TokenSHA256 string                 `json:"tokenSha256"`
+		Previous    *wirePreviousPlacement `json:"previous"`
+	}
+	wirePreviousPlacement struct {
+		PodUID              string `json:"podUid"`
+		WriterStoppedSHA256 string `json:"writerStoppedSha256"`
 	}
 	wireError struct {
 		Kind    string `json:"kind"`
@@ -201,12 +213,51 @@ func (c *Client) RequestCertificate(ctx context.Context, agent, requestID, epoch
 	}, nil
 }
 
+// RegisterPlacement registers a managed agent's placement with the control
+// service (#212, #218), and reports whether it was new: 201 registers it, and
+// 200 answers a repeat or a refresh under a renewed leaf, never a new
+// placement. A 4xx answer is a *RefusalError.
+func (c *Client) RegisterPlacement(ctx context.Context, agent string, placement Placement) (created bool, err error) {
+	wire := wirePlacement{
+		Epoch: placement.Epoch, PodUID: placement.PodUID, PVCUID: placement.PVCUID, TokenSHA256: placement.TokenSHA256,
+	}
+	if placement.Previous != nil {
+		wire.Previous = &wirePreviousPlacement{
+			PodUID: placement.Previous.PodUID, WriterStoppedSHA256: placement.Previous.WriterStoppedSHA256,
+		}
+	}
+	body, err := json.Marshal(wire)
+	if err != nil {
+		return false, fmt.Errorf("render the placement of %s: %w", agent, err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, requestMargin)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"https://"+c.address+"/v1/operators/self/agents/"+url.PathEscape(agent)+"/placements", bytes.NewReader(body))
+	if err != nil {
+		return false, fmt.Errorf("build the placement of %s: %w", agent, err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	status, err := c.send(request, routePlacements, nil)
+
+	return status == http.StatusCreated, err
+}
+
 // do sends request and decodes a 200 or 201 into answer where answer is not
 // nil. A 4xx is counted and returned as a *RefusalError.
 func (c *Client) do(request *http.Request, route string, answer any) error {
+	_, err := c.send(request, route, answer)
+
+	return err
+}
+
+// send is do, reporting the status a 200 or 201 was answered with.
+func (c *Client) send(request *http.Request, route string, answer any) (int, error) {
 	response, err := c.http.Do(request)
 	if err != nil {
-		return fmt.Errorf("call the control service's %s route: %w", route, err)
+		return 0, fmt.Errorf("call the control service's %s route: %w", route, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 
@@ -218,19 +269,19 @@ func (c *Client) do(request *http.Request, route string, answer any) error {
 		}
 		refusalsTotal.WithLabelValues(route, strconv.Itoa(response.StatusCode)).Inc()
 
-		return refusal
+		return response.StatusCode, refusal
 	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
-		return fmt.Errorf("the control service's %s route answered %d", route, response.StatusCode)
+		return response.StatusCode, fmt.Errorf("the control service's %s route answered %d", route, response.StatusCode)
 	}
 	if answer == nil {
-		return nil
+		return response.StatusCode, nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(answer); err != nil {
-		return fmt.Errorf("decode the control service's %s answer: %w", route, err)
+		return response.StatusCode, fmt.Errorf("decode the control service's %s answer: %w", route, err)
 	}
 
-	return nil
+	return response.StatusCode, nil
 }
 
 // asRefusal reports whether err is a refusal of the control service.

@@ -69,6 +69,25 @@ type Certificate struct {
 	NotAfter       time.Time
 }
 
+// Placement is one placement of a managed agent as the control service
+// registers it: the Pod running it, the state claim it started on, the
+// assignment epoch it runs at, the digest of the token minted for it, and the
+// placement it replaces, nil for the first.
+type Placement struct {
+	Epoch       string
+	PodUID      string
+	PVCUID      string
+	TokenSHA256 string
+	Previous    *PreviousPlacement
+}
+
+// PreviousPlacement is the placement a new one replaces: its Pod, and the
+// digest of the writer-stopped evidence its release recorded.
+type PreviousPlacement struct {
+	PodUID              string
+	WriterStoppedSHA256 string
+}
+
 // Renderer writes an agent's desired state into the Agent this operator builds
 // for it.
 type Renderer interface {
