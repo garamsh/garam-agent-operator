@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"slices"
 	"strconv"
@@ -61,6 +62,35 @@ const (
 
 	credentialsVolumeName       = "credentials"
 	credentialsSecretVolumeName = "credentials-secret"
+
+	// controlRootMountPath is where the adapter reads the root the control
+	// service's serving certificate chains to, as controlRootFile; outboxMountPath
+	// is where it reads and clears the agent's outbox. Both are this operator's
+	// paths for garam's process (#218).
+	controlRootMountPath = "/run/garam/control"
+	controlRootFile      = "root.pem"
+	outboxMountPath      = "/run/garam/outbox"
+
+	// controlRootVolumeName holds the control root the config writer copies in,
+	// which only the adapter reads.
+	controlRootVolumeName = "control-root"
+
+	// controlRootContentVariable carries the control root's text to the config
+	// writer, on configContentVariable's ground.
+	controlRootContentVariable = "AGENT_CONTROL_ROOT_CONTENT"
+
+	// outboxContainerName is the init container that makes the agent's outbox
+	// directory on the state claim before the adapter mounts it, and
+	// outboxStateMountPath is where it mounts that claim. Created by anything
+	// else, the directory the adapter's subPath names would be the kubelet's,
+	// owned by root, and the agent could not write it.
+	outboxContainerName  = "outbox"
+	outboxStateMountPath = "/run/garam/state"
+
+	// outboxDirMode lets the Pod's user and group write the outbox and nobody
+	// else; sherlock's own creation of it leaves an existing directory as it
+	// is (sherlock@44aaa55:tools/message_send/message_send.go:108).
+	outboxDirMode = "0770"
 
 	// placementVolumeName holds the copy of the placement token, which only the
 	// adapter mounts; placementSecretVolumeName is the Secret's projection, which
@@ -160,6 +190,24 @@ const (
 	agentRunAsUser = 65532
 )
 
+// The settings garam's adapter reads, by the names garam@e81a1e0 gives them
+// (internal/cli/cli.go:182-191). GATEWAY_AGENT is garam@fdfb76d's, which that
+// adapter requires (internal/cli/delivery.go:90-91) and garam@e81a1e0 reads
+// nowhere.
+const (
+	adapterAgentSetting          = "GARAM_ADAPTER_AGENT"
+	adapterMachineURLSetting     = "GARAM_ADAPTER_MACHINE_URL"
+	adapterGatewayURLSetting     = "GARAM_ADAPTER_GATEWAY_URL"
+	adapterGatewayAgentSetting   = "GARAM_ADAPTER_GATEWAY_AGENT"
+	adapterCertFileSetting       = "GARAM_ADAPTER_TLS_CERT_FILE"
+	adapterKeyFileSetting        = "GARAM_ADAPTER_TLS_KEY_FILE"
+	adapterServerRootSetting     = "GARAM_ADAPTER_SERVER_ROOT_FILE"
+	adapterControlURLSetting     = "GARAM_ADAPTER_CONTROL_URL"
+	adapterControlRootSetting    = "GARAM_ADAPTER_CONTROL_ROOT_FILE"
+	adapterPlacementTokenSetting = "GARAM_ADAPTER_PLACEMENT_TOKEN_FILE"
+	adapterOutboxDirSetting      = "GARAM_ADAPTER_OUTBOX_DIR"
+)
+
 // containerSecurityContext is what every container of the agent's Pod carries.
 // It holds the two fields PodSecurity restricted asks of a container and nothing
 // else: readOnlyRootFilesystem is no part of that standard, and naming a user
@@ -205,7 +253,7 @@ func copyFilesCommand(from, to string) string {
 // interpolated into a command is one that can stop being a value — which is the
 // ground ci.md §Security baseline states for a pipeline's inputs, met here at an
 // init container's.
-func writeConfigCommand(dir string, descriptor agentTypeDescriptor, ego, instructions bool) []string {
+func writeConfigCommand(dir string, descriptor agentTypeDescriptor, ego, instructions, controlRoot bool) []string {
 	script := fmt.Sprintf("umask %s && %s", configFileMask,
 		writeFileCommand(descriptor.configFileIn(dir), configContentVariable))
 	if ego {
@@ -213,6 +261,9 @@ func writeConfigCommand(dir string, descriptor agentTypeDescriptor, ego, instruc
 	}
 	if instructions {
 		script += " && " + writeFileCommand(descriptor.instructionsFileIn(dir), instructionsContentVariable)
+	}
+	if controlRoot {
+		script += " && " + writeFileCommand(controlRootMountPath+"/"+controlRootFile, controlRootContentVariable)
 	}
 
 	return shellCommand(script)
@@ -584,12 +635,17 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 			corev1.EnvVar{Name: descriptor.listenAddressVariable, Value: descriptor.gatewayAddress})
 	}
 
-	if err := r.applyConfig(agent, statefulSet, container, descriptor); err != nil {
+	controlRoot, err := r.controlRootFor(agent)
+	if err != nil {
+		return err
+	}
+	if err := r.applyConfig(agent, statefulSet, container, descriptor, controlRoot); err != nil {
 		return err
 	}
 	applySeed(r.CopyImage, statefulSet)
-	// After the config container, so that the init containers that run to
-	// completion come first; nothing the adapter reads depends on the order.
+	r.applyOutbox(agent, statefulSet, descriptor)
+	// After the init containers that run to completion, which make what the
+	// adapter mounts: the outbox directory and the control root.
 	r.applyAdapter(agent, statefulSet, descriptor)
 
 	// Last, because appending to the container slice can move it and leave
@@ -677,13 +733,13 @@ func (r *AgentReconciler) egoFor(agent *agentv1alpha1.Agent, descriptor agentTyp
 // credential ADR 0010 delivers: that volume answers a rule about key material,
 // and a pin set is public. The mode is not.
 func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
-	container *corev1.Container, descriptor agentTypeDescriptor) error {
+	container *corev1.Container, descriptor agentTypeDescriptor, controlRoot []byte) error {
 	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
 	egoText := r.egoFor(agent, descriptor)
 	ego := egoText != ""
 	instructionsText := r.instructionsFor(agent, descriptor)
 	instructions := instructionsText != ""
-	if len(agent.Spec.Tools.Pins) == 0 && agent.Spec.Model == nil && !ego && !instructions {
+	if len(agent.Spec.Tools.Pins) == 0 && agent.Spec.Model == nil && !ego && !instructions && controlRoot == nil {
 		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
 			return initContainer.Name == configContainerName
 		})
@@ -708,7 +764,7 @@ func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *a
 	// Always, on the ground the credential's init container already carries: the
 	// image is the deployer's and nothing here requires its tag to name one build.
 	config.ImagePullPolicy = corev1.PullAlways
-	config.Command = writeConfigCommand(descriptor.configMountPath, descriptor, ego, instructions)
+	config.Command = writeConfigCommand(descriptor.configMountPath, descriptor, ego, instructions, controlRoot != nil)
 	config.Env = []corev1.EnvVar{{Name: configContentVariable, Value: file}}
 	if ego {
 		config.Env = append(config.Env, corev1.EnvVar{Name: egoContentVariable, Value: egoText})
@@ -718,6 +774,19 @@ func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *a
 	}
 	config.SecurityContext = containerSecurityContext()
 	config.VolumeMounts = []corev1.VolumeMount{{Name: configVolumeName, MountPath: descriptor.configMountPath}}
+
+	// The control root is public, and the manager already reads it, so it takes
+	// the config file's road into the Pod: a variable on this container alone,
+	// written into a volume of its own that only the adapter mounts (ADR 0049).
+	if controlRoot != nil {
+		config.Env = append(config.Env, corev1.EnvVar{Name: controlRootContentVariable, Value: string(controlRoot)})
+		config.VolumeMounts = append(config.VolumeMounts,
+			corev1.VolumeMount{Name: controlRootVolumeName, MountPath: controlRootMountPath})
+		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name:         controlRootVolumeName,
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+	}
 
 	// Read-only, because the agent reads these files and writes nothing back to
 	// them. Only the agent mounts them: the instructions file is no other
@@ -848,15 +917,94 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 	adapter.Args = []string{"adapter"}
 	adapter.SecurityContext = containerSecurityContext()
 	adapter.Env = []corev1.EnvVar{
-		{Name: "GARAM_ADAPTER_AGENT", Value: grn},
-		{Name: "GARAM_ADAPTER_MACHINE_URL", Value: "https://" + r.GaramAddress},
-		{Name: "GARAM_ADAPTER_GATEWAY_URL", Value: "http://" + descriptor.gatewayAddress},
-		{Name: "GARAM_ADAPTER_GATEWAY_AGENT", Value: grn},
-		{Name: "GARAM_ADAPTER_TLS_CERT_FILE", Value: adapterCredentialsMountPath + "/" + garam.CertificateKey},
-		{Name: "GARAM_ADAPTER_TLS_KEY_FILE", Value: adapterCredentialsMountPath + "/" + garam.KeyKey},
-		{Name: "GARAM_ADAPTER_SERVER_ROOT_FILE", Value: adapterCredentialsMountPath + "/" + garam.ServerRootKey},
+		{Name: adapterAgentSetting, Value: grn},
+		{Name: adapterMachineURLSetting, Value: "https://" + r.GaramAddress},
+		{Name: adapterGatewayURLSetting, Value: "http://" + descriptor.gatewayAddress},
+		{Name: adapterCertFileSetting, Value: adapterCredentialsMountPath + "/" + garam.CertificateKey},
+		{Name: adapterKeyFileSetting, Value: adapterCredentialsMountPath + "/" + garam.KeyKey},
+		{Name: adapterServerRootSetting, Value: adapterCredentialsMountPath + "/" + garam.ServerRootKey},
 	}
 	adapter.VolumeMounts = adapterVolumeMounts()
+	if !r.adapterFenced(agent) {
+		// Legacy and unfenced: garam@fdfb76d's adapter refuses to start without
+		// this (internal/cli/delivery.go:90-91), and garam@e81a1e0's reads it
+		// nowhere, so it is kept for every image this mode runs with (ADR 0049).
+		adapter.Env = append(adapter.Env, corev1.EnvVar{Name: adapterGatewayAgentSetting, Value: grn})
+
+		return
+	}
+
+	// Fenced (garam@e81a1e0, ADR-0084): the three control settings together, and
+	// the outbox beside them, which that adapter requires
+	// (garam@e81a1e0:internal/cli/cli.go:79-91,188-191;
+	// internal/cli/delivery.go:94-109).
+	adapter.Env = append(adapter.Env,
+		corev1.EnvVar{Name: adapterControlURLSetting, Value: "https://" + r.ControlAddress},
+		corev1.EnvVar{Name: adapterControlRootSetting, Value: controlRootMountPath + "/" + controlRootFile},
+		corev1.EnvVar{Name: adapterPlacementTokenSetting, Value: placementMountPath + "/" + placementTokenKey},
+		corev1.EnvVar{Name: adapterOutboxDirSetting, Value: outboxMountPath})
+	adapter.VolumeMounts = append(adapter.VolumeMounts,
+		corev1.VolumeMount{Name: controlRootVolumeName, MountPath: controlRootMountPath, ReadOnly: true},
+		// The outbox and nothing else of the state claim: the adapter forwards
+		// the entries and clears the ones garam acknowledged
+		// (garam@e81a1e0:internal/delivery/outbox.go:142-157), so it writes, and
+		// it never sees the memory store.
+		corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: descriptor.outboxDir()})
+}
+
+// adapterFenced reports whether the agent's adapter activates through the
+// control service: only where the adapter is built, this operator is told to,
+// and the agent is the control service's, since only those register a
+// placement to activate (ADR 0049).
+func (r *AgentReconciler) adapterFenced(agent *agentv1alpha1.Agent) bool {
+	return r.adapterBuilt(agent) && r.AdapterControl &&
+		agent.Spec.Identity.Source == agentv1alpha1.DesiredSourceControl
+}
+
+// controlRootFor is the control root to give the agent's adapter, nil where it
+// is given none. It is read at each reconcile, so a rotated root reaches the
+// next Pod.
+func (r *AgentReconciler) controlRootFor(agent *agentv1alpha1.Agent) ([]byte, error) {
+	if !r.adapterFenced(agent) {
+		return nil, nil
+	}
+	root, err := os.ReadFile(r.ControlRootFile)
+	if err != nil {
+		return nil, fmt.Errorf("read the control root: %w", err)
+	}
+
+	return root, nil
+}
+
+// applyOutbox builds, where the adapter is fenced, the init container that
+// makes the agent's outbox directory on the state claim as the Pod's user,
+// before the adapter mounts it, and removes it elsewhere. It makes the directory
+// only where it is absent and touches nothing else.
+func (r *AgentReconciler) applyOutbox(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
+	descriptor agentTypeDescriptor) {
+	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
+	if !r.adapterFenced(agent) {
+		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
+			return initContainer.Name == outboxContainerName
+		})
+
+		return
+	}
+
+	outbox := containerNamed(initContainers, outboxContainerName)
+	outbox.Image = r.CopyImage
+	// Always, on the ground the credential's init container carries.
+	outbox.ImagePullPolicy = corev1.PullAlways
+	outbox.Command = makeOutboxCommand(outboxStateMountPath + "/" + descriptor.outboxDir())
+	outbox.SecurityContext = containerSecurityContext()
+	outbox.VolumeMounts = []corev1.VolumeMount{{Name: stateVolumeName, MountPath: outboxStateMountPath}}
+}
+
+// makeOutboxCommand makes dir, and its parent, where dir is absent, the
+// directory itself at outboxDirMode.
+func makeOutboxCommand(dir string) []string {
+	return shellCommand(fmt.Sprintf("if [ ! -d %[1]s ]; then mkdir -p %[2]s && mkdir -m %[3]s %[1]s; fi",
+		dir, path.Dir(dir), outboxDirMode))
 }
 
 // adapterVolumeMounts is what the adapter reads, and nothing the agent alone
@@ -865,12 +1013,8 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 // copy for the reason the agent does — every container runs as the Pod's user.
 //
 // It also mounts the copy of the placement token, which the adapter alone
-// reads. No setting names the token's file to the adapter yet: garam#1169 has
-// not published one, and it is set in the change that cites that commit
-// (ADR 0042). The agent's outbox is still to join here
-// (/var/lib/sherlock/memory/outbox on the state volume,
-// sherlock@ecf4621:internal/gateway/outbox.go:18-26), with the adapter setting
-// that names it (garam#1169).
+// reads, and which it is told of only where it activates through the control
+// service (ADR 0049); there it mounts the control root and the outbox too.
 func adapterVolumeMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{
 		{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true},

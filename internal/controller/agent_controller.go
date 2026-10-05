@@ -69,6 +69,18 @@ type AgentReconciler struct {
 	// not isolated, until a person has stopped the agent and copied its state
 	// (ADR 0047).
 	MigrateSharedClaims bool
+
+	// AdapterControl gives the adapter of every Control-source agent the
+	// control service's settings, so it activates through it rather than
+	// running unfenced (ADR 0049). It is off until the control service serves
+	// activation and the deployment's adapter image reads the settings.
+	AdapterControl bool
+
+	// ControlAddress is the control service's host and port, and
+	// ControlRootFile the file holding the root its serving certificate chains
+	// to. Both are read only where AdapterControl is on.
+	ControlAddress  string
+	ControlRootFile string
 }
 
 // +kubebuilder:rbac:groups=agent.garam.sh,resources=agents,verbs=get;list;watch;patch

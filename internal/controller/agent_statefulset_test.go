@@ -507,13 +507,13 @@ var _ = Describe("Agent workload", func() {
 		By("configuring it as the agent, against garam's listener and the agent's gateway")
 		gatewayAddress := agentTypeSherlock.gatewayAddress
 		Expect(environmentOf(adapter)).To(Equal(map[string]string{
-			"GARAM_ADAPTER_AGENT":            testGRN,
-			"GARAM_ADAPTER_MACHINE_URL":      "https://" + testGaramAddress,
-			"GARAM_ADAPTER_GATEWAY_URL":      "http://" + gatewayAddress,
-			"GARAM_ADAPTER_GATEWAY_AGENT":    testGRN,
-			"GARAM_ADAPTER_TLS_CERT_FILE":    adapterCredentialsMountPath + "/certificate.pem",
-			"GARAM_ADAPTER_TLS_KEY_FILE":     adapterCredentialsMountPath + "/key.pem",
-			"GARAM_ADAPTER_SERVER_ROOT_FILE": adapterCredentialsMountPath + "/server-root.pem",
+			adapterAgentSetting:        testGRN,
+			adapterMachineURLSetting:   "https://" + testGaramAddress,
+			adapterGatewayURLSetting:   "http://" + gatewayAddress,
+			adapterGatewayAgentSetting: testGRN,
+			adapterCertFileSetting:     adapterCredentialsMountPath + "/certificate.pem",
+			adapterKeyFileSetting:      adapterCredentialsMountPath + "/key.pem",
+			adapterServerRootSetting:   adapterCredentialsMountPath + "/server-root.pem",
 		}))
 
 		By("mounting the agent's credential copy and the placement token's copy read-only, and nothing else")
@@ -837,7 +837,7 @@ var _ = Describe("Agent workload", func() {
 
 	It("writes the instructions file beside the ego, at the mode the config file takes", func() {
 		dir := GinkgoT().TempDir()
-		command := writeConfigCommand(dir, agentTypeSherlock, true, true)
+		command := writeConfigCommand(dir, agentTypeSherlock, true, true, false)
 		run := exec.Command(command[0], command[1:]...)
 		run.Dir = dir
 		run.Env = append(os.Environ(), configContentVariable+"=tools: {}\n", egoContentVariable+"="+testEgo,
@@ -870,7 +870,7 @@ var _ = Describe("Agent workload", func() {
 		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}})
 		Expect(err).NotTo(HaveOccurred())
 
-		command := writeConfigCommand(dir, agentTypeSherlock, false, false)
+		command := writeConfigCommand(dir, agentTypeSherlock, false, false, false)
 		run := exec.Command(command[0], command[1:]...)
 		run.Dir = dir
 		run.Env = append(os.Environ(), configContentVariable+"="+file)
@@ -1021,7 +1021,7 @@ var _ = Describe("Agent workload", func() {
 		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: newModel("writes-an-ego")})
 		Expect(err).NotTo(HaveOccurred())
 
-		command := writeConfigCommand(dir, agentTypeSherlock, true, false)
+		command := writeConfigCommand(dir, agentTypeSherlock, true, false, false)
 		run := exec.Command(command[0], command[1:]...)
 		run.Dir = dir
 		run.Env = append(os.Environ(), configContentVariable+"="+file, egoContentVariable+"="+ego)
