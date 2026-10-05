@@ -72,7 +72,7 @@ func newScheme(t *testing.T) *runtime.Scheme {
 func newConstructor(t *testing.T, scheme *runtime.Scheme, c client.Client) *constructor.Agent {
 	t.Helper()
 
-	return constructor.NewAgent(c, scheme, namespace, image, resource.MustParse(storageSize))
+	return constructor.NewAgent(c, scheme, namespace, image, resource.MustParse(storageSize), nil)
 }
 
 // newClient substitutes the API server, which is the boundary this unit is
@@ -99,6 +99,29 @@ func TestConstructBuildsTheAgentFromTheOperatorsOwnConfiguration(t *testing.T) {
 	g.Expect(constructed.Spec.StorageSize).To(Equal(resource.MustParse(storageSize)))
 	g.Expect(constructed.Spec.CredentialsSecretName).To(Equal(constructor.Name(sampleAgent) + "-credentials"))
 	g.Expect(constructed.Status.Agent).To(Equal(string(sampleAgent)))
+}
+
+func TestConstructSizesTheWorkspaceWhereTheOperatorNamesASize(t *testing.T) {
+	g := NewWithT(t)
+	scheme := newScheme(t)
+	key := client.ObjectKey{Namespace: namespace, Name: constructor.Name(sampleAgent)}
+
+	// The control: an operator naming no workspace size leaves the field unset,
+	// which claims the workspace at the state's size.
+	unnamed := newClient(scheme)
+	g.Expect(newConstructor(t, scheme, unnamed).
+		Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	constructed := &agentv1alpha1.Agent{}
+	g.Expect(unnamed.Get(context.Background(), key, constructed)).To(Succeed())
+	g.Expect(constructed.Spec.WorkspaceStorageSize).To(BeNil())
+
+	named := newClient(scheme)
+	workspaceSize := resource.MustParse("7Gi")
+	g.Expect(constructor.NewAgent(named, scheme, namespace, image, resource.MustParse(storageSize), &workspaceSize).
+		Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	g.Expect(named.Get(context.Background(), key, constructed)).To(Succeed())
+	g.Expect(constructed.Spec.WorkspaceStorageSize).To(HaveValue(Equal(workspaceSize)))
+	g.Expect(constructed.Spec.StorageSize).To(Equal(resource.MustParse(storageSize)))
 }
 
 func TestConstructDeclaresTheToolSetTheDefinitionCarriesAndNoneWhereItCarriesNone(t *testing.T) {
@@ -422,7 +445,7 @@ func TestConstructNamesTheAgentInTheOperatorsOwnNamespace(t *testing.T) {
 func newCorrector(t *testing.T, scheme *runtime.Scheme, c client.Client) *constructor.Agent {
 	t.Helper()
 
-	return constructor.NewAgent(c, scheme, namespace, laterImage, resource.MustParse(storageSize))
+	return constructor.NewAgent(c, scheme, namespace, laterImage, resource.MustParse(storageSize), nil)
 }
 
 // imageOf is what the cluster carries in the spec of the Agent constructed for

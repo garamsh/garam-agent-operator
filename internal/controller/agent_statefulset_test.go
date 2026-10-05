@@ -71,8 +71,9 @@ var _ = Describe("Agent workload", func() {
 		Expect(container.EnvFrom).To(BeEmpty())
 
 		By("claiming the Agent's storage size for the volume it keeps state on")
-		Expect(workload.Spec.VolumeClaimTemplates).To(HaveLen(1))
+		Expect(workload.Spec.VolumeClaimTemplates).To(HaveLen(2))
 		claim := workload.Spec.VolumeClaimTemplates[0]
+		Expect(claim.Name).To(Equal(stateVolumeName))
 		Expect(claim.Spec.Resources.Requests.Storage().String()).To(Equal("1Gi"))
 		Expect(container.VolumeMounts).To(ContainElement(corev1.VolumeMount{
 			Name:      claim.Name,
@@ -324,9 +325,9 @@ var _ = Describe("Agent workload", func() {
 		Expect(listen[agentTypeSherlock.listenAddressVariable]).To(Equal(agentTypeSherlock.workspaceAddress))
 		Expect(environmentOf(pod.Containers[0])[agentTypeSherlock.workspaceAddressVariable]).To(Equal(listen[agentTypeSherlock.listenAddressVariable]))
 
-		By("giving it a directory on the volume the agent's state is claimed on, which it can create in")
+		By("giving it a directory on a volume of its own, at the path the agent holds its state at")
 		Expect(workspace.VolumeMounts).To(ConsistOf(
-			corev1.VolumeMount{Name: stateVolumeName, MountPath: agentTypeSherlock.stateMountPath}))
+			corev1.VolumeMount{Name: workspaceVolumeName, MountPath: agentTypeSherlock.stateMountPath}))
 		Expect(listen[agentTypeSherlock.workspaceDirVariable]).To(HavePrefix(agentTypeSherlock.stateMountPath + "/"))
 
 		By("leaving what its image runs alone, and mounting it no credential it does not read")
@@ -335,7 +336,7 @@ var _ = Describe("Agent workload", func() {
 		Expect(workspace.VolumeMounts).NotTo(ContainElement(HaveField("Name", credentialsVolumeName)))
 	})
 
-	It("puts the agent's memory store and its outbox on the state volume, in a subtree disjoint from the workspace's", func() {
+	It("puts the agent's memory store and its outbox on the state volume, which the workspace does not mount", func() {
 		name := "keeps-memory-on-its-volume"
 		createSecret(credentialsSecretName(name))
 		createAgent(newAgent(name))
@@ -359,11 +360,15 @@ var _ = Describe("Agent workload", func() {
 		Expect(memoryDir).To(HavePrefix(volume))
 		Expect(memoryDir).NotTo(Equal(volume))
 
-		By("keeping that subtree and the workspace's apart, neither holding the other")
-		workspaceDir := environmentOf(containerOf(pod, workspaceContainerName))[agentTypeSherlock.workspaceDirVariable] + "/"
-		Expect(workspaceDir).To(HavePrefix(volume))
-		Expect(memoryDir).NotTo(HavePrefix(workspaceDir))
-		Expect(workspaceDir).NotTo(HavePrefix(memoryDir))
+		By("mounting the state volume into the agent alone, so the memory path resolves to nothing in the workspace")
+		for _, container := range append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...) {
+			if container.Name == agentContainerName {
+				continue
+			}
+			Expect(container.VolumeMounts).NotTo(ContainElement(HaveField("Name", stateVolumeName)), container.Name)
+		}
+		workspace := containerOf(pod, workspaceContainerName)
+		Expect(workspace.VolumeMounts).To(ConsistOf(HaveField("Name", workspaceVolumeName)))
 	})
 
 	It("tells the workspace to run exec children as the user the Pod names, which is what lets it run any", func() {
@@ -1087,17 +1092,19 @@ func restrictedNamespace(name string) string {
 
 // podOf is the Pod a StatefulSet's template describes, in namespace. The
 // StatefulSet controller is what turns a claim template into a volume and
-// envtest runs none, so the state volume is supplied here; PodSecurity reads an
-// emptyDir and a claim alike.
+// envtest runs none, so a volume for each claim template is supplied here;
+// PodSecurity reads an emptyDir and a claim alike.
 func podOf(statefulSet *appsv1.StatefulSet, namespace string) *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: statefulSet.Name + "-0", Namespace: namespace},
 		Spec:       *statefulSet.Spec.Template.Spec.DeepCopy(),
 	}
-	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-		Name:         stateVolumeName,
-		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-	})
+	for _, claim := range statefulSet.Spec.VolumeClaimTemplates {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name:         claim.Name,
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+	}
 
 	return pod
 }

@@ -69,6 +69,7 @@ func main() {
 	var garamCredentialSecret, garamEnrollmentTokenFile string
 	var controlAddress, controlTrustFile string
 	var agentImage, agentStorageSize, agentCopyImage, agentWorkspaceImage, agentAdapterImage string
+	var agentWorkspaceStorageSize string
 	var garamPollInterval, garamRenewalInterval, garamReportInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -125,6 +126,10 @@ func main() {
 	flag.StringVar(&agentStorageSize, "agent-storage-size", "",
 		"The size of the volume every agent this operator constructs keeps its state on, as a Kubernetes "+
 			"quantity. Required where garam-address is set.")
+	flag.StringVar(&agentWorkspaceStorageSize, "agent-workspace-storage-size", "",
+		"The size of the volume the workspace of every agent this operator constructs serves its files from, "+
+			"as a Kubernetes quantity. It is a volume of its own, apart from the agent's state. Unset claims it "+
+			"at agent-storage-size.")
 	flag.StringVar(&agentCopyImage, "agent-copy-image", "",
 		"The image the init container of every agent's Pod runs to copy that agent's credential into the "+
 			"volume the agent reads it from. It needs a shell and install, and nothing of the agent. It has "+
@@ -323,8 +328,19 @@ func main() {
 				"agent-storage-size", agentStorageSize)
 			os.Exit(1)
 		}
+		var workspaceStorageSize *resource.Quantity
+		if agentWorkspaceStorageSize != "" {
+			size, err := resource.ParseQuantity(agentWorkspaceStorageSize)
+			if err != nil {
+				setupLog.Error(err, "Failed to read agent-workspace-storage-size",
+					"agent-workspace-storage-size", agentWorkspaceStorageSize)
+				os.Exit(1)
+			}
+			workspaceStorageSize = &size
+		}
 		garamClient := garam.NewClient(garamAddress, tlsConfig)
-		builder := constructor.NewAgent(mgr.GetClient(), mgr.GetScheme(), namespace, agentImage, storageSize)
+		builder := constructor.NewAgent(mgr.GetClient(), mgr.GetScheme(), namespace, agentImage, storageSize,
+			workspaceStorageSize)
 		if err := mgr.Add(garam.NewPoller(garamClient, builder, garamPollInterval)); err != nil {
 			setupLog.Error(err, "Failed to add the garam poller", "address", garamAddress)
 			os.Exit(1)

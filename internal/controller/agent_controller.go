@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -219,14 +220,29 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 	}
 
 	statefulSet, err := r.reconcileStatefulSet(ctx, agent, descriptor)
+	if errors.Is(err, errReplacing) {
+		// The old StatefulSet's deletion is an event on a StatefulSet this Agent
+		// owns, so it brings this Agent back to create the next one.
+		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonWorkloadReplacing,
+			fmt.Sprintf("StatefulSet %q is being replaced to give the workspace a volume of its own; its Pod and its claims are kept", agent.Name))
+		setAvailable(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonWorkloadNotObserved,
+			"The workload was not reconciled, so its readiness was not observed. The Synced condition says why")
+
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 
-	if claimed := claimedStorageSize(statefulSet); claimed.Cmp(agent.Spec.StorageSize) != 0 {
+	workspaceSize := workspaceStorageSize(agent)
+	if claimed := claimedStorageSize(statefulSet, stateVolumeName); claimed.Cmp(agent.Spec.StorageSize) != 0 {
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageSizeImmutable,
 			fmt.Sprintf("The volume was claimed at %s and spec.storageSize now asks for %s, which a StatefulSet's claim template cannot be changed to",
 				claimed.String(), agent.Spec.StorageSize.String()))
+	} else if claimed := claimedStorageSize(statefulSet, workspaceVolumeName); claimed.Cmp(workspaceSize) != 0 {
+		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageSizeImmutable,
+			fmt.Sprintf("The workspace's volume was claimed at %s and the spec now asks for %s, which a StatefulSet's claim template cannot be changed to",
+				claimed.String(), workspaceSize.String()))
 	} else if claimedClass := claimedStorageClass(statefulSet); !ptr.Equal(claimedClass, agent.Spec.StorageClassName) {
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageClassImmutable,
 			fmt.Sprintf("The volume was claimed from storage class %s and spec.storageClassName now asks for %s, which a StatefulSet's claim template cannot be changed to",

@@ -1,7 +1,18 @@
 #!/bin/sh
 # Accepts the command line this operator gives sherlock's agent, refuses one
 # without the agent ID sherlock refuses to start without, and then waits.
+# Given no arguments at all it stands in for the workspace instead, which this
+# operator starts with no command, and only waits.
 set -eu
+
+if [ "$#" -eq 0 ]; then
+  echo "agent-stand-in: serving a workspace"
+  trap 'exit 0' TERM INT
+  while :; do
+    sleep 3600 &
+    wait $!
+  done
+fi
 
 if [ "${1:-}" != agent ]; then
   echo "agent-stand-in: expected the agent subcommand, got: $*" >&2

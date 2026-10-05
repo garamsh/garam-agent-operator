@@ -234,8 +234,9 @@ spec:
                 type: object
               storageClassName:
                 description: |-
-                  storageClassName is the StorageClass the agent's persistent volume is
-                  provisioned from. Unset means the cluster's default StorageClass.
+                  storageClassName is the StorageClass the agent's persistent volumes are
+                  provisioned from, its state's and its workspace's. Unset means the
+                  cluster's default StorageClass.
                 minLength: 1
                 type: string
               storageSize:
@@ -288,6 +289,20 @@ spec:
                 - claude-code
                 - codex
                 type: string
+              workspaceStorageSize:
+                anyOf:
+                - type: integer
+                - type: string
+                description: |-
+                  workspaceStorageSize is the size of the persistent volume the agent's
+                  workspace serves its files from, which is a volume of its own: code the
+                  agent runs reaches the workspace and never the agent's state. Unset means
+                  the size storageSize names.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+                x-kubernetes-validations:
+                - message: workspaceStorageSize must be greater than zero
+                  rule: quantity(string(self)).isGreaterThan(quantity('0'))
             required:
             - credentialsSecretName
             - image

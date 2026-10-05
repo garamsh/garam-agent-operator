@@ -87,6 +87,11 @@ func (in *AgentList) DeepCopyObject() runtime.Object {
 func (in *AgentSpec) DeepCopyInto(out *AgentSpec) {
 	*out = *in
 	out.StorageSize = in.StorageSize.DeepCopy()
+	if in.WorkspaceStorageSize != nil {
+		in, out := &in.WorkspaceStorageSize, &out.WorkspaceStorageSize
+		x := (*in).DeepCopy()
+		*out = &x
+	}
 	if in.StorageClassName != nil {
 		in, out := &in.StorageClassName, &out.StorageClassName
 		*out = new(string)

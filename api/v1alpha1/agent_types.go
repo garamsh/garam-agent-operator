@@ -53,8 +53,17 @@ type AgentSpec struct {
 	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="storageSize must be greater than zero"
 	StorageSize resource.Quantity `json:"storageSize"`
 
-	// storageClassName is the StorageClass the agent's persistent volume is
-	// provisioned from. Unset means the cluster's default StorageClass.
+	// workspaceStorageSize is the size of the persistent volume the agent's
+	// workspace serves its files from, which is a volume of its own: code the
+	// agent runs reaches the workspace and never the agent's state. Unset means
+	// the size storageSize names.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="workspaceStorageSize must be greater than zero"
+	WorkspaceStorageSize *resource.Quantity `json:"workspaceStorageSize,omitempty"`
+
+	// storageClassName is the StorageClass the agent's persistent volumes are
+	// provisioned from, its state's and its workspace's. Unset means the
+	// cluster's default StorageClass.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	StorageClassName *string `json:"storageClassName,omitempty"`
@@ -337,6 +346,12 @@ const (
 	// ReasonModelKeySecretMissing is set when the Secret the spec names for the
 	// model's API key does not exist, which leaves the workload unbuilt.
 	ReasonModelKeySecretMissing = "ModelKeySecretMissing"
+
+	// ReasonWorkloadReplacing is set while the StatefulSet is replaced to give the
+	// agent's state and its workspace separate volumes. The old one is deleted
+	// leaving its Pod and its claims in place, and the next is created once it
+	// is gone.
+	ReasonWorkloadReplacing = "WorkloadReplacing"
 
 	// ReasonStorageSizeImmutable is set when the spec asks for a volume size the
 	// workload cannot be changed to.
