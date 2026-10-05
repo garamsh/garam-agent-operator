@@ -36,6 +36,7 @@ const (
 	keyModel        = "model.name"
 	pinValue        = "sha256:files"
 	keyNote         = "team-note"
+	kindNotEligible = "not_cut_over_eligible"
 
 	legacy       = "grn:acme:default:agent:1e9ac1"
 	legacyEpoch  = "3"
@@ -379,9 +380,11 @@ func TestCutover_ImportRefusesWhatCannotBeImportedAsIs(t *testing.T) {
 		{"a digest other than the source's", func(c *cutover) { c.digest = strings.Repeat("0", 64) }, ok,
 			http.StatusConflict, "digest_mismatch"},
 		{"an agent already fenced", func(c *cutover) { c.mode, c.class = "fenced", "not-applicable" }, ok,
-			http.StatusUnprocessableEntity, "not_cut_over_eligible"},
+			http.StatusUnprocessableEntity, kindNotEligible},
+		{"a mode other than legacy", func(c *cutover) { c.mode = "fenced" }, ok,
+			http.StatusUnprocessableEntity, kindNotEligible},
 		{"values garam cannot read", func(c *cutover) { c.class = "blocked:unparseable" }, ok,
-			http.StatusUnprocessableEntity, "not_cut_over_eligible"},
+			http.StatusUnprocessableEntity, kindNotEligible},
 		{"a pin with no disposition", nil, map[string]string{keyModel: dispArchive},
 			http.StatusUnprocessableEntity, "key_disposition_required"},
 		{"another key with no disposition", nil, map[string]string{keyPin: dispImport},
