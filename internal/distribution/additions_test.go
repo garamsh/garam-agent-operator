@@ -41,7 +41,7 @@ func TestDesired_CarriesTheEmbeddingAndTheWorkspaceSizeWhereARevisionNamesThem(t
 	_, err = e.definitions.Configure(ctx, definition.ConfigureInput{
 		Request: definition.RequestKey{Organization: orgID, RequestID: "with-embedding"},
 		Binding: definition.Binding{
-			Actor: "actor", Operation: "agent:configure", Target: agentA,
+			Actor: "configurer", Operation: "agent:configure", Target: agentA,
 			Assignment: definition.Assignment{Operator: controller, Epoch: epoch},
 		},
 		Agent: agentA, ExpectedRevision: 2,

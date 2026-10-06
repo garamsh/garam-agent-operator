@@ -9,9 +9,12 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/secretref"
 )
 
+// unseparated is a reference with no "/", which names a Secret and no key.
+const unseparated = "model-api-key"
+
 func TestParse_AcceptsOnlyASecretNameAndKeyKubernetesAllows(t *testing.T) {
 	for _, ref := range []string{
-		"", "model-api-key", "/api-key", "model-api-key/", "model-api-key/api/key",
+		"", unseparated, "/api-key", "model-api-key/", "model-api-key/api/key",
 		"Model-Api-Key/api-key", "-model/api-key", "model-/api-key", "model_api/key",
 		"model-api-key/api key", "model-api-key/.", "model-api-key/..", "model-api-key/café",
 	} {

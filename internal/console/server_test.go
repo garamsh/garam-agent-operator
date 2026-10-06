@@ -97,15 +97,29 @@ type env struct {
 	profile      definition.ProfileRef
 	template     definition.TemplateRef
 	// embedding is the configure bodies' configuration.model.embedding, absent where nil.
-	embedding   map[string]string
+	embedding   *embeddingBody
 	authorities int
 }
 
+// The model and the embeddings endpoint the configure bodies name.
+const (
+	modelProvider    = "anthropic"
+	modelBaseURL     = "https://api.anthropic.com"
+	modelName        = "claude-opus-5-5"
+	embeddingBaseURL = "https://embeddings.example/v1"
+	embeddingName    = "bge-base-en-v1.5"
+)
+
+// embeddingBody is a configure body's configuration.model.embedding; an empty field is left out.
+type embeddingBody struct {
+	BaseURL   string `json:"baseUrl,omitempty"`
+	Name      string `json:"name,omitempty"`
+	APIKeyRef string `json:"apiKeyRef,omitempty"`
+}
+
 // anEmbedding is the embeddings endpoint the configure bodies name unless a test changes it.
-func anEmbedding() map[string]string {
-	return map[string]string{
-		"baseUrl": "https://embeddings.example/v1", "name": "bge-base-en-v1.5", "apiKeyRef": "embeddings/key",
-	}
+func anEmbedding() *embeddingBody {
+	return &embeddingBody{BaseURL: embeddingBaseURL, Name: embeddingName, APIKeyRef: "embeddings/key"}
 }
 
 // controllerGRN is the controller agents are created on, where the configure tests' assignment is.
@@ -158,8 +172,8 @@ func newEnv(t *testing.T, consoleOrigins ...string) *env {
 // reference apiKeyRef.
 func testConfiguration(ego, apiKeyRef string) map[string]any {
 	return map[string]any{
-		"model": map[string]any{"provider": "anthropic", "baseUrl": "https://api.anthropic.com",
-			"name": "claude-opus-5-5", "apiKeyRef": apiKeyRef, "embedding": anEmbedding()},
+		"model": map[string]any{"provider": modelProvider, "baseUrl": modelBaseURL,
+			"name": modelName, "apiKeyRef": apiKeyRef, "embedding": anEmbedding()},
 		"ego":   ego,
 		"tools": map[string]string{"web_fetch": "sha256:aa"},
 	}

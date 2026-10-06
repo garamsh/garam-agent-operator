@@ -10,6 +10,13 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
+const (
+	// mockProvider is the model provider sherlock runs offline, with no embeddings endpoint.
+	mockProvider = "mock"
+	// otherEmbeddingName is an embedding model other than config's.
+	otherEmbeddingName = "text-embedding-3-small"
+)
+
 // withModel is config's configuration with its model changed by change.
 func withModel(change func(*definition.Model)) definition.Configuration {
 	c := config("ego", definition.ToolPins{webFetch: firstPin})
@@ -25,7 +32,7 @@ func registeredOnTheMock(t *testing.T) fixture {
 	f := newFixture(t, registration{agent: firstAgent})
 	mock, err := f.service.PublishTemplate(ctx, org, definition.Template{
 		Name: "offline", Profile: f.profile,
-		Config: withModel(func(m *definition.Model) { m.Provider, m.Embedding = "mock", nil }),
+		Config: withModel(func(m *definition.Model) { m.Provider, m.Embedding = mockProvider, nil }),
 	})
 	require.NoError(t, err)
 	_, _, err = f.service.CreateAgent(ctx, f.create("create", definition.TemplateRef{Name: mock.Name, Version: mock.Version}))
@@ -56,8 +63,8 @@ var embeddingAccepted = []struct {
 }{
 	{"a model with its embedding", func(*definition.Model) {}},
 	{"an embedding taking no key", func(m *definition.Model) { m.Embedding.APIKey = "" }},
-	{"the mock naming no embedding", func(m *definition.Model) { m.Provider, m.Embedding = "mock", nil }},
-	{"the mock naming an embedding", func(m *definition.Model) { m.Provider = "mock" }},
+	{"the mock naming no embedding", func(m *definition.Model) { m.Provider, m.Embedding = mockProvider, nil }},
+	{"the mock naming an embedding", func(m *definition.Model) { m.Provider = mockProvider }},
 }
 
 func TestConfigure_RefusesAModelItsAgentCouldNotStartWithAndStoresNothing(t *testing.T) {
@@ -138,9 +145,9 @@ func TestConfigure_RefusesChangingOrRemovingTheEmbeddingOnceSet(t *testing.T) {
 		name   string
 		change func(*definition.Model)
 	}{
-		{"another name", func(m *definition.Model) { m.Embedding.Name = "text-embedding-3-small" }},
+		{"another name", func(m *definition.Model) { m.Embedding.Name = otherEmbeddingName }},
 		{"another base URL", func(m *definition.Model) { m.Embedding.BaseURL = "https://other.example/v1" }},
-		{"removed with the move to the mock", func(m *definition.Model) { m.Provider, m.Embedding = "mock", nil }},
+		{"removed with the move to the mock", func(m *definition.Model) { m.Provider, m.Embedding = mockProvider, nil }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -182,7 +189,7 @@ func TestConfigure_ARevisionNamingNoEmbeddingConstrainsNone(t *testing.T) {
 
 	// Revision 1 names none, so any embedding may follow it.
 	other := f.configure("c1", "ego", 1)
-	other.Config = withModel(func(m *definition.Model) { m.Embedding.Name = "text-embedding-3-small" })
+	other.Config = withModel(func(m *definition.Model) { m.Embedding.Name = otherEmbeddingName })
 	_, err := f.service.Configure(ctx, other)
 	require.NoError(t, err)
 
@@ -199,7 +206,7 @@ func TestConfigure_AnotherOrganizationsAgentIsNotFoundBeforeItsEmbeddingIsCompar
 	_, err := f.service.PublishProfile(ctx, globex, f.profile.Name, settings("1", "2Gi"))
 	require.NoError(t, err)
 	changed := f.configure("c1", "ego", 1)
-	changed.Config = withModel(func(m *definition.Model) { m.Embedding.Name = "text-embedding-3-small" })
+	changed.Config = withModel(func(m *definition.Model) { m.Embedding.Name = otherEmbeddingName })
 
 	// firstAgent was created in org: globex learns nothing of its embedding.
 	inGlobex := changed

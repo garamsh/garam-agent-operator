@@ -11,10 +11,10 @@ import (
 )
 
 func TestConfigure_RefusesAModelWithNoEmbeddingAsEmbeddingRequired(t *testing.T) {
-	for name, embedding := range map[string]map[string]string{
+	for name, embedding := range map[string]*embeddingBody{
 		"no embedding":                  nil,
-		"an embedding with no base URL": {"name": "bge-base-en-v1.5"},
-		"an embedding with no name":     {"baseUrl": "https://embeddings.example/v1"},
+		"an embedding with no base URL": {Name: embeddingName},
+		"an embedding with no name":     {BaseURL: embeddingBaseURL},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t)
@@ -31,7 +31,7 @@ func TestConfigure_RefusesAModelWithNoEmbeddingAsEmbeddingRequired(t *testing.T)
 			accepted := e.configure(t, e.authorize("c1", sound, nil), sound)
 			require.Equal(t, 200, accepted.status, accepted.message)
 			assert.Equal(t, &definition.Embedding{
-				BaseURL: "https://embeddings.example/v1", Name: "bge-base-en-v1.5", APIKey: "embeddings/key",
+				BaseURL: embeddingBaseURL, Name: embeddingName, APIKey: "embeddings/key",
 			}, e.revision(t).Config.Model.Embedding)
 		})
 	}
@@ -39,14 +39,14 @@ func TestConfigure_RefusesAModelWithNoEmbeddingAsEmbeddingRequired(t *testing.T)
 
 func TestConfigure_RefusesAMalformedEmbeddingKeyReference(t *testing.T) {
 	e := newEnv(t)
-	e.embedding["apiKeyRef"] = "embeddings"
+	e.embedding.APIKeyRef = "embeddings"
 	body := e.body("c1", "ego", 1)
 	refused := e.configure(t, e.authorize("c1", body, nil), body)
 	assert.Equal(t, 400, refused.status, refused.message)
 	assert.Equal(t, "invalid_api_key_ref", refused.kind)
 
 	// Control: an embedding taking no key is stored.
-	delete(e.embedding, "apiKeyRef")
+	e.embedding.APIKeyRef = ""
 	sound := e.body("c1", "ego", 1)
 	accepted := e.configure(t, e.authorize("c1", sound, nil), sound)
 	require.Equal(t, 200, accepted.status, accepted.message)
@@ -58,7 +58,7 @@ func TestConfigure_RefusesChangingTheEmbeddingAsEmbeddingImmutable(t *testing.T)
 	first := e.body("c1", "ego", 1)
 	require.Equal(t, 200, e.configure(t, e.authorize("c1", first, nil), first).status)
 
-	e.embedding["name"] = "text-embedding-3-small"
+	e.embedding.Name = "text-embedding-3-small"
 	changed := e.body("c2", "ego", 2)
 	refused := e.configure(t, e.authorize("c2", changed, nil), changed)
 	assert.Equal(t, 409, refused.status, refused.message)
@@ -67,7 +67,7 @@ func TestConfigure_RefusesChangingTheEmbeddingAsEmbeddingImmutable(t *testing.T)
 
 	// Control: changing only the embedding's key is stored.
 	e.embedding = anEmbedding()
-	e.embedding["apiKeyRef"] = "other-embeddings/key"
+	e.embedding.APIKeyRef = "other-embeddings/key"
 	rekeyed := e.body("c3", "ego", 2)
 	accepted := e.configure(t, e.authorize("c3", rekeyed, nil), rekeyed)
 	require.Equal(t, 200, accepted.status, accepted.message)
@@ -78,7 +78,7 @@ func TestCreate_RefusesATemplateWithNoEmbeddingAsEmbeddingRequired(t *testing.T)
 	ctx := context.Background()
 	e := newEnv(t)
 	model := definition.Model{
-		Provider: "anthropic", BaseURL: "https://api.anthropic.com", Name: "claude-opus-5-5", APIKey: "model-api-key/api-key",
+		Provider: modelProvider, BaseURL: modelBaseURL, Name: modelName, APIKey: "model-api-key/api-key",
 	}
 	// Stored straight into the repository: publishing refuses it now, so this stands for a
 	// template published before the rule.
@@ -97,7 +97,7 @@ func TestCreate_RefusesATemplateWithNoEmbeddingAsEmbeddingRequired(t *testing.T)
 	assert.Equal(t, calls, e.registrar.calls, "garam is not asked")
 
 	// Control: the same request id naming a template whose model names its embedding creates.
-	model.Embedding = &definition.Embedding{BaseURL: "https://embeddings.example/v1", Name: "bge-base-en-v1.5"}
+	model.Embedding = &definition.Embedding{BaseURL: embeddingBaseURL, Name: embeddingName}
 	sound, err := e.definitions.PublishTemplate(ctx, org, definition.Template{
 		Name: "sound", Profile: e.profile, Config: definition.Configuration{Model: model},
 	})

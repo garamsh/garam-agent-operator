@@ -50,9 +50,9 @@ func TestCreate_RefusesATemplateWithAMalformedKeyReference(t *testing.T) {
 	e := newEnv(t)
 	configWithKey := func(keyRef string) definition.Configuration {
 		return definition.Configuration{Model: definition.Model{
-			Provider: "anthropic", BaseURL: "https://api.anthropic.com", Name: "claude-opus-5-5",
+			Provider: modelProvider, BaseURL: modelBaseURL, Name: modelName,
 			APIKey:    definition.SecretRef(keyRef),
-			Embedding: &definition.Embedding{BaseURL: "https://embeddings.example/v1", Name: "bge-base-en-v1.5"},
+			Embedding: &definition.Embedding{BaseURL: embeddingBaseURL, Name: embeddingName},
 		}}
 	}
 
