@@ -1,6 +1,6 @@
 # ADR 0043: Pull managed agents' desired state from the control service in a domain of its own, and keep each GRN on one source by a marker set when its Agent is built
 
-> Status: accepted
+> Status: accepted; rendered fields extended by ADR-0054
 > Date: 2026-10-05
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

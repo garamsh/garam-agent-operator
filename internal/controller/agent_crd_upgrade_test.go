@@ -104,4 +104,41 @@ var _ = Describe("Agent CRD upgrade", func() {
 		Expect(readAgent(name).Finalizers).To(ContainElement(workloadFencedFinalizer),
 			"the reconciler's workload fence was refused: %v", err)
 	})
+
+	// #291: an Agent stored before spec.revision existed takes one once the CRD carries it, as the
+	// renderer's merge patch writes it, and the config file carries it. A Garam-source one is still
+	// written as before, and is refused a revision.
+	It("renders a revision into a Control-source Agent stored before the field, and refuses one on a Garam-source Agent", func() {
+		c := crdClient()
+		DeferCleanup(func() { swapAgentCRD(c, crdNow, true) })
+		swapAgentCRD(c, crdBefore, false)
+
+		stored := func(name string, source agentv1alpha1.DesiredSource) {
+			GinkgoHelper()
+			createSecret(credentialsSecretName(name))
+			agent := newAgent(name)
+			agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: source}
+			createAgent(agent)
+			Expect(readAgent(name).Spec.Revision).To(BeEmpty())
+		}
+		control, garamSource := "crd-upgrade-control", "crd-upgrade-garam"
+		stored(control, agentv1alpha1.DesiredSourceControl)
+		stored(garamSource, agentv1alpha1.DesiredSourceGaram)
+
+		swapAgentCRD(c, crdNow, true)
+		Expect(k8sClient.Patch(ctx, readAgent(control),
+			client.RawPatch(types.MergePatchType, []byte(`{"spec":{"revision":"2"}}`)))).To(Succeed())
+		Expect(readAgent(control).Spec.Revision).To(Equal("2"))
+		_, err := reconcileAgent(control)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(environmentOf(initContainerOf(statefulSetFor(control).Spec.Template.Spec, configContainerName))).
+			To(HaveKeyWithValue(configContentVariable, "revision: \"2\"\n"))
+
+		By("the Garam-source Agent, which is written as before and refused a revision")
+		Expect(k8sClient.Patch(ctx, readAgent(garamSource),
+			client.RawPatch(types.MergePatchType, []byte(`{"spec":{"suspended":true}}`)))).To(Succeed())
+		Expect(k8sClient.Patch(ctx, readAgent(garamSource),
+			client.RawPatch(types.MergePatchType, []byte(`{"spec":{"revision":"2"}}`)))).
+			To(MatchError(ContainSubstring("revision is set only on an agent whose identity.source is Control")))
+	})
 })

@@ -266,6 +266,12 @@ func embeddingKeyOf(agent *agentv1alpha1.Agent) *agentv1alpha1.SecretKeyReferenc
 // names no tool, and a model section missing a setting would fall back to
 // sherlock's default for it.
 type sherlockConfig struct {
+	// Revision is the definition revision the Agent was rendered from, which
+	// sherlock reports back verbatim as its config_revision
+	// (sherlock@v0.2.0:internal/config/config.go:80-84,
+	// internal/gateway/gateway.go:38-40). It is left out where the Agent carries
+	// none, which is every Agent not on the Control source.
+	Revision  string                   `json:"revision,omitempty"`
 	Tools     *sherlockConfigTools     `json:"tools,omitempty"`
 	Model     *sherlockConfigModel     `json:"model,omitempty"`
 	Embedding *sherlockConfigEmbedding `json:"embedding,omitempty"`
@@ -304,7 +310,7 @@ type sherlockConfigEmbedding struct {
 // marshal in sorted order, so one declaration renders one text and an unchanged
 // Agent leaves the workload unchanged.
 func renderSherlockConfig(spec agentv1alpha1.AgentSpec) (string, error) {
-	config := sherlockConfig{}
+	config := sherlockConfig{Revision: spec.Revision}
 	if len(spec.Tools.Pins) > 0 {
 		config.Tools = &sherlockConfigTools{Pins: spec.Tools.Pins}
 	}

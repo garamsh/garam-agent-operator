@@ -12,11 +12,14 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/garamsh/garam-agent-operator/internal/desired"
 )
 
 // garam is the real garam the suite brought up, with one agent garam created for the test and
@@ -295,6 +298,30 @@ func TestDesired_ReleasesAConfiguredAgentToItsController(t *testing.T) {
 	// The controller garam assigned the agent to is released the revision just stored.
 	assert.Equal(t, []string{"2"}, releasedRevisions(t, g),
 		"the agent's configured revision is not in its controller's feed")
+}
+
+// The revision a configure stores reaches the manager through the client it reads the feed with,
+// as the canonical decimal string it renders into the Agent and the agent's config file (#291).
+func TestDesired_TheManagersClientReadsTheRevisionAConfigureStored(t *testing.T) {
+	g := requireGaram(t)
+	profile := seedRevision(t, g)
+	requestID := name(t, "request")
+	body := configureBody(requestID, profile, "edited", 1)
+	status, err := sendConfigure(g, g.mint(t, requestID, body), body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+
+	feed := desired.NewClient(strings.TrimPrefix(attachedURL, "https://"),
+		g.controllerClient().Transport.(*http.Transport).TLSClientConfig)
+	answer, err := feed.Desired(context.Background(), "", 0)
+	require.NoError(t, err)
+	var revisions []string
+	for _, agent := range answer.Agents {
+		if agent.GRN == g.agent() {
+			revisions = append(revisions, agent.Revision)
+		}
+	}
+	assert.Equal(t, []string{"2"}, revisions, "the manager's client did not read the configured revision")
 }
 
 // releasedRevisions is every revision of g's agent its controller's feed releases, in the order released.
