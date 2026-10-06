@@ -489,10 +489,14 @@ var (
 
 	// ErrCreationArchived is returned for a first certificate asked for an agent whose only creation
 	// is one the published 7c216469476d registered, which migration 2 archived without the agent:create
-	// reference garam requires, because that release never stored one (ADR 0058). The agent is
-	// re-created through the console's create route to get its first certificate.
+	// reference garam requires, because that release never stored one (ADR 0058). Its message names
+	// the two routes: re-creation, which is proven and loses the agent, and credential recovery,
+	// which would keep it and is unproven here (#308).
 	ErrCreationArchived = errors.New("the agent's creation was archived by the upgrade, with no agent:create " +
-		"reference to ask garam under: re-create the agent through the console's create route, which gives it a new GRN")
+		"reference to ask garam under. Either re-create the agent through the console's create route, which gives " +
+		"it a new GRN, so its identity and memory do not carry over; or have an owner or admin recover its " +
+		"credential (garam's recoverAgentCredential, under an agent:recover handoff), which would keep the agent " +
+		"but is unproven for one that never had a certificate (garamsh/garam-agent-operator#308)")
 
 	// ErrInvalidProfile is returned for a profile publication with no name, a version below 1, or
 	// settings an agent's workload could not run with (ADR 0056).

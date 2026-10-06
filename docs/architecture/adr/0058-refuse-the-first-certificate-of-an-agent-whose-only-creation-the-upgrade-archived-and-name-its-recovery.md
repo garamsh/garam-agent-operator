@@ -31,21 +31,25 @@ The PM's triage on #303 first directed issuance from the archive. That rested on
 **The first certificate of an agent whose only creation is an archived, registered one is refused, and the refusal names the recovery.**
 - **Where.** The certificate-request route, after the session proof, the assignment check and the agent-bound proof, as before.
 - **When.** No current creation names the agent, and a registered row in `creations_n1` does.
-- **The answer.** `409 creation_archived`. Its message says the agent has no `agent:create` reference to ask garam under, and that it is re-created through the console's create route.
+- **The answer.** `409 creation_archived`. Its message says the agent has no `agent:create` reference to ask garam under, and names both recovery routes below, the second as unproven.
 - **What is asked of garam.** Nothing. No request is stored.
 - **Everything else is unchanged.** An archived row that was never registered names no agent, and an agent with no creation at all still gets 404. A current creation is used as before, even where an archived row names the same agent.
 
 **The archive's one reader.** `Repository.ArchivedRegistration` reads `creations_n1`, and nothing else reads any archive. A database where no earlier creation moved has no `creations_n1`, and the reader answers that no archived row names the agent.
 
-**The recovery, and its cost.** The operator deletes the agent's `Agent` and creates the agent again through the console's create route (`POST /v1/orgs/{org}/agents`), which stores the creation's reference. garam mints a new GRN for it, so the old identity and its memory do not carry over to the new agent.
+**Two recovery routes, named in the message.**
+1. **Re-creation, proven.** The operator deletes the agent's `Agent` and creates the agent again through the console's create route (`POST /v1/orgs/{org}/agents`), which stores the creation's reference. garam mints a new GRN for it, so the old identity and its memory do not carry over.
+2. **Credential recovery, unproven here.** An owner or admin mints an `agent:recover` handoff, and the agent's credential is recovered through garam's `recoverAgentCredential` (`garamsh/garam@59fe68d` `api/machine.yaml:1277-1287`). garam's PM named this route as keeping the agent's GRN, identity and memory. It has not been tried on an agent that never had a certificate. `garamsh/garam-agent-operator#308` tracks proving it, and until it is proven, nothing here claims it works.
 
 ## Consequences
 
 - **The case is visible and has a stated step.** Before, it was an unending 404 retried every 5 minutes.
 - **No migration, no new column, and no value a check would need is guessed.** The archive stays unchanged.
-- **If garam later answers an agent's own creation reference to the operator holding its assignment** (the PM's open question to garam's PM), a follow-up can replace the refusal with issuance under that reference.
+- **garam will not answer an agent's own creation reference.** garam's PM declined: the reference is single-use, and returning it would make it replayable. Issuance under it stays out of reach.
+- **If #308 proves credential recovery for this case,** the message's second route stops being unproven, and the docs and the message say so.
 
 Ruled out:
 - **Issuing from the archived row.** It holds no reference, and garam requires the creation's own.
 - **Sending a configure request's reference instead.** garam answers a reference other than the creation's own `agent:create` with 403.
+- **Asking garam for the creation's reference.** Declined by garam's PM: the reference is single-use, so returning it would make it replayable.
 - **An operator-supplied reference recorded by a subcommand.** It would need a schema change, and in practice only whoever called `createManagedAgent` holds that reference.

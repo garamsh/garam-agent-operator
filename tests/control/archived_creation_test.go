@@ -84,7 +84,9 @@ func TestMigration_AnAgentWhoseOnlyCreationTheUpgradeArchivedIsToldToBeRecreated
 	status, out := requestCertificateAt(t, base, registered, certificateRequestBody(name(t, "certificate"), epoch, csr))
 	assert.Equal(t, http.StatusConflict, status, out)
 	assert.Equal(t, "creation_archived", out["kind"])
-	assert.Contains(t, out["message"], "re-create the agent through the console's create route")
+	assert.Contains(t, out["message"], "re-create the agent through the console's create route, which gives it a new GRN")
+	assert.Contains(t, out["message"], "agent:recover handoff")
+	assert.Contains(t, out["message"], "unproven for one that never had a certificate")
 
 	status, out = requestCertificateAt(t, base, unregistered,
 		certificateRequestBody(name(t, "certificate"), unregisteredEpoch, csr))
