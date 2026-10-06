@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -462,6 +463,82 @@ func scanCreation(row pgx.Row, key definition.RequestKey) (definition.Creation, 
 		c.Outcome = definition.Failed{Reason: *reason, Conflict: conflict}
 	default:
 		return definition.Creation{}, fmt.Errorf("creation in state %q violates the schema's checks", state)
+	}
+	return c, nil
+}
+
+func (p *Postgres) CreationOf(ctx context.Context, agent definition.GRN) (definition.Creation, error) {
+	var key definition.RequestKey
+	if err := p.pool.QueryRow(ctx, creationOfAgent, string(agent)).Scan(&key.Organization, &key.RequestID); err != nil {
+		return definition.Creation{}, storeError("get creation of agent", notFound("get creation of agent", err))
+	}
+	return scanCreation(p.pool.QueryRow(ctx, getCreation, key.Organization, key.RequestID), key)
+}
+
+func (p *Postgres) BeginInitialCertificate(
+	ctx context.Context, agent definition.GRN, r definition.CertificateRequest,
+) (definition.InitialCertificate, error) {
+	c, err := scanCertificate(p.pool.QueryRow(ctx, beginCertificate, string(agent), r.RequestID, r.Epoch, r.CSRPEM), agent)
+	if err != nil {
+		return definition.InitialCertificate{}, storeError("begin initial certificate", err)
+	}
+	return c, nil
+}
+
+func (p *Postgres) IssueInitialCertificate(
+	ctx context.Context, agent definition.GRN, r definition.CertificateRequest, issued definition.IssuedCertificate,
+) (definition.InitialCertificate, bool, error) {
+	var (
+		c        definition.InitialCertificate
+		recorded bool
+	)
+	err := p.inTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		c, err = scanCertificate(tx.QueryRow(ctx, lockCertificate, string(agent)), agent)
+		if err != nil || c.Issued != nil || c.Request != r {
+			return err
+		}
+		_, err = tx.Exec(ctx, issueCertificate, string(agent), issued.CertificatePEM, issued.IssuerPEM,
+			issued.ServerRootPEM, issued.NotAfter)
+		if err != nil {
+			return err
+		}
+		c.Issued, recorded = &issued, true
+		return nil
+	})
+	if err != nil {
+		return definition.InitialCertificate{}, false, storeError("issue initial certificate", err)
+	}
+	return c, recorded, nil
+}
+
+func (p *Postgres) ClearInitialCertificate(ctx context.Context, agent definition.GRN, r definition.CertificateRequest) error {
+	if _, err := p.pool.Exec(ctx, clearCertificate, string(agent), r.RequestID, r.Epoch, r.CSRPEM); err != nil {
+		return storeError("clear initial certificate", err)
+	}
+	return nil
+}
+
+// scanCertificate reads one initial_certificates row, its result only once it is issued.
+func scanCertificate(row pgx.Row, agent definition.GRN) (definition.InitialCertificate, error) {
+	var (
+		c                       = definition.InitialCertificate{Agent: agent}
+		state                   string
+		certificate, issuer, sr *string
+		notAfter                *time.Time
+	)
+	err := row.Scan(&c.Request.RequestID, &c.Request.Epoch, &c.Request.CSRPEM, &state, &certificate, &issuer, &sr, &notAfter)
+	if err != nil {
+		return definition.InitialCertificate{}, notFound("get initial certificate", err)
+	}
+	switch {
+	case state == "pending":
+	case state == "issued" && certificate != nil && issuer != nil && sr != nil && notAfter != nil:
+		c.Issued = &definition.IssuedCertificate{
+			CertificatePEM: *certificate, IssuerPEM: *issuer, ServerRootPEM: *sr, NotAfter: notAfter.UTC(),
+		}
+	default:
+		return definition.InitialCertificate{}, fmt.Errorf("initial certificate in state %q violates the schema's checks", state)
 	}
 	return c, nil
 }

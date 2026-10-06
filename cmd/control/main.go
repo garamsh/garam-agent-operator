@@ -23,6 +23,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/console"
 	"github.com/garamsh/garam-agent-operator/internal/console/introspector"
 	"github.com/garamsh/garam-agent-operator/internal/definition"
+	"github.com/garamsh/garam-agent-operator/internal/definition/issuer"
 	"github.com/garamsh/garam-agent-operator/internal/definition/registrar"
 	"github.com/garamsh/garam-agent-operator/internal/definition/repository"
 	"github.com/garamsh/garam-agent-operator/internal/distribution"
@@ -110,7 +111,7 @@ func run(ctx context.Context, o options, databaseURL string) error {
 	slog.Info("store schema applied")
 
 	garam := garammachine.New(o.garamURL, machine)
-	definitions := definition.NewService(store, registrar.NewGaram(garam))
+	definitions := definition.NewService(store, registrar.NewGaram(garam), issuer.NewGaram(garam))
 	api := http.NewServeMux()
 	api.Handle("/v1/orgs/", console.NewHandler(console.Config{
 		Definitions:  definitions,

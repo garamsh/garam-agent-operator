@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -319,4 +320,73 @@ var (
 	// ErrInvalidSecretRef is returned for a model key reference that is not "<secret-name>/<key>"
 	// as SecretRef states it, which the manager could not render.
 	ErrInvalidSecretRef = errors.New("model key reference is not <secret-name>/<key>")
+
+	// ErrIssuanceUndecided is wrapped by an Issuer garam did not answer with a decision. The
+	// certificate request's outcome is unknown, so it stays pending and is sent again unchanged.
+	ErrIssuanceUndecided = errors.New("certificate issuance undecided")
 )
+
+// CertificateRequest is a controller's request for an agent's first certificate, as it was sent:
+// the request id, the assignment epoch it expects, and a PKCS#10 PEM over a key the controller
+// holds. Two requests are the same request only when all three are equal.
+type CertificateRequest struct {
+	RequestID string
+	Epoch     string
+	CSRPEM    string
+}
+
+// IssuedCertificate is the public result garam answered for a certificate request. It carries no
+// private key.
+type IssuedCertificate struct {
+	CertificatePEM string
+	IssuerPEM      string
+	ServerRootPEM  string
+	NotAfter       time.Time
+}
+
+// InitialCertificateInput asks for agent's first certificate on behalf of controller.
+type InitialCertificateInput struct {
+	Agent      GRN
+	Controller string
+	Request    CertificateRequest
+}
+
+// InitialCertificate is the one first-certificate request stored for an agent. Issued is nil while
+// the outcome is unknown.
+type InitialCertificate struct {
+	Agent   GRN
+	Request CertificateRequest
+	Issued  *IssuedCertificate
+}
+
+// Issuance is what an Issuer sends garam: the request, under the reference of the agent's own creation.
+type Issuance struct {
+	Agent        GRN
+	Request      CertificateRequest
+	OperationRef string
+}
+
+// Refusal is the class of a garam refusal of an issuance, which decides how it is answered.
+type Refusal int
+
+const (
+	// RefusalForbidden is garam's 403 or 404: current authority does not permit the issuance.
+	RefusalForbidden Refusal = iota + 1
+	// RefusalConflict is garam's 409: another request is recorded, the epoch is stale, or the
+	// lineage was replaced.
+	RefusalConflict
+	// RefusalInvalid is garam's 422: the certificate request is not one garam signs over.
+	RefusalInvalid
+)
+
+// IssuanceRefusedError is an Issuer's definite refusal by garam, which records nothing for it.
+// Kind and Message are garam's own.
+type IssuanceRefusedError struct {
+	Refusal Refusal
+	Kind    string
+	Message string
+}
+
+func (e *IssuanceRefusedError) Error() string {
+	return "garam refused the certificate request: " + e.Kind + ": " + e.Message
+}

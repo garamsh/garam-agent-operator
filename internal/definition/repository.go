@@ -42,4 +42,19 @@ type Repository interface {
 	RegisterCreation(ctx context.Context, key RequestKey, d Definition) (Creation, bool, error)
 	// FailCreation records the key's creation as failed.
 	FailCreation(ctx context.Context, key RequestKey, failed Failed) (Creation, error)
+	// CreationOf returns the registered creation of agent, or ErrNotFound.
+	CreationOf(ctx context.Context, agent GRN) (Creation, error)
+
+	// BeginInitialCertificate stores r as agent's pending first-certificate request unless one is
+	// already stored, and returns the one stored either way.
+	BeginInitialCertificate(ctx context.Context, agent GRN, r CertificateRequest) (InitialCertificate, error)
+	// IssueInitialCertificate records issued as the result of agent's stored request when it is
+	// still pending and equal to r. It reports whether this call recorded it, and returns what is
+	// stored; ErrNotFound when no request is stored.
+	IssueInitialCertificate(
+		ctx context.Context, agent GRN, r CertificateRequest, issued IssuedCertificate,
+	) (InitialCertificate, bool, error)
+	// ClearInitialCertificate removes agent's stored request when it is still pending and equal
+	// to r, deciding and removing it in one step. Anything else is left as it is.
+	ClearInitialCertificate(ctx context.Context, agent GRN, r CertificateRequest) error
 }

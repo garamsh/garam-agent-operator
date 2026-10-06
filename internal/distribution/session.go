@@ -41,12 +41,25 @@ func (s *server) authenticate(ctx context.Context, r *http.Request) (controller,
 // placed has garam prove, for one decision, that agent is assigned to c under epoch. A refusal or
 // another epoch is false; only an undecided or failed proof is an error.
 func (s *server) placed(ctx context.Context, c controller, agent, epoch string) (bool, error) {
-	proof, err := s.prover.Prove(ctx, c.grn, c.leafPEM, agent)
+	proved, err := s.provedEpoch(ctx, c, agent)
 	if errors.Is(err, ErrNotProved) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return proof.Operator == c.grn && proof.Agent != nil && proof.Agent.GRN == agent && proof.Agent.Epoch == epoch, nil
+	return proved == epoch, nil
+}
+
+// provedEpoch has garam prove, for one decision, that agent is assigned to c, and returns the
+// epoch it proved. A refusal, or a proof naming another operator or agent, is ErrNotProved.
+func (s *server) provedEpoch(ctx context.Context, c controller, agent string) (string, error) {
+	proof, err := s.prover.Prove(ctx, c.grn, c.leafPEM, agent)
+	if err != nil {
+		return "", err
+	}
+	if proof.Operator != c.grn || proof.Agent == nil || proof.Agent.GRN != agent {
+		return "", ErrNotProved
+	}
+	return proof.Agent.Epoch, nil
 }
