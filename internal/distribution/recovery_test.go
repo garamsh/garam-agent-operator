@@ -58,13 +58,16 @@ func TestPrepareRecovery_StoresTheRequestAndAnswersTheRecoveredCredential(t *tes
 	status, _ = e.prepareRecovery(t, agentA, body)
 	assert.Equal(t, http.StatusAccepted, status, "an identical repeat was not answered as stored")
 
-	_, err := e.definitions.FinalizeRecovery(ctx, agentA, "rec-1",
-		definition.RecoveredCredential{Lineage: "lineage-2", CertificatePEM: "recovered"})
+	_, err := e.definitions.FinalizeRecovery(ctx, agentA, "rec-1", definition.RecoveredCredential{
+		Lineage: "lineage-2", CertificatePEM: "recovered", IssuerPEM: "answered issuer", ServerRootPEM: "answered root",
+	})
 	require.NoError(t, err)
 	status, out = e.prepareRecovery(t, agentA, body)
 	require.Equal(t, http.StatusOK, status, out)
 	assert.Equal(t, "lineage-2", out["lineage"])
 	assert.Equal(t, "recovered", out["certificatePem"])
+	assert.Equal(t, "answered issuer", out["issuerPem"], "the chain garam answered is not returned to the controller")
+	assert.Equal(t, "answered root", out["serverRootPem"])
 	assert.Equal(t, 0, e.issuer.calls(), "a recovery asked for a first certificate")
 }
 

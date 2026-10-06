@@ -74,6 +74,8 @@ type (
 		Stage             string `json:"stage"`
 		Lineage           string `json:"lineage"`
 		CertificatePEM    string `json:"certificatePem"`
+		IssuerPEM         string `json:"issuerPem"`
+		ServerRootPEM     string `json:"serverRootPem"`
 	}
 	wireProfile struct {
 		Name             string                      `json:"name"`
@@ -274,6 +276,9 @@ func (c *Client) PrepareRecovery(ctx context.Context, agent string, request Pend
 	recovered := Recovered{Agent: answer.Agent, RequestID: answer.RecoveryRequestID, Epoch: answer.Epoch}
 	if status == http.StatusOK {
 		recovered.Lineage, recovered.CertificatePEM = answer.Lineage, []byte(answer.CertificatePEM)
+		if answer.IssuerPEM != "" && answer.ServerRootPEM != "" {
+			recovered.IssuerPEM, recovered.ServerRootPEM = []byte(answer.IssuerPEM), []byte(answer.ServerRootPEM)
+		}
 	}
 
 	return recovered, nil

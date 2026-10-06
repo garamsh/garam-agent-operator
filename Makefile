@@ -426,7 +426,7 @@ $(LOCALBIN):
 # at that commit). garamsh/garam is private, so the fetch needs git credentials
 # that can read it. The PM moves the pin by hand and reviews it at each
 # promotion to main; no Dependabot ecosystem reads a Makefile variable.
-GARAM_REVISION ?= 59fe68dca4f5f0b42e6f159eba324db0c65486d9
+GARAM_REVISION ?= f54b9e8cda824dc06df86513e68b49556f120eef
 GARAM_REPOSITORY ?= https://github.com/garamsh/garam.git
 GARAM_DIR = $(LOCALBIN)/garam-$(GARAM_REVISION)
 

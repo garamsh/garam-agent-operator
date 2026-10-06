@@ -790,11 +790,15 @@ type Recovery struct {
 	Recovered *RecoveredCredential
 }
 
-// RecoveredCredential is what garam answered a recovery with: the new lineage and the certificate
-// signed over the prepared request's key, which never left its holder.
+// RecoveredCredential is what garam answered a recovery with: the new lineage, the certificate
+// signed over the prepared request's key, which never left its holder, and the issuer and garam
+// server root the signer produced beside it (garam@f54b9e8, ADR-0091). IssuerPEM and ServerRootPEM
+// are empty for a recovery a garam before that answered (ADR 0062).
 type RecoveredCredential struct {
 	Lineage        string
 	CertificatePEM string
+	IssuerPEM      string
+	ServerRootPEM  string
 }
 
 // OpenRecoveryInput opens a recovery of Agent, recorded under the console request's key and the

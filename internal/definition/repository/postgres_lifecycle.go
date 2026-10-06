@@ -112,7 +112,8 @@ func (p *Postgres) FinalizeRecovery(
 		switch r.Stage {
 		case definition.RecoveryFinalized:
 		case definition.RecoveryPrepared:
-			if _, err := tx.Exec(ctx, finalizeRecovery, string(agent), requestID, c.Lineage, c.CertificatePEM); err != nil {
+			if _, err := tx.Exec(ctx, finalizeRecovery, string(agent), requestID, c.Lineage, c.CertificatePEM,
+				c.IssuerPEM, c.ServerRootPEM); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, movePosition); err != nil {
@@ -235,20 +236,23 @@ func lifecycleError(op string, err error) error {
 
 func scanRecovery(row pgx.Row) (definition.Recovery, error) {
 	var (
-		r                definition.Recovery
-		agent, stage     string
-		body             []byte
-		lineage, certPEM *string
+		r                     definition.Recovery
+		agent, stage          string
+		body                  []byte
+		lineage, certPEM      *string
+		issuerPEM, serverRoot string
 	)
 	b := &r.Binding
 	if err := row.Scan(&agent, &r.RequestID, &r.Key.Organization, &r.Key.RequestID, &b.Actor, &b.Operation,
 		&b.Target, &b.BodySHA256, &b.OperationRef, &b.Assignment.Operator, &b.Assignment.Epoch, &r.Epoch, &stage,
-		&body, &lineage, &certPEM); err != nil {
+		&body, &lineage, &certPEM, &issuerPEM, &serverRoot); err != nil {
 		return definition.Recovery{}, err
 	}
 	r.Agent, r.Stage, r.Body = definition.GRN(agent), definition.RecoveryStage(stage), body
 	if lineage != nil && certPEM != nil {
-		r.Recovered = &definition.RecoveredCredential{Lineage: *lineage, CertificatePEM: *certPEM}
+		r.Recovered = &definition.RecoveredCredential{
+			Lineage: *lineage, CertificatePEM: *certPEM, IssuerPEM: issuerPEM, ServerRootPEM: serverRoot,
+		}
 	}
 	return r, nil
 }

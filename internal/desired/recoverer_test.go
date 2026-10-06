@@ -74,14 +74,17 @@ func (a authority) sign(csrPEM []byte, grn string) ([]byte, error) {
 	return pem.EncodeToMemory(&pem.Block{Type: pemCertificate, Bytes: der}), nil
 }
 
-// recoveryStore is a RecoveryStore in memory, holding one managed agent's placed credential.
+// recoveryStore is a RecoveryStore in memory, holding one managed agent's placed credential, or
+// none where unplaced is set.
 type recoveryStore struct {
-	mu      sync.Mutex
-	issuer  []byte
-	request *PendingRequest
-	refused string
-	placed  []byte
-	lineage string
+	mu       sync.Mutex
+	issuer   []byte
+	unplaced bool
+	request  *PendingRequest
+	refused  string
+	placed   []byte
+	chain    Certificate
+	lineage  string
 }
 
 func (m *recoveryStore) Recovering(context.Context) ([]string, error) {
@@ -115,6 +118,10 @@ func (m *recoveryStore) SaveRecovery(_ context.Context, _ string, request Pendin
 }
 
 func (m *recoveryStore) KeptIssuer(context.Context, string) ([]byte, bool, error) {
+	if m.unplaced {
+		return nil, false, nil
+	}
+
 	return m.issuer, true, nil
 }
 
@@ -126,12 +133,20 @@ func (m *recoveryStore) RefuseRecovery(_ context.Context, _, reason string) erro
 	return nil
 }
 
-func (m *recoveryStore) PlaceRecovered(_ context.Context, _ string, _, certificatePEM []byte, lineage string) error {
+func (m *recoveryStore) PlaceRecovered(_ context.Context, _ string, _ []byte, certificate Certificate, lineage string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.placed, m.lineage, m.request = certificatePEM, lineage, nil
+	m.placed, m.chain, m.lineage, m.request = certificate.CertificatePEM, certificate, lineage, nil
 
 	return nil
+}
+
+// written is the chain the store was asked to write beside the placed certificate.
+func (m *recoveryStore) written() Certificate {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.chain
 }
 
 // snapshot is what the store holds, read under its lock.
@@ -150,6 +165,9 @@ type recoveryRoute struct {
 	store     *recoveryStore
 	signer    authority
 	finalized bool
+	// chain, where set, is the issuer the answer names, with answeredRoot as its server root: a
+	// control from ADR 0062 on. Unset, the answer names none, as an older control's.
+	chain *authority
 	sent      []wireCertificateRequest
 	persisted []bool
 }
@@ -172,6 +190,9 @@ func (r *recoveryRoute) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		answer.Stage, answer.Lineage, answer.CertificatePEM = "finalized", "lineage-2", string(certificate)
+		if r.chain != nil {
+			answer.IssuerPEM, answer.ServerRootPEM = string(r.chain.pem), answeredRoot
+		}
 		status = http.StatusOK
 	}
 	w.WriteHeader(status)
@@ -190,6 +211,9 @@ func (r *recoveryRoute) requests() ([]wireCertificateRequest, []bool) {
 
 	return append([]wireCertificateRequest(nil), r.sent...), append([]bool(nil), r.persisted...)
 }
+
+// answeredRoot is the server root a route that answers a chain names.
+const answeredRoot = "answered server root"
 
 // startRecoverer runs a recoverer over store against route until the returned stop is called,
 // offered agentA's open recovery, passing every millisecond.
@@ -301,4 +325,51 @@ func TestVerifyRecoveredRefusesAnythingButTheKeptIssuersCertificateOverTheKey(t 
 		To(MatchError(ContainSubstring("names")))
 	g.Expect(VerifyRecovered(agentA, request.KeyPEM, sign(kept, request.CSRPEM, agentA), nil)).
 		To(MatchError(ContainSubstring("no issuer is kept")))
+}
+
+func TestRecovererWritesAndVerifiesAgainstTheAnsweredChain(t *testing.T) {
+	g := NewWithT(t)
+	kept, answered := newAuthority(t, "kept issuer"), newAuthority(t, "answered issuer")
+
+	By := "a certificate the answered issuer signed is placed with the answered chain, not the kept one"
+	store := &recoveryStore{issuer: kept.pem}
+	startRecoverer(t, &recoveryRoute{store: store, signer: answered, chain: &answered, finalized: true}, store)
+	g.Eventually(func() []byte { _, _, placed, _ := store.snapshot(); return placed }).ShouldNot(BeEmpty(), By)
+	g.Expect(store.written().IssuerPEM).To(Equal(answered.pem), By)
+	g.Expect(store.written().ServerRootPEM).To(Equal([]byte(answeredRoot)), By)
+
+	By = "a certificate that does not chain to the answered issuer is refused, though the kept one signed it"
+	mismatched := &recoveryStore{issuer: kept.pem}
+	startRecoverer(t, &recoveryRoute{store: mismatched, signer: kept, chain: &answered, finalized: true}, mismatched)
+	g.Eventually(func() string { _, refused, _, _ := mismatched.snapshot(); return refused }).
+		Should(Equal(agentv1alpha1.ReasonRecoveredCertificateUnverified), By)
+	_, _, placed, _ := mismatched.snapshot()
+	g.Expect(placed).To(BeEmpty(), By)
+
+	By = "an answer naming no chain, an older control's, keeps the placed chain"
+	older := &recoveryStore{issuer: kept.pem}
+	startRecoverer(t, &recoveryRoute{store: older, signer: kept, finalized: true}, older)
+	g.Eventually(func() []byte { _, _, placed, _ := older.snapshot(); return placed }).ShouldNot(BeEmpty(), By)
+	g.Expect(older.written().IssuerPEM).To(BeEmpty(), "a chain was written where control answered none")
+}
+
+func TestRecovererPlacesWhereNoCredentialWasOnlyWithAnAnsweredChain(t *testing.T) {
+	g := NewWithT(t)
+	answered := newAuthority(t, "answered issuer")
+
+	By := "with no credential placed, the answered chain places the certificate"
+	store := &recoveryStore{unplaced: true}
+	startRecoverer(t, &recoveryRoute{store: store, signer: answered, chain: &answered, finalized: true}, store)
+	g.Eventually(func() []byte { _, _, placed, _ := store.snapshot(); return placed }).ShouldNot(BeEmpty(), By)
+	g.Expect(store.written().IssuerPEM).To(Equal(answered.pem), By)
+
+	By = "with no credential placed and no chain answered, nothing is placed and the request is kept"
+	bare := &recoveryStore{unplaced: true}
+	route := &recoveryRoute{store: bare, signer: answered, finalized: true}
+	startRecoverer(t, route, bare)
+	g.Eventually(func() int { sent, _ := route.requests(); return len(sent) }).Should(BeNumerically(">=", 1), By)
+	g.Consistently(func() []byte { _, _, placed, _ := bare.snapshot(); return placed }, 200*time.Millisecond).
+		Should(BeEmpty(), By)
+	request, _, _, _ := bare.snapshot()
+	g.Expect(request).NotTo(BeNil(), By)
 }

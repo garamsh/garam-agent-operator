@@ -252,7 +252,8 @@ WHERE agent = $1 AND revision = 1 AND assignment_operator IS NULL`
 	movePosition = `UPDATE positions SET position = position + 1`
 
 	recoveryColumns = `agent, recovery_request_id, organization, request_id, actor, operation, target, body_sha256,
-    operation_ref, assignment_operator, assignment_epoch, epoch, stage, garam_body, lineage, certificate_pem`
+    operation_ref, assignment_operator, assignment_epoch, epoch, stage, garam_body, lineage, certificate_pem,
+    COALESCE(issuer_pem, ''), COALESCE(server_root_pem, '')`
 
 	insertRecovery = `
 INSERT INTO recoveries (agent, recovery_request_id, organization, request_id, actor, operation, target,
@@ -275,7 +276,8 @@ UPDATE recoveries SET stage = 'prepared', garam_body = $3, garam_body_sha256 = $
 WHERE agent = $1 AND recovery_request_id = $2 AND stage = 'requested'`
 
 	finalizeRecovery = `
-UPDATE recoveries SET stage = 'finalized', lineage = $3, certificate_pem = $4
+UPDATE recoveries SET stage = 'finalized', lineage = $3, certificate_pem = $4,
+    issuer_pem = NULLIF($5, ''), server_root_pem = NULLIF($6, '')
 WHERE agent = $1 AND recovery_request_id = $2 AND stage = 'prepared'`
 
 	stopColumns = `organization, request_id, agent, actor, operation, target, body_sha256, operation_ref,
