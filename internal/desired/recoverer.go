@@ -85,6 +85,12 @@ type Recoverer struct {
 	offered map[string]OpenRecovery
 
 	attempts map[string]*attempt
+
+	// placed is the recovery each agent's credential was last placed from. The
+	// feed may still name it until its next answer, and a new request under its
+	// id would be refused as finalized under another. It is held in memory: after
+	// a restart the feed's first answer no longer names it.
+	placed map[string]string
 }
 
 // NewRecoverer returns a Recoverer asking through client and persisting
@@ -94,7 +100,7 @@ func NewRecoverer(client *Client, store RecoveryStore) *Recoverer {
 		client: client, store: store,
 		pass: recoverPass, transientFirst: transientFirst, transientLast: transientLast,
 		refusedWait: refusedWait, preparedWait: preparedWait,
-		offered: map[string]OpenRecovery{}, attempts: map[string]*attempt{},
+		offered: map[string]OpenRecovery{}, attempts: map[string]*attempt{}, placed: map[string]string{},
 	}
 }
 
@@ -169,7 +175,7 @@ func (r *Recoverer) recover(ctx context.Context, agent string, open *OpenRecover
 		return
 	}
 	if !found {
-		if open == nil {
+		if open == nil || r.placed[agent] == open.RequestID {
 			delete(r.attempts, agent)
 
 			return
@@ -285,6 +291,7 @@ func (r *Recoverer) place(ctx context.Context, agent string, request PendingRequ
 		return
 	}
 	delete(r.attempts, agent)
+	r.placed[agent] = request.ID
 	log.Info("Placed the recovered credential of a managed agent", "lineage", recovered.Lineage)
 }
 

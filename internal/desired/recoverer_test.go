@@ -257,10 +257,12 @@ func TestRecovererPlacesOnlyACertificateTheKeptIssuerSigned(t *testing.T) {
 	g.Eventually(func() *PendingRequest { request, _, _, _ := store.snapshot(); return request }).ShouldNot(BeNil(), By)
 	route.finalize()
 	g.Eventually(func() []byte { _, _, placed, _ := store.snapshot(); return placed }).ShouldNot(BeEmpty(), By)
-	request, refused, _, lineage := store.snapshot()
+	_, refused, _, lineage := store.snapshot()
 	g.Expect(lineage).To(Equal("lineage-2"), By)
 	g.Expect(refused).To(BeEmpty(), By)
-	g.Expect(request).To(BeNil(), "the request was kept after its certificate was placed")
+	// The feed still names the recovery until its next answer; it is not begun again.
+	g.Consistently(func() *PendingRequest { request, _, _, _ := store.snapshot(); return request }, 200*time.Millisecond).
+		Should(BeNil(), "a request outlived its placed certificate, or a new one was begun under the placed recovery")
 
 	By = "a certificate another authority signed is refused: nothing is placed, and the request is kept"
 	other := newAuthority(t, "another issuer")
