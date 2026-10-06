@@ -168,3 +168,23 @@ CREATE TABLE IF NOT EXISTS agent_activations (
     agent                text PRIMARY KEY,
     latest_activation_id text NOT NULL
 );
+
+-- Each legacy agent's cutover import (garam ADR-0086): its source as read from garam, every value
+-- verbatim with its disposition, and the digest garam's freeze verifies. Its revision 1 is stored
+-- inactive, with no assignment, until the import is switched.
+CREATE TABLE IF NOT EXISTS cutover_imports (
+    agent           text   PRIMARY KEY,
+    organization    text   NOT NULL,
+    import_id       text   NOT NULL,
+    epoch           text   NOT NULL,
+    assignee        text   NOT NULL,
+    source_digest   text   NOT NULL,
+    source_values   jsonb  NOT NULL,
+    dispositions    jsonb  NOT NULL,
+    profile_name    text   NOT NULL,
+    profile_version bigint NOT NULL,
+    pins            jsonb  NOT NULL,
+    stage           text   NOT NULL CHECK (stage IN ('imported', 'frozen', 'switched')),
+    configure_ref   text   NOT NULL DEFAULT '',
+    CHECK ((stage = 'switched') = (configure_ref <> ''))
+);

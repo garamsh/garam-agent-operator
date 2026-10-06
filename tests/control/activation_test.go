@@ -191,8 +191,8 @@ func TestActivation_AgainstGaramsExecutionFence(t *testing.T) {
 	assert.Equal(t, float64(3), again.body["tokenVersion"])
 
 	// An ended activation: garam ends it, and its replay is refused.
-	require.NoError(t, real.machineCall(real.hostedTLS, http.MethodPost,
-		"/agents/"+a.grn+"/activations/"+activation+"/deactivation", "execution-fence.v1", nil, http.StatusOK, nil))
+	require.NoError(t, real.machineCall(real.hostedTLS, "/agents/"+a.grn+"/activations/"+activation+"/deactivation",
+		"execution-fence.v1", nil, http.StatusOK, nil))
 	ended := postAgent(t, a, renewed, "activations", body)
 	assert.Equal(t, http.StatusConflict, ended.status, ended.raw)
 	assert.Equal(t, "activation_superseded", ended.body["kind"])

@@ -33,10 +33,12 @@ const (
 	controller = "grn:root:default:operator:k8s"
 	elsewhere  = "grn:root:default:operator:other"
 	org        = "grn:root:default:org:acme"
-	agentA     = "grn:acme:default:agent:a"
-	agentB     = "grn:acme:default:agent:b"
-	agentC     = "grn:acme:default:agent:c"
-	epoch      = "7"
+	// orgID is org's identifier, the organization every test's definitions belong to.
+	orgID  = "acme"
+	agentA = "grn:acme:default:agent:a"
+	agentB = "grn:acme:default:agent:b"
+	agentC = "grn:acme:default:agent:c"
+	epoch  = "7"
 )
 
 // verdict is what the test double answers for one proof.
@@ -165,14 +167,14 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 	iss := &issuer{}
 	definitions := definition.NewService(repository.NewMemory(), registrar{}, iss)
 	class := "standard"
-	p, err := definitions.PublishProfile(ctx, "acme", "small", definition.ExecutionSettings{
+	p, err := definitions.PublishProfile(ctx, orgID, "small", definition.ExecutionSettings{
 		Resources:        corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")}},
 		StorageSize:      resource.MustParse("1Gi"),
 		StorageClassName: &class,
 	})
 	require.NoError(t, err)
 	profile := definition.ProfileRef{Name: p.Name, Version: p.Version}
-	tmpl, err := definitions.PublishTemplate(ctx, "acme", definition.Template{Name: "researcher", Profile: profile})
+	tmpl, err := definitions.PublishTemplate(ctx, orgID, definition.Template{Name: "researcher", Profile: profile})
 	require.NoError(t, err)
 
 	e := &env{
@@ -183,7 +185,7 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 	}
 	for _, a := range []string{agentA, agentB, agentC} {
 		_, _, err := definitions.CreateAgent(ctx, definition.CreateInput{
-			Request:    definition.RequestKey{Organization: "acme", RequestID: a},
+			Request:    definition.RequestKey{Organization: orgID, RequestID: a},
 			Binding:    definition.Binding{Actor: "actor", Operation: "agent:create", Target: creator, OperationRef: "create-ref-" + a},
 			Controller: creator,
 			Template:   definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
@@ -215,7 +217,7 @@ func (e *env) configure(t *testing.T, agent, operator string, expected definitio
 	t.Helper()
 	e.configures++
 	_, err := e.definitions.Configure(context.Background(), definition.ConfigureInput{
-		Request: definition.RequestKey{Organization: "acme", RequestID: fmt.Sprintf("configure-%d", e.configures)},
+		Request: definition.RequestKey{Organization: orgID, RequestID: fmt.Sprintf("configure-%d", e.configures)},
 		Binding: definition.Binding{
 			Actor: "actor", Operation: "agent:configure", Target: agent,
 			Assignment: definition.Assignment{Operator: operator, Epoch: epoch},
@@ -252,6 +254,8 @@ func clientWithLeaf(t *testing.T, server *httptest.Server, grn string) (*http.Cl
 
 // feed is one answer of the desired feed.
 type feed struct {
+	// origins is each released agent's origin, empty where the answer names none.
+	origins map[string]string
 	status  int
 	cursor  string
 	agents  map[string]string
@@ -269,14 +273,17 @@ func (e *env) desired(t *testing.T, client *http.Client, query string) feed {
 		Agents []struct {
 			Agent    string `json:"agent"`
 			Revision string `json:"revision"`
+			Origin   string `json:"origin"`
 		} `json:"agents"`
 		Kind    string `json:"kind"`
 		Message string `json:"message"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	f := feed{status: resp.StatusCode, cursor: out.Cursor, agents: map[string]string{}, kind: out.Kind, message: out.Message}
+	f := feed{status: resp.StatusCode, cursor: out.Cursor, agents: map[string]string{}, origins: map[string]string{},
+		kind: out.Kind, message: out.Message}
 	for _, a := range out.Agents {
 		f.agents[a.Agent] = a.Revision
+		f.origins[a.Agent] = a.Origin
 	}
 	return f
 }

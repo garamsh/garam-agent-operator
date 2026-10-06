@@ -154,6 +154,9 @@ type Position int64
 type DesiredRevision struct {
 	Definition Definition
 	Settings   ExecutionSettings
+	// Cutover is true for an agent whose revisions began with a cutover import garam recorded as
+	// switched: the controller takes it over from the source it was built from.
+	Cutover bool
 }
 
 // DesiredPage is a controller's whole candidate set: the latest revision of each agent recorded
@@ -321,6 +324,23 @@ var (
 	// ErrInvalidSecretRef is returned for a model key reference that is not "<secret-name>/<key>"
 	// as SecretRef states it, which the manager could not render.
 	ErrInvalidSecretRef = errors.New("model key reference is not <secret-name>/<key>")
+
+	// ErrImportOpen is returned for a cutover import of an agent that holds another import.
+	ErrImportOpen = errors.New("another cutover import is open for the agent")
+
+	// ErrAlreadyDefined is returned for a cutover import of an agent that already has a definition.
+	ErrAlreadyDefined = errors.New("the agent already has a definition here")
+
+	// ErrCutoverPending is returned for a change to an agent whose cutover import is not switched:
+	// nothing of it is released, and nothing may be added to it, before garam records the switch.
+	ErrCutoverPending = errors.New("the agent's cutover is not switched")
+
+	// ErrCutoverStage is returned for a cutover stage the stored import is not ready for.
+	ErrCutoverStage = errors.New("the cutover import is not at a stage this one follows")
+
+	// ErrReverseMigrationRequired is returned for a rollback of a switched cutover: the source
+	// cannot return to garam from here.
+	ErrReverseMigrationRequired = errors.New("the cutover is switched; only a reverse migration returns it")
 
 	// ErrActivationMismatch is returned when garam answers a stored activation request with
 	// another activation than the one recorded for it.
@@ -521,4 +541,48 @@ type Activation struct {
 type RuntimeApplied struct {
 	Revision     Revision
 	ActivationID string
+}
+
+// CutoverStage is how far a cutover import has gone.
+type CutoverStage string
+
+const (
+	// CutoverImported is an import read from garam and stored inactive.
+	CutoverImported CutoverStage = "imported"
+	// CutoverFrozen is an import garam froze, verified against its digest.
+	CutoverFrozen CutoverStage = "frozen"
+	// CutoverSwitched is an import garam recorded as switched: its revision 1 is active.
+	CutoverSwitched CutoverStage = "switched"
+)
+
+// Disposition is what a cutover import does with one of the source's values.
+type Disposition string
+
+const (
+	// DispositionImport puts a tools.pins.<tool> value into revision 1's tools.
+	DispositionImport Disposition = "import"
+	// DispositionArchive keeps a value verbatim and applies it nowhere.
+	DispositionArchive Disposition = "archive"
+	// DispositionNeverApplied is a value the legacy path never applied, archived as such.
+	DispositionNeverApplied Disposition = "never-applied"
+)
+
+// CutoverImport is a legacy agent's source as control imported it from garam: keyed by its GRN,
+// every value kept verbatim with what was done with it, and the digest garam's freeze verifies.
+type CutoverImport struct {
+	Agent GRN
+	// Organization is the one the import was requested in, where its profile is resolved.
+	Organization string
+	ImportID     string
+	Epoch        string
+	Assignee     string
+	SourceDigest string
+	Values       map[string]string
+	Dispositions map[string]Disposition
+	Profile      ProfileRef
+	Pins         ToolPins
+	Stage        CutoverStage
+	// ConfigureRef is the durable agent:configure reference the switch carried, which revision 1's
+	// first activation is sent under.
+	ConfigureRef string
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -23,6 +24,8 @@ const (
 	ManagedEnrollment = "managed-enrollment.v1"
 	// ExecutionFence is the contract of garam's activation and execution introspection.
 	ExecutionFence = "execution-fence.v1"
+	// AgentCutover is the contract of a legacy agent's cutover stages (garam@1a5273d, ADR-0086).
+	AgentCutover = "agent-cutover.v1"
 
 	// maxAnswerBytes bounds an answer read from garam.
 	maxAnswerBytes = 1 << 20
@@ -47,6 +50,15 @@ func New(baseURL string, client *http.Client) *Client {
 	return &Client{baseURL: strings.TrimSuffix(baseURL, "/"), client: client, Attempts: 3, Backoff: 200 * time.Millisecond}
 }
 
+// Target is the request target a call to path is sent with: path under any path the listener's
+// base URL carries, as garam receives it and as a reference bound to that route must name it.
+func (c *Client) Target(path string) string {
+	if base, err := url.Parse(c.baseURL); err == nil {
+		return strings.TrimSuffix(base.EscapedPath(), "/") + path
+	}
+	return path
+}
+
 // Answer is a decided answer from garam: any status but 500 and 503.
 type Answer struct {
 	Status int
@@ -59,13 +71,32 @@ type Answer struct {
 // failed, is sent again up to Attempts times, as garam's ADR-0050 places a listener's 5xx. A
 // decided answer under another contract version is refused.
 func (c *Client) Post(ctx context.Context, contract, path string, body any) (Answer, error) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return Answer{}, fmt.Errorf("encode %s: %v", path, err)
+	return c.Send(ctx, Call{Method: http.MethodPost, Contract: contract, Path: path, Body: body})
+}
+
+// Call is one request to garam's machine listener. Body is sent as JSON, and nothing where it is
+// nil; Authorization, where set, is sent as that header.
+type Call struct {
+	Method        string
+	Contract      string
+	Path          string
+	Body          any
+	Authorization string
+}
+
+// Send sends call and returns garam's decided answer, retried as Post is.
+func (c *Client) Send(ctx context.Context, call Call) (Answer, error) {
+	var payload []byte
+	if call.Body != nil {
+		encoded, err := json.Marshal(call.Body)
+		if err != nil {
+			return Answer{}, fmt.Errorf("encode %s: %v", call.Path, err)
+		}
+		payload = encoded
 	}
 	wait := c.Backoff
 	for attempt := 1; ; attempt++ {
-		answer, retry, err := c.postOnce(ctx, contract, path, payload)
+		answer, retry, err := c.sendOnce(ctx, call, payload)
 		if !retry {
 			return answer, err
 		}
@@ -81,14 +112,24 @@ func (c *Client) Post(ctx context.Context, contract, path string, body any) (Ans
 	}
 }
 
-// postOnce sends one attempt, and reports whether garam left it undecided.
-func (c *Client) postOnce(ctx context.Context, contract, path string, payload []byte) (Answer, bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
+// sendOnce sends one attempt, and reports whether garam left it undecided.
+func (c *Client) sendOnce(ctx context.Context, call Call, payload []byte) (Answer, bool, error) {
+	contract, path := call.Contract, call.Path
+	var sent io.Reader
+	if payload != nil {
+		sent = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, call.Method, c.baseURL+path, sent)
 	if err != nil {
 		return Answer{}, false, fmt.Errorf("build %s: %v", path, err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set(contractHeader, contract)
+	if call.Authorization != "" {
+		req.Header.Set("Authorization", call.Authorization)
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return Answer{}, true, err

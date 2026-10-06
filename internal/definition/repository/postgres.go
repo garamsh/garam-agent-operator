@@ -278,8 +278,10 @@ func scanDesired(row pgx.Row, operator string) (definition.DesiredRevision, erro
 		profileName           string
 		config, settings      []byte
 		epoch                 string
+		cutover               bool
 	)
-	if err := row.Scan(&agent, &organization, &revision, &profileName, &profileVers, &config, &epoch, &settings); err != nil {
+	if err := row.Scan(&agent, &organization, &revision, &profileName, &profileVers, &config, &epoch, &settings,
+		&cutover); err != nil {
 		return definition.DesiredRevision{}, err
 	}
 	c, err := decodeConfig(config)
@@ -300,6 +302,7 @@ func scanDesired(row pgx.Row, operator string) (definition.DesiredRevision, erro
 			Assignment:   &definition.Assignment{Operator: operator, Epoch: epoch},
 		},
 		Settings: definition.ExecutionSettings(s),
+		Cutover:  cutover,
 	}, nil
 }
 
@@ -751,6 +754,194 @@ func scanActivation(row pgx.Row, agent definition.GRN) (definition.Activation, e
 	}
 	r.ConfigRevision = definition.Revision(revision)
 	return a, nil
+}
+
+// cutoverAttempts bounds how often an import is decided again after losing a race to another
+// import of the same agent, which a unique violation reports.
+const cutoverAttempts = 3
+
+func (p *Postgres) BeginCutoverImport(
+	ctx context.Context, imp definition.CutoverImport, d definition.Definition,
+) (definition.CutoverImport, bool, error) {
+	for attempt := 1; ; attempt++ {
+		stored, first, err := p.beginCutoverImport(ctx, imp, d)
+		if isUniqueViolation(err) && attempt < cutoverAttempts {
+			continue
+		}
+		if errors.Is(err, definition.ErrAlreadyDefined) {
+			return definition.CutoverImport{}, false, err
+		}
+		if err != nil {
+			return definition.CutoverImport{}, false, storeError("begin cutover import", err)
+		}
+		return stored, first, nil
+	}
+}
+
+func (p *Postgres) beginCutoverImport(
+	ctx context.Context, imp definition.CutoverImport, d definition.Definition,
+) (definition.CutoverImport, bool, error) {
+	var (
+		stored definition.CutoverImport
+		first  bool
+	)
+	err := p.inTx(ctx, func(tx pgx.Tx) error {
+		existing, err := scanCutover(tx.QueryRow(ctx, lockCutover, string(imp.Agent)), imp.Agent)
+		if err == nil {
+			stored = existing
+			return nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, definitionExists, string(imp.Agent), imp.Organization).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return definition.ErrAlreadyDefined
+		}
+		raw, err := encodeConfig(d.Config)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, insertFirstDefinition, string(d.Agent), d.Organization, d.Profile.Name,
+			int64(d.Profile.Version), raw, nil, nil); err != nil {
+			return err
+		}
+		values, dispositions, pins, err := cutoverJSON(imp)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, insertCutover, string(imp.Agent), imp.Organization, imp.ImportID, imp.Epoch, imp.Assignee, imp.SourceDigest,
+			values, dispositions, imp.Profile.Name, int64(imp.Profile.Version), pins); err != nil {
+			return err
+		}
+		stored, first = imp, true
+		return nil
+	})
+	return stored, first, err
+}
+
+func (p *Postgres) GetCutoverImport(ctx context.Context, agent definition.GRN) (definition.CutoverImport, error) {
+	imp, err := scanCutover(p.pool.QueryRow(ctx, getCutover, string(agent)), agent)
+	if err != nil {
+		return definition.CutoverImport{}, storeError("get cutover import", notFound("get cutover import", err))
+	}
+	return imp, nil
+}
+
+func (p *Postgres) FreezeCutoverImport(ctx context.Context, agent definition.GRN, importID string) error {
+	return p.cutoverStage(ctx, agent, importID, func(tx pgx.Tx, imp definition.CutoverImport) error {
+		if imp.Stage != definition.CutoverImported && imp.Stage != definition.CutoverFrozen {
+			return definition.ErrCutoverStage
+		}
+		_, err := tx.Exec(ctx, setCutoverStage, string(agent), string(definition.CutoverFrozen), "")
+		return err
+	})
+}
+
+func (p *Postgres) SwitchCutoverImport(ctx context.Context, agent definition.GRN, importID, configureRef string) error {
+	return p.cutoverStage(ctx, agent, importID, func(tx pgx.Tx, imp definition.CutoverImport) error {
+		switch imp.Stage {
+		case definition.CutoverSwitched:
+			return nil
+		case definition.CutoverFrozen:
+		default:
+			return definition.ErrCutoverStage
+		}
+		if _, err := tx.Exec(ctx, setCutoverStage, string(agent), string(definition.CutoverSwitched), configureRef); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, activateImportedRevision, string(agent), imp.Assignee, imp.Epoch)
+		return err
+	})
+}
+
+func (p *Postgres) DiscardCutoverImport(ctx context.Context, agent definition.GRN, importID string) error {
+	return p.cutoverStage(ctx, agent, importID, func(tx pgx.Tx, imp definition.CutoverImport) error {
+		if imp.Stage == definition.CutoverSwitched {
+			return definition.ErrReverseMigrationRequired
+		}
+		if _, err := tx.Exec(ctx, deleteCutover, string(agent)); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, deleteImportedRevisions, string(agent))
+		return err
+	})
+}
+
+// cutoverStage runs apply on the agent's import under importID, locked, in one transaction.
+func (p *Postgres) cutoverStage(ctx context.Context, agent definition.GRN, importID string,
+	apply func(pgx.Tx, definition.CutoverImport) error) error {
+	err := p.inTx(ctx, func(tx pgx.Tx) error {
+		imp, err := scanCutover(tx.QueryRow(ctx, lockCutover, string(agent)), agent)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return definition.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if imp.ImportID != importID {
+			return definition.ErrImportOpen
+		}
+		return apply(tx, imp)
+	})
+	for _, refusal := range []error{definition.ErrNotFound, definition.ErrImportOpen, definition.ErrCutoverStage,
+		definition.ErrReverseMigrationRequired} {
+		if errors.Is(err, refusal) {
+			return refusal
+		}
+	}
+	if err != nil {
+		return storeError("record cutover stage", err)
+	}
+	return nil
+}
+
+// cutoverJSON is the import's values, dispositions and pins as their columns hold them.
+func cutoverJSON(imp definition.CutoverImport) (values, dispositions, pins []byte, err error) {
+	if values, err = json.Marshal(nonNil(imp.Values)); err != nil {
+		return nil, nil, nil, err
+	}
+	if dispositions, err = json.Marshal(imp.Dispositions); err != nil {
+		return nil, nil, nil, err
+	}
+	if imp.Dispositions == nil {
+		dispositions = []byte("{}")
+	}
+	if pins, err = json.Marshal(nonNil(imp.Pins)); err != nil {
+		return nil, nil, nil, err
+	}
+	return values, dispositions, pins, nil
+}
+
+func nonNil[M ~map[string]string](m M) M {
+	if m == nil {
+		return M{}
+	}
+	return m
+}
+
+// scanCutover reads one cutover_imports row.
+func scanCutover(row pgx.Row, agent definition.GRN) (definition.CutoverImport, error) {
+	imp := definition.CutoverImport{Agent: agent}
+	var (
+		values, dispositions, pins []byte
+		version                    int64
+		stage                      string
+	)
+	if err := row.Scan(&imp.Organization, &imp.ImportID, &imp.Epoch, &imp.Assignee, &imp.SourceDigest, &values, &dispositions,
+		&imp.Profile.Name, &version, &pins, &stage, &imp.ConfigureRef); err != nil {
+		return definition.CutoverImport{}, err
+	}
+	imp.Profile.Version, imp.Stage = definition.Version(version), definition.CutoverStage(stage)
+	for raw, into := range map[*[]byte]any{&values: &imp.Values, &dispositions: &imp.Dispositions, &pins: &imp.Pins} {
+		if err := json.Unmarshal(*raw, into); err != nil {
+			return definition.CutoverImport{}, fmt.Errorf("decode cutover import: %v", err)
+		}
+	}
+	return imp, nil
 }
 
 // inTx runs fn in one transaction, committed when fn returns nil.

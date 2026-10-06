@@ -59,6 +59,9 @@ func (s *service) operationReference(ctx context.Context, agent GRN, revision Re
 	}
 	if revision == 1 {
 		creation, err := s.repository.CreationOf(ctx, agent)
+		if errors.Is(err, ErrNotFound) {
+			return s.cutoverReference(ctx, agent)
+		}
 		if err != nil {
 			return "", err
 		}

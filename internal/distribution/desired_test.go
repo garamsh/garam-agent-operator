@@ -2,6 +2,7 @@ package distribution_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/pem"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/garamsh/garam-agent-operator/internal/definition"
 	"github.com/garamsh/garam-agent-operator/internal/distribution"
 )
 
@@ -215,4 +217,29 @@ func TestDesired_RefusesAQueryItCannotAnswer(t *testing.T) {
 	first := e.desired(t, e.withCert, "")
 	e.configure(t, agentA, controller, 2)
 	assert.Equal(t, 200, e.desired(t, e.withCert, "?after="+first.cursor+"&waitSeconds=30").status)
+}
+
+func TestDesired_MarksAnAgentCutOverFromItsLegacySource(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	const legacy = "grn:acme:default:agent:legacy"
+	_, _, err := e.definitions.ImportCutover(ctx, definition.CutoverImport{
+		Agent: legacy, Organization: orgID, ImportID: "import-1", Epoch: epoch, Assignee: controller, SourceDigest: "digest",
+		Values: map[string]string{}, Dispositions: map[string]definition.Disposition{}, Profile: e.profile,
+	})
+	require.NoError(t, err)
+	e.prover.epochs[legacy] = epoch
+
+	// Imported and frozen, it is released to no controller.
+	require.NoError(t, e.definitions.FreezeCutover(ctx, legacy, "import-1"))
+	assert.NotContains(t, e.desired(t, e.withCert, "").agents, legacy)
+
+	require.NoError(t, e.definitions.SwitchCutover(ctx, legacy, "import-1", "configure-ref"))
+	switched := e.desired(t, e.withCert, "")
+	assert.Equal(t, "1", switched.agents[legacy])
+	assert.Equal(t, "cutover", switched.origins[legacy])
+
+	// Control: an agent created here carries no origin.
+	assert.Contains(t, switched.agents, agentA)
+	assert.Empty(t, switched.origins[agentA])
 }

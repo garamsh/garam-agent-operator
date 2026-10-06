@@ -16,6 +16,9 @@ func (s *service) Configure(ctx context.Context, in ConfigureInput) (Applied, er
 	if _, err := s.repository.GetProfile(ctx, in.Request.Organization, in.Profile); err != nil {
 		return Applied{}, fmt.Errorf("profile %s version %d: %w", in.Profile.Name, in.Profile.Version, err)
 	}
+	if err := s.cutoverSwitchedOrNone(ctx, in.Agent); err != nil {
+		return Applied{}, err
+	}
 	request := Request{Key: in.Request, Binding: in.Binding, Agent: in.Agent}
 	assignment := in.Binding.Assignment
 	d := Definition{

@@ -22,8 +22,23 @@ const kindInvalidAPIKeyRef = "invalid_api_key_ref"
 // respondError translates err to its status. It is the only place a status is chosen for an
 // error, and the only place one is logged.
 func (s *server) respondError(w http.ResponseWriter, err error) {
-	var mismatch *MismatchError
+	var (
+		mismatch *MismatchError
+		cutover  *CutoverRefusal
+	)
 	switch {
+	case errors.As(err, &cutover):
+		writeJSON(w, cutover.Status, errorBody{Kind: cutover.Kind, Message: cutover.Message})
+	case errors.Is(err, ErrCutoverUndecided):
+		writeMessage(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, definition.ErrImportOpen):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindImportOpen, Message: err.Error()})
+	case errors.Is(err, definition.ErrAlreadyDefined):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindAlreadyDefined, Message: err.Error()})
+	case errors.Is(err, definition.ErrCutoverPending), errors.Is(err, definition.ErrCutoverStage):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindCutoverStage, Message: err.Error()})
+	case errors.Is(err, definition.ErrReverseMigrationRequired):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindReverseMigrationRequired, Message: err.Error()})
 	case errors.Is(err, ErrNoAuthority):
 		w.Header().Set("WWW-Authenticate", "Garam-Operation")
 		writeMessage(w, http.StatusUnauthorized, err.Error())
