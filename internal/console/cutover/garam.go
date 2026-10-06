@@ -135,7 +135,7 @@ func (g *Garam) send(ctx context.Context, method, agent string, stage console.St
 		if kind == "" {
 			kind = refused.Kind
 		}
-		return &console.CutoverRefusal{Status: answer.Status, Kind: kind, Message: refused.Message}
+		return &console.CutoverRefusal{Status: answer.Status, Kind: kind, Reason: refused.Reason, Message: refused.Message}
 	}
 	return fmt.Errorf("cutover %s answered %d: %s", stage, answer.Status, garammachine.FirstLine(answer.Body))
 }

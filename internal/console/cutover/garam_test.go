@@ -96,13 +96,16 @@ func TestGaram_RefusalsCarryGaramsReason(t *testing.T) {
 	_, err := g.Switch(context.Background(), agent, "ref", "i1")
 	var refused *console.CutoverRefusal
 	require.ErrorAs(t, err, &refused)
-	assert.Equal(t, console.CutoverRefusal{Status: http.StatusConflict, Kind: "attempt_open", Message: "m"}, *refused)
+	assert.Equal(t, console.CutoverRefusal{
+		Status: http.StatusConflict, Kind: "attempt_open", Reason: "attempt_open", Message: "m",
+	}, *refused)
 
 	// Control: a refusal naming no reason carries garam's kind.
 	g, _ = stand(t, "", http.StatusForbidden, `{"kind":"permission_denied","message":"no"}`)
 	_, err = g.Switch(context.Background(), agent, "ref", "i1")
 	require.ErrorAs(t, err, &refused)
 	assert.Equal(t, "permission_denied", refused.Kind)
+	assert.Empty(t, refused.Reason, "garam's errorx kind was carried as the contract's reason")
 
 	g, _ = stand(t, "", http.StatusServiceUnavailable, `{}`)
 	_, err = g.Switch(context.Background(), agent, "ref", "i1")

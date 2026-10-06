@@ -43,10 +43,12 @@ type CutoverAttempt struct {
 }
 
 // CutoverRefusal is garam's refusal of a cutover stage, answered as garam gave it: the status, and
-// as kind the contract's reason where garam named one.
+// as kind the contract's reason where garam named one. Reason is that reason alone, one of
+// agent-cutover.v1's closed set, and empty where garam named none.
 type CutoverRefusal struct {
 	Status  int
 	Kind    string
+	Reason  string
 	Message string
 }
 

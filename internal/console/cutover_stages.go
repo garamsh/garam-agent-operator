@@ -283,7 +283,8 @@ func (s *server) switchCutover(w http.ResponseWriter, r *http.Request) {
 }
 
 // rollBackCutover has garam end a frozen attempt, then discards the import and its revision 1. A
-// switched import is refused here before garam is asked.
+// switched import is refused here before garam is asked. A rollback garam already holds, because
+// an earlier one was answered and the discard was never reached, completes the discard.
 func (s *server) rollBackCutover(w http.ResponseWriter, r *http.Request) {
 	agent, b, imp, ok := s.stage(w, r, StageRollback)
 	if !ok {
@@ -293,7 +294,7 @@ func (s *server) rollBackCutover(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, definition.ErrReverseMigrationRequired)
 		return
 	}
-	if _, err := s.cutover.RollBack(r.Context(), agent, b.OperationRef, imp.ImportID); err != nil {
+	if _, err := s.cutover.RollBack(r.Context(), agent, b.OperationRef, imp.ImportID); err != nil && !rolledBack(err) {
 		s.respondError(w, err)
 		return
 	}
@@ -355,4 +356,18 @@ func decodeStrict(body []byte, out any) error {
 		return errors.New("more than one value")
 	}
 	return nil
+}
+
+// reasonAttemptEnded is agent-cutover.v1's reason for a stage that reaches an attempt already
+// rolled back.
+const reasonAttemptEnded = "attempt_ended"
+
+// rolledBack reports whether err is garam's answer that the rollback asked for already holds. In
+// agent-cutover.v1 (garam@59fe68d api/machine.yaml:1520-1532) a rollback reaching an attempt
+// rolled back is 409 with reason attempt_ended, "which says the rollback holds", and one reaching
+// a switched attempt is 409 reverse_migration_required. The reason is CutoverError's closed enum
+// (machine.yaml:2614-2617), so it alone decides: never the message, never the errorx kind.
+func rolledBack(err error) bool {
+	var refused *CutoverRefusal
+	return errors.As(err, &refused) && refused.Status == http.StatusConflict && refused.Reason == reasonAttemptEnded
 }

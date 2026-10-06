@@ -129,10 +129,16 @@ func (c *cutover) RollBack(_ context.Context, _, ref, id string) (console.Cutove
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.attempts[id] == attemptSwitched {
-		return console.CutoverAttempt{}, &console.CutoverRefusal{Status: http.StatusConflict, Kind: "reverse_migration_required"}
+	// As garam's agent-cutover.v1 does: no rollback reaches an ended attempt, and none a switched one.
+	switch c.attempts[id] {
+	case attemptSwitched:
+		return console.CutoverAttempt{}, &console.CutoverRefusal{Status: http.StatusConflict,
+			Kind: "reverse_migration_required", Reason: "reverse_migration_required"}
+	case attemptRolledBack:
+		return console.CutoverAttempt{}, &console.CutoverRefusal{Status: http.StatusConflict,
+			Kind: "attempt_ended", Reason: "attempt_ended", Message: "the cutover attempt has been rolled back"}
 	}
-	c.attempts[id] = "rolled_back"
+	c.attempts[id] = attemptRolledBack
 	return console.CutoverAttempt{ImportID: id, Stage: "rolled_back"}, nil
 }
 
@@ -581,4 +587,69 @@ func TestCutover_AFreezeAfterTheSwitchRefusedHere(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, refused.status, refused.raw)
 	assert.Equal(t, "cutover_stage", refused.kind())
 	assert.Equal(t, freezes, e.cutover.callsTo(console.StageFreeze), "garam was asked to freeze a switched agent")
+}
+
+// attemptRolledBack is the stage garam records a rolled-back attempt at.
+const attemptRolledBack = "rolled_back"
+
+// TestCutover_ARollbackGaramAlreadyHoldsCompletesTheDiscard is #286: garam rolled the attempt back,
+// and the control service stopped before it discarded the import. The retried rollback completes
+// the discard on garam's reason that the rollback holds, and on nothing else.
+func TestCutover_ARollbackGaramAlreadyHoldsCompletesTheDiscard(t *testing.T) {
+	frozen := func(t *testing.T) *cutoverEnv {
+		t.Helper()
+		e := newCutoverEnv(t, map[string]string{})
+		require.Equal(t, http.StatusCreated, e.doImport(t, importID, nil).status)
+		require.Equal(t, http.StatusOK, e.doStage(t, console.StageFreeze, "freeze-1").status)
+		return e
+	}
+	kept := func(t *testing.T, e *cutoverEnv) {
+		t.Helper()
+		imp, err := e.definitions.CutoverImportOf(context.Background(), legacy)
+		require.NoError(t, err, "a refused rollback discarded the import")
+		assert.Equal(t, definition.CutoverFrozen, imp.Stage)
+		_, err = e.definitions.GetDefinition(context.Background(), legacy)
+		require.NoError(t, err, "a refused rollback discarded revision 1")
+	}
+
+	e := frozen(t)
+	e.cutover.mu.Lock()
+	e.cutover.attempts[importID] = attemptRolledBack
+	e.cutover.mu.Unlock()
+	resumed := e.doStage(t, console.StageRollback, "rollback-1")
+	require.Equal(t, http.StatusOK, resumed.status, resumed.raw)
+	assert.Equal(t, "rolled_back", resumed.body["stage"])
+	assert.Equal(t, 1, e.cutover.callsTo(console.StageRollback))
+	_, err := e.definitions.CutoverImportOf(context.Background(), legacy)
+	require.ErrorIs(t, err, definition.ErrNotFound, "the import outlived garam's rollback")
+	_, err = e.definitions.GetDefinition(context.Background(), legacy)
+	require.ErrorIs(t, err, definition.ErrNotFound, "the import's revision 1 outlived garam's rollback")
+
+	// Control: garam switched the attempt and the control service stopped before it stored the
+	// switch. garam's refusal is reverse_migration_required, and the import is kept.
+	switched := frozen(t)
+	switched.cutover.mu.Lock()
+	switched.cutover.attempts[importID] = attemptSwitched
+	switched.cutover.mu.Unlock()
+	refused := switched.doStage(t, console.StageRollback, "rollback-1")
+	assert.Equal(t, http.StatusConflict, refused.status, refused.raw)
+	assert.Equal(t, "reverse_migration_required", refused.kind())
+	kept(t, switched)
+
+	// Control: only the reason decides. A message or an errorx kind saying the attempt ended, under
+	// another reason or none, is refused as garam gave it.
+	for name, err := range map[string]error{
+		"a message saying so under another reason": &console.CutoverRefusal{Status: http.StatusConflict,
+			Kind: "attempt_open", Reason: "attempt_open", Message: "the cutover attempt has been rolled back"},
+		"an errorx kind saying so under no reason": &console.CutoverRefusal{Status: http.StatusConflict,
+			Kind: "attempt_ended", Message: "the cutover attempt has been rolled back"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			other := frozen(t)
+			other.cutover.refuse[console.StageRollback] = err
+			refused := other.doStage(t, console.StageRollback, "rollback-1")
+			assert.Equal(t, http.StatusConflict, refused.status, refused.raw)
+			kept(t, other)
+		})
+	}
 }
