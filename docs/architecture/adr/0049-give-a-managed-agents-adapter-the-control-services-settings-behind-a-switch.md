@@ -1,6 +1,6 @@
 # ADR 0049: Give a managed agent's adapter the control service's settings and its outbox, behind a switch until activation is served
 
-> Status: accepted
+> Status: accepted; "Which agents" amended for the outbox by ADR-0060
 > Date: 2026-10-05
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
