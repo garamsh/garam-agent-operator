@@ -210,9 +210,10 @@ func TestCreateAgent_UnpublishedProfileRefused(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// inGlobex is f.create in globex, the organization that did not publish f.template or f.profile.
-func (f fixture) inGlobex(requestID string) definition.CreateInput {
-	in := f.create(requestID, f.template)
+// inGlobex is request r1 of f.create in globex, the organization that did not publish f.template or
+// f.profile.
+func (f fixture) inGlobex() definition.CreateInput {
+	in := f.create("r1", f.template)
 	in.Request.Organization = globex
 	return in
 }
@@ -224,7 +225,7 @@ func TestCreateAgent_AnotherOrganizationsTemplateRefused(t *testing.T) {
 	require.NoError(t, err)
 
 	// f.template is published in org only; globex holds the profile the request names.
-	_, _, err = f.service.CreateAgent(ctx, f.inGlobex("r1"))
+	_, _, err = f.service.CreateAgent(ctx, f.inGlobex())
 	require.ErrorIs(t, err, definition.ErrNotFound)
 	assert.Equal(t, 0, f.registrar.calls)
 
@@ -236,7 +237,7 @@ func TestCreateAgent_AnotherOrganizationsTemplateRefused(t *testing.T) {
 		Config:  config("globex ego", definition.ToolPins{webFetch: secondPin}),
 	})
 	require.NoError(t, err)
-	_, _, err = f.service.CreateAgent(ctx, f.inGlobex("r1"))
+	_, _, err = f.service.CreateAgent(ctx, f.inGlobex())
 	require.NoError(t, err)
 	d, err := f.service.GetDefinition(ctx, firstAgent)
 	require.NoError(t, err)
@@ -257,14 +258,14 @@ func TestCreateAgent_AnotherOrganizationsProfileRefused(t *testing.T) {
 	require.NoError(t, err)
 
 	// f.profile is published in org only.
-	_, _, err = f.service.CreateAgent(ctx, f.inGlobex("r1"))
+	_, _, err = f.service.CreateAgent(ctx, f.inGlobex())
 	require.ErrorIs(t, err, definition.ErrNotFound)
 	assert.Equal(t, 0, f.registrar.calls)
 
 	// Control: once globex publishes a profile under that name and version, the same request is created.
 	_, err = f.service.PublishProfile(ctx, globex, f.profile.Name, settings("1", "2Gi"))
 	require.NoError(t, err)
-	_, _, err = f.service.CreateAgent(ctx, f.inGlobex("r1"))
+	_, _, err = f.service.CreateAgent(ctx, f.inGlobex())
 	require.NoError(t, err)
 	d, err := f.service.GetDefinition(ctx, firstAgent)
 	require.NoError(t, err)
