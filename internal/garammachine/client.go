@@ -34,6 +34,20 @@ const (
 // ErrUndecided is returned when garam answered 500 or 503, or could not be reached, on every attempt.
 var ErrUndecided = errors.New("garam answered without deciding")
 
+// ContractError is a decided answer garam gave under another contract version than the one
+// asked, or under none. Its body is not read, so it decides nothing.
+type ContractError struct {
+	// Path is the route called, Status the status garam answered with.
+	Path   string
+	Status int
+	// Got is the contract the answer carried, empty for none; Want is the one asked.
+	Got, Want string
+}
+
+func (e *ContractError) Error() string {
+	return fmt.Sprintf("%s answered %d under contract %q, want %q", e.Path, e.Status, e.Got, e.Want)
+}
+
 // Client calls garam's machine listener as the operator its client certificate names.
 type Client struct {
 	baseURL string
@@ -69,7 +83,7 @@ type Answer struct {
 // it is used for either decides without writing or answers a repeated request identifier with
 // the first request's outcome, so an attempt garam answered 500 or 503, or whose connection
 // failed, is sent again up to Attempts times, as garam's ADR-0050 places a listener's 5xx. A
-// decided answer under another contract version is refused.
+// decided answer under another contract version, or none, is refused with a *ContractError.
 func (c *Client) Post(ctx context.Context, contract, path string, body any) (Answer, error) {
 	return c.Send(ctx, Call{Method: http.MethodPost, Contract: contract, Path: path, Body: body})
 }
@@ -143,7 +157,7 @@ func (c *Client) sendOnce(ctx context.Context, call Call, payload []byte) (Answe
 		return Answer{}, true, fmt.Errorf("status %d", resp.StatusCode)
 	}
 	if got := resp.Header.Get(contractHeader); got != contract {
-		return Answer{}, false, fmt.Errorf("%s answered %d under contract %q, want %q", path, resp.StatusCode, got, contract)
+		return Answer{}, false, &ContractError{Path: path, Status: resp.StatusCode, Got: got, Want: contract}
 	}
 	return Answer{Status: resp.StatusCode, Body: body}, false, nil
 }

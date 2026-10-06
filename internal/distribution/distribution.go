@@ -28,6 +28,11 @@ var (
 	// ErrUndecided is returned when garam could not decide the proof from current state.
 	ErrUndecided = errors.New("controller authority undecided")
 
+	// ErrGaramContractUnsupported is returned when garam answered the proof under a contract
+	// version this service does not take, or under none. Nothing in the answer is read, so it
+	// proves nothing.
+	ErrGaramContractUnsupported = errors.New("garam answered under a contract this service does not take")
+
 	// ErrAnotherOperator is returned for a proof naming another operator than the certificate.
 	ErrAnotherOperator = errors.New("proof names another operator than the certificate")
 )

@@ -18,6 +18,9 @@ import (
 
 const controller = "grn:acme:default:operator:k8s"
 
+// operationRef is the creation's reference every registration here sends.
+const operationRef = "ref-1"
+
 // sent is what the stand-in garam last received.
 type sent struct {
 	path     string
@@ -41,7 +44,7 @@ func register(t *testing.T, status int, answer string) (definition.Registered, s
 	r, err := registrar.NewGaram(machine).Register(context.Background(), definition.Registration{
 		Request:      definition.RequestKey{Organization: "acme", RequestID: "n1"},
 		Controller:   controller,
-		OperationRef: "ref-1",
+		OperationRef: operationRef,
 	})
 	return r, got, err
 }
@@ -94,3 +97,32 @@ func TestGaram_AnswerWithoutAnAgentRefused(t *testing.T) {
 	_, _, err = register(t, http.StatusCreated, `{"grn":"grn:acme:default:agent:0a1b","epoch":"1"}`)
 	require.NoError(t, err)
 }
+
+func TestGaram_AnAnswerUnderAnotherContractOrNoneDecidesNothing(t *testing.T) {
+	for name, header := range map[string]*string{
+		"the contract asked": ptrTo(garammachine.ManagedEnrollment), "another contract": ptrTo("managed-enrollment.v2"),
+		"no contract": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if header != nil {
+					w.Header().Set("Garam-Contract-Version", *header)
+				}
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"grn":"grn:acme:default:agent:0a1b","epoch":"1"}`))
+			}))
+			t.Cleanup(server.Close)
+			_, err := registrar.NewGaram(garammachine.New(server.URL, server.Client())).Register(context.Background(),
+				definition.Registration{Request: definition.RequestKey{Organization: "acme", RequestID: "n1"},
+					Controller: controller, OperationRef: operationRef})
+			if header != nil && *header == garammachine.ManagedEnrollment {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorIs(t, err, definition.ErrGaramContractUnsupported)
+			assert.NotErrorIs(t, err, definition.ErrRegistrationRefused, "a refusal would fail the creation")
+		})
+	}
+}
+
+func ptrTo(s string) *string { return &s }

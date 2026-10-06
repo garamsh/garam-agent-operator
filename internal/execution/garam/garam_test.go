@@ -123,3 +123,37 @@ func TestGaram_RefusalsAreTold(t *testing.T) {
 		assert.NotErrorIs(t, err, refusal)
 	}
 }
+
+func TestGaram_AnAnswerUnderAnotherContractOrNoneDecidesNothing(t *testing.T) {
+	introspection := `{"grn":"` + agent + `","credential":"current","generation":"current","activationId":"a1"}`
+	for name, header := range map[string]*string{
+		"the contract asked": ptrTo(garammachine.ExecutionFence), "another contract": ptrTo("execution-fence.v2"),
+		"no contract": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if header != nil {
+					w.Header().Set("Garam-Contract-Version", *header)
+				}
+				_, _ = w.Write([]byte(introspection))
+			}))
+			t.Cleanup(server.Close)
+			_, err := executiongaram.NewGaram(garammachine.New(server.URL, server.Client())).
+				Introspect(context.Background(), agent, []byte(leaf), gen)
+			if header != nil && *header == garammachine.ExecutionFence {
+				assert.NoError(t, err)
+				return
+			}
+			var foreign *execution.GaramContractError
+			require.ErrorAs(t, err, &foreign)
+			want := ""
+			if header != nil {
+				want = *header
+			}
+			assert.Equal(t, execution.GaramContractError{Call: "/agents/" + agent + "/execution/introspection", Contract: want}, *foreign)
+			assert.NotErrorIs(t, err, execution.ErrUndecided)
+		})
+	}
+}
+
+func ptrTo(s string) *string { return &s }

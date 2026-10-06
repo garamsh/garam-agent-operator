@@ -49,8 +49,12 @@ func (g *Garam) Prove(ctx context.Context, controller string, leafPEM []byte, ag
 		in.Agent = &agent
 	}
 	answer, err := g.machine.Post(ctx, garammachine.OperationAuthority, "/operators/"+url.PathEscape(controller)+"/introspection", in)
-	if errors.Is(err, garammachine.ErrUndecided) {
+	var foreign *garammachine.ContractError
+	switch {
+	case errors.Is(err, garammachine.ErrUndecided):
 		return distribution.Proof{}, fmt.Errorf("%w: %v", distribution.ErrUndecided, err)
+	case errors.As(err, &foreign):
+		return distribution.Proof{}, fmt.Errorf("%w: %v", distribution.ErrGaramContractUnsupported, err)
 	}
 	if err != nil {
 		return distribution.Proof{}, fmt.Errorf("prove controller: %v", err)

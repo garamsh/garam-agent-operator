@@ -229,6 +229,12 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvLogging(t, slog.New(slog.DiscardHandler))
+}
+
+// newEnvLogging is newEnv with the routes logging to logger.
+func newEnvLogging(t *testing.T, logger *slog.Logger) *env {
+	t.Helper()
 	ctx := context.Background()
 	repo := repository.NewMemory()
 	definitions := definition.NewService(repo, registrar{}, nil)
@@ -258,7 +264,7 @@ func newEnv(t *testing.T) *env {
 
 	e := &env{garam: newGaram(), definitions: definitions, repository: repo, profile: profile}
 	e.server = httptest.NewUnstartedServer(execution.NewHandler(execution.Config{
-		Definitions: definitions, Garam: e.garam, Logger: slog.New(slog.DiscardHandler),
+		Definitions: definitions, Garam: e.garam, Logger: logger,
 	}))
 	e.server.TLS = &tls.Config{ClientAuth: tls.RequestClientCert}
 	e.server.StartTLS()
