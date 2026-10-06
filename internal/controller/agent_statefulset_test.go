@@ -1068,6 +1068,76 @@ var _ = Describe("Agent workload", func() {
 			"  provider: openai-compatible\n"))
 	})
 
+	It("delivers a Control-source Agent's revision in its config file as a string, and moves the Pod when it changes", func() {
+		name := "carries-its-revision"
+		createSecret(credentialsSecretName(name))
+		createSecret(modelKeySecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceControl}
+		agent.Spec.Model = newModel(name)
+		agent.Spec.Revision = "3"
+		createAgent(agent)
+
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		first := statefulSetFor(name).Spec.Template.Spec
+		// Read untyped, so a revision written as a YAML number fails here: sherlock echoes the
+		// text it reads, and the activation route takes the canonical decimal string.
+		written := map[string]any{}
+		Expect(yaml.Unmarshal([]byte(environmentOf(initContainerOf(first, configContainerName))[configContentVariable]),
+			&written)).To(Succeed())
+		Expect(written).To(HaveKeyWithValue("revision", "3"))
+		Expect(written).To(HaveKey("model"))
+
+		By("a later revision, which the config file and the Pod follow")
+		later := readAgent(name)
+		later.Spec.Revision = "4"
+		Expect(k8sClient.Update(ctx, later)).To(Succeed())
+		_, err = reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		second := statefulSetFor(name).Spec.Template.Spec
+		written = map[string]any{}
+		Expect(yaml.Unmarshal([]byte(environmentOf(initContainerOf(second, configContainerName))[configContentVariable]),
+			&written)).To(Succeed())
+		Expect(written).To(HaveKeyWithValue("revision", "4"))
+		Expect(second).NotTo(Equal(first))
+	})
+
+	It("writes a config file for a revision an Agent declares nothing else beside", func() {
+		name := "carries-only-its-revision"
+		createSecret(credentialsSecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceControl}
+		agent.Spec.Revision = "1"
+		createAgent(agent)
+
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		pod := statefulSetFor(name).Spec.Template.Spec
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).
+			To(HaveKeyWithValue(configContentVariable, "revision: \"1\"\n"))
+		Expect(containerOf(pod, agentContainerName).VolumeMounts).To(ContainElement(corev1.VolumeMount{
+			Name: configVolumeName, MountPath: agentTypeSherlock.configMountPath, ReadOnly: true}))
+	})
+
+	It("renders a Garam-source Agent's config file with no revision key, as before revisions were rendered", func() {
+		name := "garam-source-has-no-revision"
+		createSecret(credentialsSecretName(name))
+		createSecret(modelKeySecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceGaram}
+		agent.Spec.Model = newModel(name)
+		createAgent(agent)
+
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		written := map[string]any{}
+		Expect(yaml.Unmarshal([]byte(environmentOf(initContainerOf(statefulSetFor(name).Spec.Template.Spec,
+			configContainerName))[configContentVariable]), &written)).To(Succeed())
+		Expect(written).To(HaveLen(2))
+		Expect(written).To(SatisfyAll(HaveKey("model"), HaveKey("embedding")))
+	})
+
 	It("renders an embeddings endpoint naming no key with no key variable, and the mock with no embedding section", func() {
 		keyless := newModel("renders-a-keyless-embedding")
 		keyless.Embedding.APIKeySecretRef = nil

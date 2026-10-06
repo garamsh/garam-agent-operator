@@ -42,8 +42,9 @@ func NewAgent(c client.Client, namespace, image string) *Agent {
 
 // Render implements desired.Renderer. Every field a revision decides is written
 // on every new revision, so a changed tool set, model, ego or profile reaches
-// the agent rather than only the first one (ADR 0043). Identity and names stay
-// what the GRN derives (ADR 0032).
+// the agent rather than only the first one (ADR 0043), and so is the revision
+// itself, which the agent reports as the one it runs (ADR 0054). Identity and
+// names stay what the GRN derives (ADR 0032).
 func (a *Agent) Render(ctx context.Context, agent desired.Agent) error {
 	spec, err := a.specOf(agent)
 	if err != nil {
@@ -91,6 +92,7 @@ func (a *Agent) Render(ctx context.Context, agent desired.Agent) error {
 	rendered.Spec.Model = spec.Model
 	rendered.Spec.Ego = spec.Ego
 	rendered.Spec.Identity.AssignmentEpoch = spec.Identity.AssignmentEpoch
+	rendered.Spec.Revision = spec.Revision
 	if equality.Semantic.DeepEqual(existing.Spec, rendered.Spec) {
 		return nil
 	}
@@ -138,6 +140,7 @@ func (a *Agent) specOf(agent desired.Agent) (agentv1alpha1.AgentSpec, error) {
 		Identity: &agentv1alpha1.AgentIdentity{
 			GRN: agent.GRN, AssignmentEpoch: agent.Epoch, Source: agentv1alpha1.DesiredSourceControl,
 		},
+		Revision: agent.Revision,
 	}
 	// An empty pin set is no pin set: the API refuses an empty one, which
 	// sherlock refuses to start under.

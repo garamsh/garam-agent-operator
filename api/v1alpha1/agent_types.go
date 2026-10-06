@@ -11,6 +11,7 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || (has(self.identity) && self.identity.grn == oldSelf.identity.grn)",message="identity.grn cannot be changed or removed once set"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || !has(oldSelf.identity.source) || oldSelf.identity.source != 'Control' || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="identity.source cannot leave Control once set"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.model) || !has(oldSelf.model.embedding) || (has(self.model) && has(self.model.embedding) && self.model.embedding.name == oldSelf.model.embedding.name && self.model.embedding.baseURL == oldSelf.model.embedding.baseURL)",message="model.embedding.name and model.embedding.baseURL cannot be changed or removed once set, because the agent's stored memory is embedded under them"
+// +kubebuilder:validation:XValidation:rule="!has(self.revision) || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="revision is set only on an agent whose identity.source is Control"
 type AgentSpec struct {
 	// type names the agent binary the workload carries. Today three are admitted
 	// — sherlock, claude-code and codex — and each maps to a different
@@ -114,6 +115,18 @@ type AgentSpec struct {
 	// be changed or removed once set.
 	// +optional
 	Identity *AgentIdentity `json:"identity,omitempty"`
+
+	// revision is the control service's definition revision this spec was
+	// rendered from, as the canonical decimal string its feed carries. It is
+	// written by this operator on every render of an agent on the Control
+	// source, and delivered to the agent in its config file, which the agent
+	// reports back as the revision it runs. It is set only where
+	// identity.source is Control: an agent on any other source has no
+	// definition revision.
+	// +optional
+	// +kubebuilder:validation:MaxLength=19
+	// +kubebuilder:validation:Pattern=`^[1-9][0-9]*$`
+	Revision string `json:"revision,omitempty"`
 }
 
 // AgentIdentity is an agent's identity in garam, as this operator renders it

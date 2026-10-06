@@ -389,12 +389,12 @@ var _ = Describe("Agent workload", Ordered, func() {
 			"the replacement was created at %s, before the evidence was read at %s", createdAt, observedAt)
 	})
 
-	It("keeps a claimed agent's workload, claim and Secret across its move to Control, with an edited pin", func() {
+	It("keeps a claimed agent's workload, claim and Secret across its move to Control, with an edited pin and its revision", func() {
 		// #217 AC1. A claimed agent is one the poller built from garam, on the
 		// Garam source. The move is what the renderer patches when the feed marks
-		// it cut over: spec.identity.source, and the revision's spec. Kind runs no
-		// control service, so the spec makes that patch; the renderer's own patch
-		// is asserted in internal/desired/renderer.
+		// it cut over: spec.identity.source, and the revision's spec, its number
+		// included (#291). Kind runs no control service, so the spec makes that
+		// patch; the renderer's own patch is asserted in internal/desired/renderer.
 		const (
 			migrated    = "e2e-migrated"
 			migratedPod = migrated + "-0"
@@ -434,19 +434,27 @@ var _ = Describe("Agent workload", Ordered, func() {
 			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec}"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring("sha256:before"))
+			// The control for this is the same read after the move, below, carrying one.
+			g.Expect(config).NotTo(ContainSubstring("revision:"), "a Garam-source agent has no definition revision")
 		}, 3*time.Minute, time.Second).Should(Succeed())
 		secret, err = uidOf("secret", credentialsSecret)
 		Expect(err).NotTo(HaveOccurred())
 		Expect([]string{statefulSet, claim, secret, pod}).NotTo(ContainElement(""))
 
-		By("moving the agent to the Control source with an edited pin, as the renderer's cutover patch does")
+		By("refusing a revision on the agent while it is on the Garam source")
+		refused, err := kubectlIn("patch", "agent", migrated, "--type", "merge", "-p", `{"spec":{"revision":"1"}}`)
+		Expect(err).To(HaveOccurred())
+		Expect(refused).To(ContainSubstring("revision is set only on an agent whose identity.source is Control"))
+
+		By("moving the agent to the Control source with an edited pin and its revision, as the renderer's cutover patch does")
 		_, err = kubectlIn("patch", "agent", migrated, "--type", "merge", "-p",
-			`{"spec":{"identity":{"source":"Control"},"tools":{"pins":{"message_send":"sha256:after"}}}}`)
+			`{"spec":{"identity":{"source":"Control"},"revision":"1","tools":{"pins":{"message_send":"sha256:after"}}}}`)
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(func(g Gomega) {
 			config, err := kubectlIn("get", "statefulset", migrated, "-o", "jsonpath={.spec.template.spec}"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring("sha256:after"))
+			g.Expect(config).To(ContainSubstring(`revision: "1"`))
 		}, 2*time.Minute, time.Second).Should(Succeed())
 
 		// The StatefulSet replaces the Pod from the template it now holds; deleting
@@ -462,6 +470,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec}"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring("sha256:after"), "the edited pin did not reach the Pod")
+			g.Expect(config).To(ContainSubstring(`revision: "1"`), "the revision did not reach the Pod")
 		}, 3*time.Minute, time.Second).Should(Succeed())
 
 		By("finding the same StatefulSet, the only one, on the same claim, beside the same Secret")
@@ -471,6 +480,27 @@ var _ = Describe("Agent workload", Ordered, func() {
 		Expect(uidOf("secret", credentialsSecret)).To(Equal(secret))
 		Expect(kubectlIn("get", "agent", migrated, "-o", "jsonpath={.spec.credentialsSecretName}")).
 			To(Equal(credentialsSecret))
+
+		By("rendering the revision a configure released next, which the replaced Pod's config file carries")
+		_, err = kubectlIn("patch", "agent", migrated, "--type", "merge", "-p", `{"spec":{"revision":"2"}}`)
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			config, err := kubectlIn("get", "statefulset", migrated, "-o", "jsonpath={.spec.template.spec}"+configEnv)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(config).To(ContainSubstring(`revision: "2"`))
+		}, 2*time.Minute, time.Second).Should(Succeed())
+		replaced, err := uidOf("pod", migratedPod)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = kubectlIn("delete", "pod", migratedPod, "--wait=false")
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			uid, err := uidOf("pod", migratedPod)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(uid).NotTo(Equal(replaced))
+			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec}"+configEnv)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(config).To(ContainSubstring(`revision: "2"`), "the later revision did not reach the Pod")
+		}, 3*time.Minute, time.Second).Should(Succeed())
 	})
 
 	It("removes the StatefulSet and its Pod when the Agent is deleted", func() {

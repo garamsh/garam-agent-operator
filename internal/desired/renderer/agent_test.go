@@ -122,6 +122,7 @@ var _ = Describe("Renderer", func() {
 			}}))
 		Expect(first.Spec.Tools.Pins).To(Equal(map[string]string{requiredTool: firstPin}))
 		Expect(first.Spec.Ego).To(Equal("first"))
+		Expect(first.Spec.Revision).To(Equal("1"))
 
 		By("a later revision, which every rendered field follows")
 		Expect(rendering.Render(ctx, revision(grn, "2", "8", map[string]string{otherTool: secondPin}, "second"))).
@@ -131,11 +132,31 @@ var _ = Describe("Renderer", func() {
 		Expect(second.Spec.Tools.Pins).To(Equal(map[string]string{otherTool: secondPin}))
 		Expect(second.Spec.Ego).To(Equal("second"))
 		Expect(second.Spec.Identity.AssignmentEpoch).To(Equal("8"))
+		Expect(second.Spec.Revision).To(Equal("2"))
 
 		By("the same revision again, which writes nothing")
 		Expect(rendering.Render(ctx, revision(grn, "2", "8", map[string]string{otherTool: secondPin}, "second"))).
 			To(Succeed())
 		Expect(agentFor(grn).ResourceVersion).To(Equal(second.ResourceVersion))
+	})
+
+	It("renders a revision that changes nothing else into the Agent, so the agent is given the revision it runs", func() {
+		grn := "grn:acme:default:agent:1212121212121212"
+		rendering := renderer.NewAgent(k8sClient, namespace, image)
+		Expect(rendering.Render(ctx, revision(grn, "4", "7", map[string]string{requiredTool: firstPin}, "same"))).
+			To(Succeed())
+		before := agentFor(grn)
+		Expect(before.Spec.Revision).To(Equal("4"))
+
+		Expect(rendering.Render(ctx, revision(grn, "5", "7", map[string]string{requiredTool: firstPin}, "same"))).
+			To(Succeed())
+		after := agentFor(grn)
+		Expect(after.Spec.Revision).To(Equal("5"))
+		Expect(ownersOf(after, "f:spec", "f:revision")).To(ConsistOf("garam-operator-renderer"))
+
+		By("the control: everything else the revision decides is unchanged")
+		after.Spec.Revision = before.Spec.Revision
+		Expect(after.Spec).To(Equal(before.Spec))
 	})
 
 	It("never renders a GRN whose Agent is on the garam source, beside one on the control source", func() {
@@ -295,6 +316,7 @@ var _ = Describe("Renderer", func() {
 			agent := &agentv1alpha1.Agent{}
 			g.Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: agentname.Agent(kept)}, agent)).To(Succeed())
 			g.Expect(agent.Spec.Tools.Pins).To(HaveKeyWithValue(requiredTool, secondPin))
+			g.Expect(agent.Spec.Revision).To(Equal("2"), "the revision arrived over the wire")
 		}).Should(Succeed())
 
 		left := agentFor(withheld)
@@ -533,6 +555,7 @@ var _ = Describe("Renderer and a cutover", func() {
 				g.Expect(agent.Spec.Ego).To(Equal("imported"))
 				g.Expect(agent.Spec.Tools.Pins).To(Equal(map[string]string{requiredTool: firstPin}))
 				g.Expect(agent.Spec.Identity.AssignmentEpoch).To(Equal("7"))
+				g.Expect(agent.Spec.Revision).To(Equal("1"))
 			}).Should(Succeed(), grn)
 		}
 		moved := agentFor(cut)
@@ -594,5 +617,6 @@ var _ = Describe("Renderer and a cutover", func() {
 		later := agentFor(grn)
 		Expect(later.Spec.Ego).To(Equal("second"))
 		Expect(later.Spec.Identity.Source).To(Equal(agentv1alpha1.DesiredSourceControl))
+		Expect(later.Spec.Revision).To(Equal("2"))
 	})
 })

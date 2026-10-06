@@ -758,7 +758,8 @@ func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *a
 	ego := egoText != ""
 	instructionsText := r.instructionsFor(agent, descriptor)
 	instructions := instructionsText != ""
-	if len(agent.Spec.Tools.Pins) == 0 && agent.Spec.Model == nil && !ego && !instructions && controlRoot == nil {
+	if len(agent.Spec.Tools.Pins) == 0 && agent.Spec.Model == nil && agent.Spec.Revision == "" && !ego && !instructions &&
+		controlRoot == nil {
 		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
 			return initContainer.Name == configContainerName
 		})

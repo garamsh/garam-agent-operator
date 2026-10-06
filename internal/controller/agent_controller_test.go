@@ -438,6 +438,34 @@ var _ = Describe("Agent", func() {
 		Expect(readAgent(agent.Name).Spec.Identity.Source).To(Equal(agentv1alpha1.DesiredSourceControl))
 	})
 
+	It("admits a revision only on a Control-source Agent, and only as a canonical decimal string", func() {
+		By("the control: a Control-source Agent carrying a canonical revision")
+		agent := newAgent("carries-a-revision")
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceControl}
+		agent.Spec.Revision = "9223372036854775807"
+		createAgent(agent)
+		Expect(readAgent(agent.Name).Spec.Revision).To(Equal("9223372036854775807"))
+
+		for _, revision := range []string{"0", "01", "-1", "+1", "1.0", "one", "92233720368547758070"} {
+			malformed := readAgent(agent.Name)
+			malformed.Spec.Revision = revision
+			Expect(k8sClient.Update(ctx, malformed)).To(MatchError(ContainSubstring("spec.revision")), "revision %q", revision)
+		}
+
+		for _, identity := range []*agentv1alpha1.AgentIdentity{
+			nil,
+			{GRN: testGRN},
+			{GRN: testGRN, Source: agentv1alpha1.DesiredSourceGaram},
+		} {
+			elsewhere := newAgent("carries-a-revision-elsewhere")
+			elsewhere.Spec.Identity = identity
+			elsewhere.Spec.Revision = "1"
+			Expect(k8sClient.Create(ctx, elsewhere)).
+				To(MatchError(ContainSubstring("revision is set only on an agent whose identity.source is Control")),
+					"identity %+v", identity)
+		}
+	})
+
 	It("reports a storage class the claimed volume cannot change to, beside an unchanged one", func() {
 		name := "changes-its-storage-class"
 		createSecret(credentialsSecretName(name))
