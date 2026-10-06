@@ -19,7 +19,7 @@ var ErrSchemaNotCurrent = errors.New("the database's schema is not the one this 
 const undefinedTable = "42P01"
 
 // readSchemaVersion is the version golang-migrate recorded, and whether it was left dirty.
-const readSchemaVersion = `SELECT version, dirty FROM schema_migrations LIMIT 1`
+const readSchemaVersion = `SELECT version, dirty FROM ` + migrationsTable + ` LIMIT 1`
 
 // schemaRecord is what a database records of its schema: whether a version is recorded at all,
 // which, and whether a migration to it failed.
@@ -27,6 +27,16 @@ type schemaRecord struct {
 	recorded bool
 	version  uint
 	dirty    bool
+}
+
+// RequireCurrentSchema is ErrSchemaNotCurrent, saying what to do about it, unless the database is
+// at the newest schema version this binary embeds and clean. It reads and changes nothing else.
+func (p *Postgres) RequireCurrentSchema(ctx context.Context) error {
+	known, err := latestMigration()
+	if err != nil {
+		return err
+	}
+	return p.requireSchema(ctx, known)
 }
 
 // requireSchema refuses a database whose recorded schema is not known.

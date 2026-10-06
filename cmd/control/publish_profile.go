@@ -79,8 +79,15 @@ func publishProfiles(ctx context.Context, args []string, databaseURL string, out
 		return exitRefused
 	}
 	defer pool.Close()
-	// The schema is the server's to apply, never this command's.
-	definitions := definition.NewService(repository.NewPostgres(pool), nil, nil)
+	// The schema is the server's to migrate, never this command's: it publishes only into the
+	// schema this binary was built for (ADR 0056).
+	store := repository.NewPostgres(pool)
+	if err := store.RequireCurrentSchema(ctx); err != nil {
+		_, _ = fmt.Fprintln(out, "refused: the database's schema is not this binary's")
+		_, _ = fmt.Fprintln(errOut, err)
+		return exitRefused
+	}
+	definitions := definition.NewService(store, nil, nil)
 
 	for i, p := range profiles {
 		published, created, err := definitions.PublishProfileVersion(ctx, p.Organization, definition.Profile{

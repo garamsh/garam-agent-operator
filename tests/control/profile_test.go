@@ -37,13 +37,19 @@ type published struct {
 // runPublishProfile runs the built binary's publish-profile over files, against the suite's store.
 func runPublishProfile(t *testing.T, files ...string) published {
 	t.Helper()
+	return runPublishProfileOn(t, databaseURL, files...)
+}
+
+// runPublishProfileOn runs the built binary's publish-profile over files, against the database at url.
+func runPublishProfileOn(t *testing.T, url string, files ...string) published {
+	t.Helper()
 	args := make([]string, 0, 1+2*len(files))
 	args = append(args, "publish-profile")
 	for _, f := range files {
 		args = append(args, "--file", f)
 	}
 	cmd := exec.Command(binaryPath, args...)
-	cmd.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+databaseURL)
+	cmd.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+url)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -219,5 +225,35 @@ func TestPublishProfile_ConcurrentPublishersOfOneVersionStoreOne(t *testing.T) {
 		} else {
 			assert.Equal(t, map[string]int{"published": 1, "refused": 2}, outcomes, "round %d", round)
 		}
+	}
+}
+
+func TestPublishProfile_PublishesOnlyIntoTheSchemaThisBinaryKnows(t *testing.T) {
+	url, db := newDatabase(t)
+	file := profileFile(t, runnable(name(t, "organization"), name(t, "profile"), 1))
+
+	got := runPublishProfileOn(t, url, file)
+	assert.Equal(t, 1, got.code, got.stdout)
+	assert.Contains(t, got.stdout, "refused")
+	assert.Contains(t, got.stderr, "records no schema version")
+	assert.False(t, exists(t, db, "profiles"), "publish-profile created the schema")
+
+	// Control: once the server has migrated the database, the same file is published.
+	startMigrating(t, url)
+	got = runPublishProfileOn(t, url, file)
+	require.Equal(t, 0, got.code, got.stderr)
+	assert.Contains(t, got.stdout, "published")
+
+	for _, c := range []struct{ name, update, says string }{
+		{"newer", fmt.Sprintf("UPDATE schema_migrations SET version = %d", latestVersion+1), "a newer control service migrated it"},
+		{"dirty", "UPDATE schema_migrations SET dirty = true", "dirty at schema version"},
+	} {
+		_, err := db.Exec(context.Background(), c.update)
+		require.NoError(t, err, c.name)
+		got = runPublishProfileOn(t, url, file)
+		assert.Equal(t, 1, got.code, "%s: %s", c.name, got.stdout)
+		assert.Contains(t, got.stderr, c.says, c.name)
+		_, err = db.Exec(context.Background(), fmt.Sprintf("UPDATE schema_migrations SET version = %d, dirty = false", latestVersion))
+		require.NoError(t, err, c.name)
 	}
 }

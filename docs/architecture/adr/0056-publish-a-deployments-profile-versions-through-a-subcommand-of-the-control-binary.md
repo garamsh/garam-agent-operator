@@ -27,7 +27,11 @@ The PM settled the binding choices on this dispatch: the form, the checks, the v
 
 **How a deployment runs it.** It runs as a Job in its gitops overlay, from the same image the Deployment runs, with the same database Secret. The profile files come from a ConfigMap. The command is idempotent, so a re-sync running it again changes nothing.
 
-**It does not migrate the schema.** Migrating is the server's alone, at its start. A Job that migrated could race a rollout, and could advance a database an older server is still serving.
+**It does not migrate the schema.** Migrating is the server's alone, at its start (ADR 0055). A Job that migrated could race a rollout, and could advance a database an older server is still serving.
+- **What it requires instead.** Before publishing, it reads the version golang-migrate recorded and refuses unless the database is clean at exactly the newest version this binary embeds (`repository.RequireCurrentSchema`, `ErrSchemaNotCurrent`). The refusal says what to do:
+  - **Lower, or none recorded.** The server has not migrated yet: retry after its rollout.
+  - **Higher.** A newer server migrated it: run that version's image.
+  - **Dirty.** A migration failed there: the server's log says what to do.
 
 **Every profile publication is checked**, by `ExecutionSettings.check`, on this path and on the in-process `PublishProfile` alike. It refuses with `ErrInvalidProfile`:
 - a storage size not above zero;
@@ -48,7 +52,7 @@ A profile carries no configuration, so `Configuration.check`, which template pub
 - **A deployment publishes profiles without SQL**, and a profile no workload could run with never reaches the feed through any path this repository offers.
 - **A bad profile fails one Job, visibly, and the service keeps serving.**
 - **Profiles inserted by SQL before this decision are not re-checked.** A profile with no storage size stays readable and nameable. Only publication checks.
-- **The e2e publishes its profiles through the built binary.** Only the schema test that stores a second row under one key inserts by SQL, because that row is one the command answers as unchanged.
+- **The e2e publishes its profiles through the built binary.** SQL inserts remain only where the command cannot make the row: the schema test that stores a second row under one key, which the command answers as unchanged, and the migration tests' rows in an earlier release's form.
 
 Ruled out:
 - **A manifest the server loads at start.** A profile that is invalid, or changed under a published version, would either stop the server from starting or have to be skipped silently. A changed ConfigMap would also reach the store only on a restart.
