@@ -136,7 +136,7 @@ func (c *cutover) RollBack(_ context.Context, _, ref, id string) (console.Cutove
 			Kind: "reverse_migration_required", Reason: "reverse_migration_required"}
 	case attemptRolledBack:
 		return console.CutoverAttempt{}, &console.CutoverRefusal{Status: http.StatusConflict,
-			Kind: reasonAttemptEnded, Reason: reasonAttemptEnded, Message: "the cutover attempt has been rolled back"}
+			Kind: reasonAttemptEnded, Reason: reasonAttemptEnded, Message: rolledBackMessage}
 	}
 	c.attempts[id] = attemptRolledBack
 	return console.CutoverAttempt{ImportID: id, Stage: "rolled_back"}, nil
@@ -595,6 +595,8 @@ const (
 	// reasonAttemptEnded and reasonAttemptOpen are agent-cutover.v1 reasons garam refuses a stage with.
 	reasonAttemptEnded = "attempt_ended"
 	reasonAttemptOpen  = "attempt_open"
+	// rolledBackMessage is the message garam gives a stage reaching a rolled-back attempt.
+	rolledBackMessage = "the cutover attempt has been rolled back"
 )
 
 // TestCutover_ARollbackGaramAlreadyHoldsCompletesTheDiscard is #286: garam rolled the attempt back,
@@ -645,9 +647,9 @@ func TestCutover_ARollbackGaramAlreadyHoldsCompletesTheDiscard(t *testing.T) {
 	// another reason or none, is refused as garam gave it.
 	for name, err := range map[string]error{
 		"a message saying so under another reason": &console.CutoverRefusal{Status: http.StatusConflict,
-			Kind: reasonAttemptOpen, Reason: reasonAttemptOpen, Message: "the cutover attempt has been rolled back"},
+			Kind: reasonAttemptOpen, Reason: reasonAttemptOpen, Message: rolledBackMessage},
 		"an errorx kind saying so under no reason": &console.CutoverRefusal{Status: http.StatusConflict,
-			Kind: reasonAttemptEnded, Message: "the cutover attempt has been rolled back"},
+			Kind: reasonAttemptEnded, Message: rolledBackMessage},
 	} {
 		t.Run(name, func(t *testing.T) {
 			other := frozen(t)
