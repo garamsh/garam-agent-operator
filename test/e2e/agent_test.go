@@ -367,6 +367,92 @@ var _ = Describe("Agent workload", Ordered, func() {
 			"the replacement was created at %s, before the evidence was read at %s", createdAt, observedAt)
 	})
 
+	It("keeps a claimed agent's workload, claim and Secret across its move to Control, with an edited pin", func() {
+		// #217 AC1. A claimed agent is one the poller built from garam, on the
+		// Garam source. The move is what the renderer patches when the feed marks
+		// it cut over: spec.identity.source, and the revision's spec. Kind runs no
+		// control service, so the spec makes that patch; the renderer's own patch
+		// is asserted in internal/desired/renderer.
+		const (
+			migrated    = "e2e-migrated"
+			migratedPod = migrated + "-0"
+			stateClaim  = "state-" + migratedPod
+			configEnv   = `{.initContainers[*].env[?(@.name=="AGENT_CONFIG_CONTENT")].value}`
+		)
+		apply := exec.Command("kubectl", "apply", "-f", "-")
+		apply.Stdin = strings.NewReader(agentManifestFor(migrated, agentImage) + `  identity:
+    grn: grn:acme:default:agent:e2e0migrated0001
+    assignmentEpoch: "1"
+    source: Garam
+  tools:
+    pins:
+      message_send: sha256:before
+`)
+		_, err := utils.Run(apply)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_, _ = kubectlIn("delete", "agent", migrated, "--ignore-not-found", "--timeout=2m")
+		})
+
+		uidOf := func(kind, name string) (string, error) {
+			return kubectlIn("get", kind, name, "-o", "jsonpath={.metadata.uid}")
+		}
+		ownedStatefulSets := func() (string, error) {
+			return kubectlIn("get", "statefulsets", "-o", `jsonpath={range .items[?(@.metadata.ownerReferences[0].name=="`+
+				migrated+`")]}{.metadata.name}{" "}{end}`)
+		}
+		var statefulSet, claim, secret, pod string
+		By("reading the workload the Garam-source agent was built with, its pin in its Pod")
+		Eventually(func(g Gomega) {
+			var err error
+			statefulSet, err = uidOf("statefulset", migrated)
+			g.Expect(err).NotTo(HaveOccurred())
+			claim, err = uidOf("pvc", stateClaim)
+			g.Expect(err).NotTo(HaveOccurred())
+			pod, err = uidOf("pod", migratedPod)
+			g.Expect(err).NotTo(HaveOccurred())
+			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec}"+configEnv)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(config).To(ContainSubstring("sha256:before"))
+		}, 3*time.Minute, time.Second).Should(Succeed())
+		secret, err = uidOf("secret", credentialsSecret)
+		Expect(err).NotTo(HaveOccurred())
+		Expect([]string{statefulSet, claim, secret, pod}).NotTo(ContainElement(""))
+
+		By("moving the agent to the Control source with an edited pin, as the renderer's cutover patch does")
+		_, err = kubectlIn("patch", "agent", migrated, "--type", "merge", "-p",
+			`{"spec":{"identity":{"source":"Control"},"tools":{"pins":{"message_send":"sha256:after"}}}}`)
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			config, err := kubectlIn("get", "statefulset", migrated, "-o", "jsonpath={.spec.template.spec}"+configEnv)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(config).To(ContainSubstring("sha256:after"))
+		}, 2*time.Minute, time.Second).Should(Succeed())
+
+		// The StatefulSet replaces the Pod from the template it now holds; deleting
+		// it does not wait on a rollout, and the writer fence still gates the
+		// replacement on the old Pod's evidence.
+		By("replacing the Pod, which the StatefulSet recreates from its template")
+		_, err = kubectlIn("delete", "pod", migratedPod, "--wait=false")
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			uid, err := uidOf("pod", migratedPod)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(uid).NotTo(Equal(pod))
+			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec}"+configEnv)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(config).To(ContainSubstring("sha256:after"), "the edited pin did not reach the Pod")
+		}, 3*time.Minute, time.Second).Should(Succeed())
+
+		By("finding the same StatefulSet, the only one, on the same claim, beside the same Secret")
+		Expect(uidOf("statefulset", migrated)).To(Equal(statefulSet))
+		Expect(ownedStatefulSets()).To(Equal(migrated + " "))
+		Expect(uidOf("pvc", stateClaim)).To(Equal(claim))
+		Expect(uidOf("secret", credentialsSecret)).To(Equal(secret))
+		Expect(kubectlIn("get", "agent", migrated, "-o", "jsonpath={.spec.credentialsSecretName}")).
+			To(Equal(credentialsSecret))
+	})
+
 	It("removes the StatefulSet and its Pod when the Agent is deleted", func() {
 		// Without this the workload might not exist yet, and a spec that asserts
 		// its absence would pass having never seen it.
