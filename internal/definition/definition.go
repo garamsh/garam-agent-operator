@@ -57,13 +57,15 @@ type Configuration struct {
 	Tools ToolPins
 }
 
-// ProfileRef names one published version of a profile.
+// ProfileRef names one published version of a profile, within an organization the caller states
+// beside it.
 type ProfileRef struct {
 	Name    string
 	Version Version
 }
 
-// TemplateRef names one published version of a template.
+// TemplateRef names one published version of a template, within an organization the caller states
+// beside it.
 type TemplateRef struct {
 	Name    string
 	Version Version
@@ -77,14 +79,16 @@ type ExecutionSettings struct {
 	StorageClassName *string
 }
 
-// Profile is a published, immutable version of a named set of execution settings.
+// Profile is a published, immutable version of a named set of execution settings. Its name and
+// versions are its organization's own: another organization's profile of the same name is another.
 type Profile struct {
 	Name     string
 	Version  Version
 	Settings ExecutionSettings
 }
 
-// Template is a published, immutable version of a named starting point for an agent.
+// Template is a published, immutable version of a named starting point for an agent. Its name and
+// versions are its organization's own, and the profile it names is one of that organization's.
 type Template struct {
 	Name    string
 	Version Version
@@ -92,12 +96,14 @@ type Template struct {
 	Config  Configuration
 }
 
-// Definition is one revision of an agent's desired execution definition.
+// Definition is one revision of an agent's desired execution definition. Every revision of an
+// agent belongs to the organization its first did, and names a profile version of that organization.
 type Definition struct {
-	Agent    GRN
-	Revision Revision
-	Profile  ProfileRef
-	Config   Configuration
+	Agent        GRN
+	Organization string
+	Revision     Revision
+	Profile      ProfileRef
+	Config       Configuration
 	// Assignment is where the agent ran when this revision was authorized, or nil when
 	// none was recorded with it. A controller is released only a revision recorded for it.
 	Assignment *Assignment
@@ -218,7 +224,8 @@ func (Registered) outcome() {}
 func (Failed) outcome()     {}
 
 var (
-	// ErrNotFound is returned for a definition, template or profile that does not exist.
+	// ErrNotFound is returned for a definition, template or profile that does not exist in the
+	// organization asked about, whether or not another organization holds one under that name.
 	ErrNotFound = errors.New("not found")
 
 	// ErrStaleRevision is returned for a configure request expecting a revision that is no longer

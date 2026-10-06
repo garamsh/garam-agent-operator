@@ -6,20 +6,22 @@ import (
 )
 
 // Configure stores the request's configuration as the agent's next revision when the
-// expected revision is still the latest. A repeated request key returns the first
+// expected revision is still the latest. The agent and the profile are resolved in the
+// request's organization only. A repeated request key returns the first
 // request's outcome; one carrying another binding or agent is refused with ErrRequestReused.
 func (s *service) Configure(ctx context.Context, in ConfigureInput) (Applied, error) {
-	if _, err := s.repository.GetProfile(ctx, in.Profile); err != nil {
+	if _, err := s.repository.GetProfile(ctx, in.Request.Organization, in.Profile); err != nil {
 		return Applied{}, fmt.Errorf("profile %s version %d: %w", in.Profile.Name, in.Profile.Version, err)
 	}
 	request := Request{Key: in.Request, Binding: in.Binding, Agent: in.Agent}
 	assignment := in.Binding.Assignment
 	d := Definition{
-		Agent:      in.Agent,
-		Revision:   in.ExpectedRevision + 1,
-		Profile:    in.Profile,
-		Config:     in.Config,
-		Assignment: &assignment,
+		Agent:        in.Agent,
+		Organization: in.Request.Organization,
+		Revision:     in.ExpectedRevision + 1,
+		Profile:      in.Profile,
+		Config:       in.Config,
+		Assignment:   &assignment,
 	}
 	stored, err := s.repository.Configure(ctx, request, d)
 	if err != nil {

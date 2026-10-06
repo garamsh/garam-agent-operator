@@ -57,11 +57,11 @@ func newFixture(t *testing.T, answers ...registration) fixture {
 	repo := repository.NewMemory()
 	svc := definition.NewService(repo, &registrar{answers: answers})
 
-	p, err := svc.PublishProfile(ctx, "small", settings("500m", "1Gi"))
+	p, err := svc.PublishProfile(ctx, org, "small", settings("500m", "1Gi"))
 	require.NoError(t, err)
 	profile := definition.ProfileRef{Name: p.Name, Version: p.Version}
 
-	tmpl, err := svc.PublishTemplate(ctx, definition.Template{
+	tmpl, err := svc.PublishTemplate(ctx, org, definition.Template{
 		Name:    "researcher",
 		Profile: profile,
 		Config:  config("first ego", definition.ToolPins{webFetch: firstPin}),
@@ -100,9 +100,13 @@ func config(ego string, tools definition.ToolPins) definition.Configuration {
 	}
 }
 
-// actor is the user every test's requests are made for.
-const actor = "grn:acme:default:user:7c1d"
+const (
+	// actor is the user every test's requests are made for.
+	actor = "grn:acme:default:user:7c1d"
+	// org is the organization every test's requests are made in, unless the test names another.
+	org = "acme"
+)
 
 func key(requestID string) definition.RequestKey {
-	return definition.RequestKey{Organization: "acme", RequestID: requestID}
+	return definition.RequestKey{Organization: org, RequestID: requestID}
 }

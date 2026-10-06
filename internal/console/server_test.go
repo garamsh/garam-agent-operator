@@ -79,10 +79,10 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
 	definitions := definition.NewService(repository.NewMemory(), registrar{})
-	p, err := definitions.PublishProfile(ctx, "small", definition.ExecutionSettings{})
+	p, err := definitions.PublishProfile(ctx, org, "small", definition.ExecutionSettings{})
 	require.NoError(t, err)
 	profile := definition.ProfileRef{Name: p.Name, Version: p.Version}
-	tmpl, err := definitions.PublishTemplate(ctx, definition.Template{Name: "researcher", Profile: profile})
+	tmpl, err := definitions.PublishTemplate(ctx, org, definition.Template{Name: "researcher", Profile: profile})
 	require.NoError(t, err)
 	_, err = definitions.CreateAgent(ctx, definition.RequestKey{Organization: org, RequestID: "create"}, actor,
 		definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version})

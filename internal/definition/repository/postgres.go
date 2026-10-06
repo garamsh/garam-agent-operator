@@ -87,7 +87,7 @@ func decodeConfig(raw []byte) (definition.Configuration, error) {
 	}, nil
 }
 
-func (p *Postgres) PublishProfile(ctx context.Context, name string, settings definition.ExecutionSettings) (definition.Profile, error) {
+func (p *Postgres) PublishProfile(ctx context.Context, org, name string, settings definition.ExecutionSettings) (definition.Profile, error) {
 	raw, err := json.Marshal(settingsColumn(settings))
 	if err != nil {
 		return definition.Profile{}, storeError("encode settings", err)
@@ -97,17 +97,17 @@ func (p *Postgres) PublishProfile(ctx context.Context, name string, settings def
 		if _, err := tx.Exec(ctx, lockProfiles); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, publishProfile, name, raw).Scan(&version)
+		return tx.QueryRow(ctx, publishProfile, org, name, raw).Scan(&version)
 	})
 	if err != nil {
 		return definition.Profile{}, storeError("publish profile", err)
 	}
-	return p.GetProfile(ctx, definition.ProfileRef{Name: name, Version: definition.Version(version)})
+	return p.GetProfile(ctx, org, definition.ProfileRef{Name: name, Version: definition.Version(version)})
 }
 
-func (p *Postgres) GetProfile(ctx context.Context, ref definition.ProfileRef) (definition.Profile, error) {
+func (p *Postgres) GetProfile(ctx context.Context, org string, ref definition.ProfileRef) (definition.Profile, error) {
 	var raw []byte
-	if err := p.pool.QueryRow(ctx, getProfile, ref.Name, int64(ref.Version)).Scan(&raw); err != nil {
+	if err := p.pool.QueryRow(ctx, getProfile, org, ref.Name, int64(ref.Version)).Scan(&raw); err != nil {
 		return definition.Profile{}, notFound("get profile", err)
 	}
 	var s settingsColumn
@@ -117,7 +117,7 @@ func (p *Postgres) GetProfile(ctx context.Context, ref definition.ProfileRef) (d
 	return definition.Profile{Name: ref.Name, Version: ref.Version, Settings: definition.ExecutionSettings(s)}, nil
 }
 
-func (p *Postgres) PublishTemplate(ctx context.Context, t definition.Template) (definition.Template, error) {
+func (p *Postgres) PublishTemplate(ctx context.Context, org string, t definition.Template) (definition.Template, error) {
 	raw, err := encodeConfig(t.Config)
 	if err != nil {
 		return definition.Template{}, storeError("encode configuration", err)
@@ -127,21 +127,21 @@ func (p *Postgres) PublishTemplate(ctx context.Context, t definition.Template) (
 		if _, err := tx.Exec(ctx, lockTemplates); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, publishTemplate, t.Name, t.Profile.Name, int64(t.Profile.Version), raw).Scan(&version)
+		return tx.QueryRow(ctx, publishTemplate, org, t.Name, t.Profile.Name, int64(t.Profile.Version), raw).Scan(&version)
 	})
 	if err != nil {
 		return definition.Template{}, storeError("publish template", err)
 	}
-	return p.GetTemplate(ctx, definition.TemplateRef{Name: t.Name, Version: definition.Version(version)})
+	return p.GetTemplate(ctx, org, definition.TemplateRef{Name: t.Name, Version: definition.Version(version)})
 }
 
-func (p *Postgres) GetTemplate(ctx context.Context, ref definition.TemplateRef) (definition.Template, error) {
+func (p *Postgres) GetTemplate(ctx context.Context, org string, ref definition.TemplateRef) (definition.Template, error) {
 	var (
 		profileName    string
 		profileVersion int64
 		raw            []byte
 	)
-	err := p.pool.QueryRow(ctx, getTemplate, ref.Name, int64(ref.Version)).Scan(&profileName, &profileVersion, &raw)
+	err := p.pool.QueryRow(ctx, getTemplate, org, ref.Name, int64(ref.Version)).Scan(&profileName, &profileVersion, &raw)
 	if err != nil {
 		return definition.Template{}, notFound("get template", err)
 	}
@@ -175,7 +175,7 @@ func (p *Postgres) Configure(ctx context.Context, r definition.Request, d defini
 			return err
 		}
 		var exists bool
-		if err := tx.QueryRow(ctx, definitionExists, string(d.Agent)).Scan(&exists); err != nil {
+		if err := tx.QueryRow(ctx, definitionExists, string(d.Agent), d.Organization).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -206,7 +206,7 @@ func appendDefinitionIn(ctx context.Context, tx pgx.Tx, d definition.Definition,
 	err := pgx.BeginFunc(ctx, tx, func(savepoint pgx.Tx) error {
 		operator, epoch := assignmentColumns(d.Assignment)
 		tag, err := savepoint.Exec(ctx, appendDefinition,
-			string(d.Agent), int64(d.Revision), d.Profile.Name, int64(d.Profile.Version), raw, operator, epoch)
+			string(d.Agent), d.Organization, int64(d.Revision), d.Profile.Name, int64(d.Profile.Version), raw, operator, epoch)
 		applied = err == nil && tag.RowsAffected() == 1
 		return err
 	})
@@ -272,13 +272,13 @@ func (p *Postgres) Desired(ctx context.Context, operator string, limit int) (def
 
 func scanDesired(row pgx.Row, operator string) (definition.DesiredRevision, error) {
 	var (
-		agent                 string
+		agent, organization   string
 		revision, profileVers int64
 		profileName           string
 		config, settings      []byte
 		epoch                 string
 	)
-	if err := row.Scan(&agent, &revision, &profileName, &profileVers, &config, &epoch, &settings); err != nil {
+	if err := row.Scan(&agent, &organization, &revision, &profileName, &profileVers, &config, &epoch, &settings); err != nil {
 		return definition.DesiredRevision{}, err
 	}
 	c, err := decodeConfig(config)
@@ -291,11 +291,12 @@ func scanDesired(row pgx.Row, operator string) (definition.DesiredRevision, erro
 	}
 	return definition.DesiredRevision{
 		Definition: definition.Definition{
-			Agent:      definition.GRN(agent),
-			Revision:   definition.Revision(revision),
-			Profile:    definition.ProfileRef{Name: profileName, Version: definition.Version(profileVers)},
-			Config:     c,
-			Assignment: &definition.Assignment{Operator: operator, Epoch: epoch},
+			Agent:        definition.GRN(agent),
+			Organization: organization,
+			Revision:     definition.Revision(revision),
+			Profile:      definition.ProfileRef{Name: profileName, Version: definition.Version(profileVers)},
+			Config:       c,
+			Assignment:   &definition.Assignment{Operator: operator, Epoch: epoch},
 		},
 		Settings: definition.ExecutionSettings(s),
 	}, nil
@@ -348,6 +349,7 @@ func scanRequest(row pgx.Row, key definition.RequestKey) (definition.Request, er
 
 func (p *Postgres) GetDefinition(ctx context.Context, agent definition.GRN) (definition.Definition, error) {
 	var (
+		organization    string
 		revision        int64
 		profileName     string
 		profileVersion  int64
@@ -355,7 +357,7 @@ func (p *Postgres) GetDefinition(ctx context.Context, agent definition.GRN) (def
 		operator, epoch *string
 	)
 	err := p.pool.QueryRow(ctx, getDefinition, string(agent)).
-		Scan(&revision, &profileName, &profileVersion, &raw, &operator, &epoch)
+		Scan(&organization, &revision, &profileName, &profileVersion, &raw, &operator, &epoch)
 	if err != nil {
 		return definition.Definition{}, notFound("get definition", err)
 	}
@@ -364,11 +366,12 @@ func (p *Postgres) GetDefinition(ctx context.Context, agent definition.GRN) (def
 		return definition.Definition{}, err
 	}
 	return definition.Definition{
-		Agent:      agent,
-		Revision:   definition.Revision(revision),
-		Profile:    definition.ProfileRef{Name: profileName, Version: definition.Version(profileVersion)},
-		Config:     config,
-		Assignment: assignmentOf(operator, epoch),
+		Agent:        agent,
+		Organization: organization,
+		Revision:     definition.Revision(revision),
+		Profile:      definition.ProfileRef{Name: profileName, Version: definition.Version(profileVersion)},
+		Config:       config,
+		Assignment:   assignmentOf(operator, epoch),
 	}, nil
 }
 
@@ -396,8 +399,8 @@ func (p *Postgres) RegisterCreation(ctx context.Context, key definition.RequestK
 			return nil
 		}
 		operator, epoch := assignmentColumns(d.Assignment)
-		_, err = tx.Exec(ctx, insertFirstDefinition, string(d.Agent), d.Profile.Name, int64(d.Profile.Version), raw,
-			operator, epoch)
+		_, err = tx.Exec(ctx, insertFirstDefinition, string(d.Agent), d.Organization, d.Profile.Name,
+			int64(d.Profile.Version), raw, operator, epoch)
 		if isUniqueViolation(err) {
 			return definition.ErrStaleRevision
 		}
