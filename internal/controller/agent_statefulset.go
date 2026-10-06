@@ -952,11 +952,22 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 		{Name: adapterServerRootSetting, Value: adapterCredentialsMountPath + "/" + garam.ServerRootKey},
 	}
 	adapter.VolumeMounts = adapterVolumeMounts()
+	// The outbox and nothing else of the state claim: the adapter forwards the
+	// entries and clears the ones garam acknowledged
+	// (garam@e81a1e0:internal/delivery/outbox.go:142-157), so it writes, and it
+	// never sees the memory store.
+	outbox := corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: descriptor.outboxDir()}
 	if !r.adapterFenced(agent) {
 		// Legacy and unfenced: garam@fdfb76d's adapter refuses to start without
 		// this (internal/cli/delivery.go:90-91), and garam@e81a1e0's reads it
 		// nowhere, so it is kept for every image this mode runs with (ADR 0049).
-		adapter.Env = append(adapter.Env, corev1.EnvVar{Name: adapterGatewayAgentSetting, Value: grn})
+		// The outbox is given here too, which the legacy mode forwards on its own
+		// and never with a control socket (garam@59fe68d:internal/cli/delivery.go:98-118,
+		// internal/cli/cli.go:91-94; ADR 0060).
+		adapter.Env = append(adapter.Env,
+			corev1.EnvVar{Name: adapterGatewayAgentSetting, Value: grn},
+			corev1.EnvVar{Name: adapterOutboxDirSetting, Value: outboxMountPath})
+		adapter.VolumeMounts = append(adapter.VolumeMounts, outbox)
 
 		return
 	}
@@ -971,12 +982,7 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 		corev1.EnvVar{Name: adapterPlacementTokenSetting, Value: placementMountPath + "/" + placementTokenKey},
 		corev1.EnvVar{Name: adapterOutboxDirSetting, Value: outboxMountPath})
 	adapter.VolumeMounts = append(adapter.VolumeMounts,
-		corev1.VolumeMount{Name: controlRootVolumeName, MountPath: controlRootMountPath, ReadOnly: true},
-		// The outbox and nothing else of the state claim: the adapter forwards
-		// the entries and clears the ones garam acknowledged
-		// (garam@e81a1e0:internal/delivery/outbox.go:142-157), so it writes, and
-		// it never sees the memory store.
-		corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: descriptor.outboxDir()})
+		corev1.VolumeMount{Name: controlRootVolumeName, MountPath: controlRootMountPath, ReadOnly: true}, outbox)
 }
 
 // adapterFenced reports whether the agent's adapter activates through the
@@ -1003,14 +1009,14 @@ func (r *AgentReconciler) controlRootFor(agent *agentv1alpha1.Agent) ([]byte, er
 	return root, nil
 }
 
-// applyOutbox builds, where the adapter is fenced, the init container that
-// makes the agent's outbox directory on the state claim as the Pod's user,
-// before the adapter mounts it, and removes it elsewhere. It makes the directory
-// only where it is absent and touches nothing else.
+// applyOutbox builds, wherever the adapter is placed, on either source, the init
+// container that makes the agent's outbox directory on the state claim as the
+// Pod's user, before the adapter mounts it, and removes it elsewhere (ADR 0060).
+// It makes the directory only where it is absent and touches nothing else.
 func (r *AgentReconciler) applyOutbox(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
 	descriptor agentTypeDescriptor) {
 	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
-	if !r.adapterFenced(agent) {
+	if !r.adapterBuilt(agent) {
 		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
 			return initContainer.Name == outboxContainerName
 		})
@@ -1041,7 +1047,8 @@ func makeOutboxCommand(dir string) []string {
 //
 // It also mounts the copy of the placement token, which the adapter alone
 // reads, and which it is told of only where it activates through the control
-// service (ADR 0049); there it mounts the control root and the outbox too.
+// service (ADR 0049); there it mounts the control root too. Every adapter mounts
+// the outbox (ADR 0060).
 func adapterVolumeMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{
 		{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true},
