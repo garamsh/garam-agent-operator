@@ -117,13 +117,14 @@ func waitForAgentPod() {
 func deleteAgent(name string) {
 	GinkgoHelper()
 
-	_, err := kubectlIn("delete", "agent", name, "--ignore-not-found", "--wait=false")
+	agent := "agent/" + name
+	_, err := kubectlIn("delete", agent, "--ignore-not-found", "--wait=false")
 	Expect(err).NotTo(HaveOccurred())
-	for kind, object := range map[string]string{"agent": name, "pod": name + "-0"} {
+	for _, object := range []string{agent, "pod/" + name + "-0"} {
 		Eventually(func(g Gomega) {
-			output, err := kubectlIn("get", kind, object, "--ignore-not-found", "-o", "name")
+			output, err := kubectlIn("get", object, "--ignore-not-found", "-o", "name")
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(output).To(BeEmpty(), "%s %s is still there", kind, object)
+			g.Expect(output).To(BeEmpty(), "%s is still there", object)
 		}, 5*time.Minute, 2*time.Second).Should(Succeed())
 	}
 }
