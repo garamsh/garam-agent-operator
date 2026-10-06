@@ -75,6 +75,11 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeRefusal(w, errUndecided.status, errUndecided.kind, foreign.Error())
 	case errors.As(err, &named):
 		writeRefusal(w, named.status, named.kind, named.message)
+	case errors.Is(err, definition.ErrAgentStopped):
+		// A stopped agent has no placement it may be activated on. agent-execution.v1's kinds are a
+		// closed list, and this one pauses the adapter until its placement changes (ADR 0057).
+		writeRefusal(w, errPlacementNotCurrent.status, errPlacementNotCurrent.kind, "the agent is stopped: "+
+			"no placement of it is activated until its stop ends")
 	case errors.Is(err, definition.ErrRequestReused):
 		writeRefusal(w, errRequestReused.status, errRequestReused.kind, errRequestReused.message)
 	case errors.Is(err, definition.ErrInvalidStatus):

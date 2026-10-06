@@ -37,10 +37,11 @@ type Puller struct {
 	// The waits, held here so a test can shorten them.
 	longPoll, transientFirst, transientLast, refusedWait time.Duration
 
-	// rendered is the revision last rendered and reported for each GRN, so an
-	// unchanged answer is not rendered again. It is held in memory only: after a
-	// restart every agent is rendered once more, which writes nothing where its
-	// Agent already matches.
+	// rendered is what was last rendered and reported for each GRN, its
+	// revision and whether a stop held it (renderedKey), so an unchanged answer
+	// is not rendered again. It is held in memory only: after a restart every
+	// agent is rendered once more, which writes nothing where its Agent already
+	// matches.
 	rendered map[string]string
 }
 
@@ -110,7 +111,7 @@ func (p *Puller) Start(ctx context.Context) error {
 // revision last rendered for that agent.
 func (p *Puller) apply(ctx context.Context, agent Agent) {
 	log := logf.FromContext(ctx).WithName("desired").WithValues("agent", agent.GRN, "revision", agent.Revision)
-	if p.rendered[agent.GRN] == agent.Revision {
+	if p.rendered[agent.GRN] == renderedKey(agent) {
 		return
 	}
 
@@ -135,8 +136,18 @@ func (p *Puller) apply(ctx context.Context, agent Agent) {
 
 		return
 	}
-	p.rendered[agent.GRN] = agent.Revision
-	log.Info("Rendered a revision")
+	p.rendered[agent.GRN] = renderedKey(agent)
+	log.Info("Rendered a revision", "stopped", agent.Stopped)
+}
+
+// renderedKey is what an answer renders for an agent: its revision, and whether
+// a stop holds it, which changes no revision (ADR 0057).
+func renderedKey(agent Agent) string {
+	if agent.Stopped {
+		return agent.Revision + "/stopped"
+	}
+
+	return agent.Revision
 }
 
 // pause waits for d, or until ctx is cancelled.

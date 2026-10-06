@@ -159,6 +159,32 @@ var _ = Describe("Renderer", func() {
 		Expect(after.Spec).To(Equal(before.Spec))
 	})
 
+	It("writes the control service's stop into spec.stopped and clears it when the stop ends, leaving a person's suspension alone", func() {
+		grn := "grn:acme:default:agent:1313131313131313"
+		rendering := renderer.NewAgent(k8sClient, namespace, image)
+		running := revision(grn, "3", "7", map[string]string{requiredTool: firstPin}, "stopped")
+		Expect(rendering.Render(ctx, running)).To(Succeed())
+		Expect(agentFor(grn).Spec.Stopped).To(BeFalse())
+
+		stopped := running
+		stopped.Stopped = true
+		Expect(rendering.Render(ctx, stopped)).To(Succeed())
+		held := agentFor(grn)
+		Expect(held.Spec.Stopped).To(BeTrue(), "the stop did not reach the Agent")
+		Expect(held.Spec.Revision).To(Equal("3"), "a stop changed the revision")
+		Expect(ownersOf(held, "f:spec", "f:stopped")).To(ConsistOf("garam-operator-renderer"))
+
+		By("a person's suspension meanwhile, which the renderer leaves as it is")
+		suspended := held.DeepCopy()
+		suspended.Spec.Suspended = true
+		Expect(k8sClient.Patch(ctx, suspended, client.MergeFrom(held), client.FieldOwner("kubectl-edit"))).To(Succeed())
+
+		Expect(rendering.Render(ctx, running)).To(Succeed())
+		ended := agentFor(grn)
+		Expect(ended.Spec.Stopped).To(BeFalse(), "the end of the stop did not reach the Agent")
+		Expect(ended.Spec.Suspended).To(BeTrue(), "the renderer wrote a person's field")
+	})
+
 	It("never renders a GRN whose Agent is on the garam source, beside one on the control source", func() {
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
 

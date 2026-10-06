@@ -452,10 +452,11 @@ func scanDesired(row pgx.Row, operator string) (definition.DesiredRevision, erro
 		profileName           string
 		config, settings      []byte
 		epoch                 string
-		cutover               bool
+		cutover, stopped      bool
+		recoveryID, recEpoch  *string
 	)
 	if err := row.Scan(&agent, &organization, &revision, &profileName, &profileVers, &config, &epoch, &settings,
-		&cutover); err != nil {
+		&cutover, &stopped, &recoveryID, &recEpoch); err != nil {
 		return definition.DesiredRevision{}, err
 	}
 	c, err := decodeConfig(config)
@@ -466,7 +467,13 @@ func scanDesired(row pgx.Row, operator string) (definition.DesiredRevision, erro
 	if err := json.Unmarshal(settings, &s); err != nil {
 		return definition.DesiredRevision{}, fmt.Errorf("decode settings: %v", err)
 	}
+	var recovery *definition.OpenRecovery
+	if recoveryID != nil && recEpoch != nil {
+		recovery = &definition.OpenRecovery{RequestID: *recoveryID, Epoch: *recEpoch}
+	}
 	return definition.DesiredRevision{
+		Stopped:  stopped,
+		Recovery: recovery,
 		Definition: definition.Definition{
 			Agent:        definition.GRN(agent),
 			Organization: organization,

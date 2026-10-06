@@ -304,13 +304,20 @@ func seedWorkspaceCommand(from, to, marker string) []string {
 var errReplacing = errors.New("the statefulset is being replaced")
 
 // replicasFor is the number of replicas the Agent's workload runs: one, or none
-// while it is suspended.
+// while it is suspended or stopped.
 func replicasFor(agent *agentv1alpha1.Agent) int32 {
-	if agent.Spec.Suspended {
+	if heldStopped(agent) {
 		return 0
 	}
 
 	return 1
+}
+
+// heldStopped reports whether the spec keeps the agent stopped: a person's
+// suspension, or the control service's stop (ADR 0057). Both take the same
+// road: no replica, and the Pod released only on the writer fence's evidence.
+func heldStopped(agent *agentv1alpha1.Agent) bool {
+	return agent.Spec.Suspended || agent.Spec.Stopped
 }
 
 // reconcileStatefulSet brings the StatefulSet an Agent describes into being, or

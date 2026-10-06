@@ -37,7 +37,7 @@ Before a delta between this file and the template is called stale, read it again
 |---|---|
 | `agent.md` | The `agent.garam.sh` API group, the `Agent` kind, and its controller |
 | `configuration.md` | How this operator's deployment is configured, and which repository owns each value |
-| `control.md` | The control service: definitions and revisions, templates, profiles, creation and configure requests, their store, the console API that changes them, and the controller API that releases them |
+| `control.md` | The control service: definitions and revisions, templates, profiles, creation and configure requests, recoveries and stops, their store, the console API that changes them, and the controller API that releases them |
 | `delivery.md` | The images this project publishes, the reference a deployment uses, and where its output lands in a cluster |
 | `structure.md` | What a unit of this code is, what may reference what, and when a new unit is earned |
 | `integration.md` | How a change reaches `dev` and then `main`, and which checks run at each step |
@@ -102,3 +102,4 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0054-carry-a-managed-agents-definition-revision-in-its-spec-and-render-it-into-its-config-file.md` | Carry a managed agent's definition revision in its spec, and render it into its config file | accepted |
 | `adr/0055-change-the-control-services-schema-only-by-forward-only-versioned-migrations.md` | Change the control service's schema only by forward-only versioned migrations, keeping every earlier row | accepted |
 | `adr/0056-publish-a-deployments-profile-versions-through-a-subcommand-of-the-control-binary.md` | Publish a deployment's profile versions through a subcommand of the control binary, and refuse settings no workload could run with | accepted |
+| `adr/0057-recover-an-agents-credential-through-a-prepared-request-and-stop-an-agent-without-a-replacement.md` | Recover an agent's credential through a request its controller prepares, and stop an agent without a replacement | accepted |

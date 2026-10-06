@@ -93,6 +93,7 @@ func (a *Agent) Render(ctx context.Context, agent desired.Agent) error {
 	rendered.Spec.Ego = spec.Ego
 	rendered.Spec.Identity.AssignmentEpoch = spec.Identity.AssignmentEpoch
 	rendered.Spec.Revision = spec.Revision
+	rendered.Spec.Stopped = spec.Stopped
 	if equality.Semantic.DeepEqual(existing.Spec, rendered.Spec) {
 		return nil
 	}
@@ -141,6 +142,7 @@ func (a *Agent) specOf(agent desired.Agent) (agentv1alpha1.AgentSpec, error) {
 			GRN: agent.GRN, AssignmentEpoch: agent.Epoch, Source: agentv1alpha1.DesiredSourceControl,
 		},
 		Revision: agent.Revision,
+		Stopped:  agent.Stopped,
 	}
 	// An empty pin set is no pin set: the API refuses an empty one, which
 	// sherlock refuses to start under.

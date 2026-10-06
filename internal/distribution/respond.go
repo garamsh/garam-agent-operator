@@ -64,10 +64,12 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, errorBody{Kind: kindInvalidRequest, Message: err.Error()})
 	case errors.As(err, &refused) && refusalStatus[refused.Refusal] != 0:
 		writeJSON(w, refusalStatus[refused.Refusal], errorBody{Kind: refused.Kind, Message: err.Error()})
-	case errors.Is(err, errEpochSuperseded):
+	case errors.Is(err, errEpochSuperseded), errors.Is(err, definition.ErrRecoveryEpoch):
 		writeJSON(w, http.StatusConflict, errorBody{Kind: kindEpochSuperseded, Message: err.Error()})
 	case errors.Is(err, definition.ErrRequestReused):
 		writeJSON(w, http.StatusConflict, errorBody{Kind: kindRequestReused, Message: err.Error()})
+	case errors.Is(err, definition.ErrRecoveryStage):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindRecoveryStage, Message: err.Error()})
 	case errors.Is(err, ErrNoCertificate):
 		writeMessage(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, ErrNotProved), errors.Is(err, ErrAnotherOperator), errors.Is(err, errNotPlaced):

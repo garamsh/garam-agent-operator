@@ -27,8 +27,18 @@ const (
 	lastFileSchema  = "../../test/testdata/schema-7b31d01/schema.sql"
 )
 
-// latestVersion is the newest migration the binary embeds.
-const latestVersion = 2
+// latestVersion is the newest migration the binary embeds, and organizationsVersion the migration
+// that reads the earlier rows' organizations.
+const (
+	latestVersion        = 3
+	organizationsVersion = 2
+)
+
+// migrationsTable is where the binary records the schema version.
+const migrationsTable = "schema_migrations"
+
+// laterTables are the tables migrations after the last schema.sql add, which it never made.
+var laterTables = []string{"recoveries", "stops"}
 
 // archiveTables are what migration 2 moves an earlier row with no source into.
 var archiveTables = []string{"creations_n1", "profiles_n1", "templates_n1"}
@@ -345,7 +355,8 @@ AND settings = $2::jsonb AND migrated_version = 2`, r.unnamedProfile, earlierSet
 	}
 
 	// The migrated schema is the one the last schema.sql made, beside the archives.
-	assert.Equal(t, lastFileCatalog(t), catalog(t, db, append([]string{"schema_migrations"}, archiveTables...)...))
+	assert.Equal(t, lastFileCatalog(t),
+		catalog(t, db, append(append([]string{migrationsTable}, archiveTables...), laterTables...)...))
 
 	// The routes serve what was kept, under the organization the migration read.
 	orgPath := "/v1/orgs/" + r.org
@@ -376,12 +387,12 @@ func TestMigration_CreatesAnEmptyDatabaseFromTheFirst(t *testing.T) {
 	assert.False(t, dirty)
 	logged := logOf(t, p)
 	assert.NotContains(t, logged, "adopted")
-	assert.Contains(t, logged, "store schema migrated from=0 to=2")
+	assert.Contains(t, logged, fmt.Sprintf("store schema migrated from=0 to=%d", latestVersion))
 	assert.NotContains(t, logged, "WARN")
 	for _, archive := range archiveTables {
 		assert.False(t, exists(t, db, archive), archive)
 	}
-	assert.Equal(t, lastFileCatalog(t), catalog(t, db, "schema_migrations"))
+	assert.Equal(t, lastFileCatalog(t), catalog(t, db, append([]string{migrationsTable}, laterTables...)...))
 }
 
 // TestMigration_AdoptsADatabaseTheLastSchemaFileMade adopts, at version 2, a database a dev build
@@ -401,7 +412,7 @@ VALUES ($1, $2, 1, $3::jsonb)`, real.orgID, profile, earlierSettings)
 	assert.Equal(t, latestVersion, version)
 	assert.False(t, dirty)
 	assert.Contains(t, logOf(t, p), "database made before migrations adopted version=2")
-	assert.Equal(t, before, catalog(t, db, "schema_migrations"))
+	assert.Equal(t, before, catalog(t, db, append([]string{migrationsTable}, laterTables...)...))
 	profiles := readRoute(t, base, "/v1/orgs/"+real.orgID+"/profiles", "execution-profile:read")
 	assert.Contains(t, profiles["profiles"], firstVersion(profile))
 }
@@ -420,7 +431,7 @@ func TestMigration_RefusesADatabaseOfNoKnownSchema(t *testing.T) {
 
 	assert.Contains(t, out, "database schema refused")
 	assert.Contains(t, out, "missing column agent_status.applied_generation text null")
-	assert.False(t, exists(t, db, "schema_migrations"), "the refused database was written to")
+	assert.False(t, exists(t, db, migrationsTable), "the refused database was written to")
 	assert.Equal(t, before, catalog(t, db))
 }
 
@@ -432,9 +443,11 @@ func TestMigration_RefusesADatabaseANewerBinaryMigrated(t *testing.T) {
 		version               int
 		dirty                 bool
 	}{
-		{"newer", `UPDATE schema_migrations SET version = 3`,
-			"the database is at schema version 3 and this binary knows up to 2", 3, false},
-		{"dirty", `UPDATE schema_migrations SET dirty = true`, "the database is recorded dirty at version 2", 2, true},
+		{"newer", fmt.Sprintf(`UPDATE schema_migrations SET version = %d`, latestVersion+1),
+			fmt.Sprintf("the database is at schema version %d and this binary knows up to %d", latestVersion+1, latestVersion),
+			latestVersion + 1, false},
+		{"dirty", `UPDATE schema_migrations SET dirty = true`,
+			fmt.Sprintf("the database is recorded dirty at version %d", latestVersion), latestVersion, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -476,7 +489,7 @@ func TestMigration_RefusesADefinitionWhoseAgentNamesNoOrganization(t *testing.T)
 	assert.Contains(t, out, "definitions hold an agent whose GRN names no organization: "+agent)
 	assert.NotContains(t, out, "CREATE TABLE", "the refusal carries the migration's text, not its cause")
 	version, dirty := schemaVersion(t, db)
-	assert.Equal(t, latestVersion, version)
+	assert.Equal(t, organizationsVersion, version)
 	assert.True(t, dirty)
 	var kept int
 	require.NoError(t, db.QueryRow(ctx, `SELECT count(*) FROM definitions WHERE agent = $1`, agent).Scan(&kept))

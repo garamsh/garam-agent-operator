@@ -24,6 +24,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/console"
 	"github.com/garamsh/garam-agent-operator/internal/console/cutover"
 	"github.com/garamsh/garam-agent-operator/internal/console/introspector"
+	"github.com/garamsh/garam-agent-operator/internal/console/lifecycle"
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 	"github.com/garamsh/garam-agent-operator/internal/definition/issuer"
 	"github.com/garamsh/garam-agent-operator/internal/definition/registrar"
@@ -138,6 +139,7 @@ func run(ctx context.Context, o options, databaseURL string) error {
 		Definitions:  definitions,
 		Introspector: introspector.NewGaram(garam),
 		Cutover:      cutover.NewGaram(garam),
+		Lifecycle:    lifecycle.NewGaram(garam),
 		Audience:     audience,
 		Now:          time.Now,
 		Logger:       slog.Default(),

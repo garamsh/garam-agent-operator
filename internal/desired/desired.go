@@ -36,6 +36,10 @@ type Agent struct {
 	// carried as the wire has it: a value outside that set is the renderer's to
 	// refuse.
 	Origin string
+
+	// Stopped is true while the control service's stop holds the agent: its
+	// runtime is kept stopped, with no replacement (ADR 0057).
+	Stopped bool
 }
 
 // OriginCutover is the origin of an agent garam recorded as switched from the

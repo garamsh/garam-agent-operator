@@ -37,7 +37,7 @@ func TestBinary_ServesHealthOnTheSchemaItApplied(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	tables := []string{"positions", "profiles", "templates", "publications", "definitions", "creations", "requests",
-		"agent_status"}
+		"agent_status", "recoveries", "stops"}
 	for _, table := range tables {
 		var exists bool
 		require.NoError(t, pool.QueryRow(context.Background(), "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists))

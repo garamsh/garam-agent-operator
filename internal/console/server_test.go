@@ -100,6 +100,8 @@ type env struct {
 	// embedding is the configure bodies' configuration.model.embedding, absent where nil.
 	embedding   *embeddingBody
 	authorities int
+	// lifecycle stands in for garam's recovery and deactivation.
+	lifecycle *lifecycle
 }
 
 // The model and the embeddings endpoint the configure bodies name.
@@ -160,11 +162,13 @@ func newEnv(t *testing.T, consoleOrigins ...string) *env {
 		embedding:    anEmbedding(),
 		introspector: &introspector{answers: map[console.Authority]answer{}}, registrar: reg,
 		definitions: definitions, repository: store, profile: profile,
-		template: definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
+		template:  definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
+		lifecycle: &lifecycle{},
 	}
 	server := httptest.NewServer(console.NewHandler(console.Config{
 		Definitions:  definitions,
 		Introspector: e.introspector,
+		Lifecycle:    e.lifecycle,
 		Audience:     audience,
 		Now:          func() time.Time { return now },
 		Logger:       slog.New(slog.DiscardHandler),
