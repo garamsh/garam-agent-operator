@@ -245,7 +245,8 @@ func TestPublishProfile_PublishesOnlyIntoTheSchemaThisBinaryKnows(t *testing.T) 
 	assert.Contains(t, got.stdout, "published")
 
 	for _, c := range []struct{ name, update, says string }{
-		{"newer", fmt.Sprintf("UPDATE schema_migrations SET version = %d", latestVersion+1), "a newer control service migrated it"},
+		{"newer", fmt.Sprintf("UPDATE schema_migrations SET version = %d", latestVersion+1),
+			"a newer control service migrated it"},
 		{"dirty", "UPDATE schema_migrations SET dirty = true", "dirty at schema version"},
 	} {
 		_, err := db.Exec(context.Background(), c.update)
@@ -253,7 +254,8 @@ func TestPublishProfile_PublishesOnlyIntoTheSchemaThisBinaryKnows(t *testing.T) 
 		got = runPublishProfileOn(t, url, file)
 		assert.Equal(t, 1, got.code, "%s: %s", c.name, got.stdout)
 		assert.Contains(t, got.stderr, c.says, c.name)
-		_, err = db.Exec(context.Background(), fmt.Sprintf("UPDATE schema_migrations SET version = %d, dirty = false", latestVersion))
+		restore := fmt.Sprintf("UPDATE schema_migrations SET version = %d, dirty = false", latestVersion)
+		_, err = db.Exec(context.Background(), restore)
 		require.NoError(t, err, c.name)
 	}
 }
