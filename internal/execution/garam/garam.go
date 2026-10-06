@@ -132,11 +132,16 @@ func (g *Garam) Activate(ctx context.Context, agent string, call execution.Activ
 	}, created, nil
 }
 
-// post sends in, and answers garam's undecided as execution.ErrUndecided.
+// post sends in, and answers garam's undecided as execution.ErrUndecided and an answer under
+// another contract as a *execution.GaramContractError.
 func (g *Garam) post(ctx context.Context, contract, path string, in any) (garammachine.Answer, error) {
 	answer, err := g.machine.Post(ctx, contract, path, in)
-	if errors.Is(err, garammachine.ErrUndecided) {
+	var foreign *garammachine.ContractError
+	switch {
+	case errors.Is(err, garammachine.ErrUndecided):
 		return garammachine.Answer{}, fmt.Errorf("%w: %v", execution.ErrUndecided, err)
+	case errors.As(err, &foreign):
+		return garammachine.Answer{}, &execution.GaramContractError{Call: foreign.Path, Contract: foreign.Got}
 	}
 	if err != nil {
 		return garammachine.Answer{}, fmt.Errorf("call garam %s: %v", path, err)

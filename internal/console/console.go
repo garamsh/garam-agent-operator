@@ -64,6 +64,10 @@ var (
 	// ErrAuthorityUndecided is returned when garam could not decide the authority from current state.
 	ErrAuthorityUndecided = errors.New("operation authority undecided")
 
+	// ErrGaramContractUnsupported is returned when garam answered under a contract version this
+	// service does not take, or under none. Nothing in the answer is read, so it authorizes nothing.
+	ErrGaramContractUnsupported = errors.New("garam answered under a contract this service does not take")
+
 	// ErrDigestMismatch is returned for a body whose SHA-256 is not the one the authority binds.
 	ErrDigestMismatch = errors.New("request body is not the body the authority binds")
 )

@@ -25,6 +25,9 @@ const (
 	// kindEmbeddingImmutable is the kind a change to, or removal of, an agent's embedding is
 	// refused under (ADR 0052).
 	kindEmbeddingImmutable = "embedding_immutable"
+	// kindGaramContractUnsupported is the kind garam's answer under a contract this service does
+	// not take, or under none, is refused under. It tells the case apart from an undecided garam.
+	kindGaramContractUnsupported = "garam_contract_unsupported"
 )
 
 // respondError translates err to its status. It is the only place a status is chosen for an
@@ -73,6 +76,10 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeMessage(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, definition.ErrRegistrationUndecided):
 		writeMessage(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, ErrGaramContractUnsupported), errors.Is(err, definition.ErrGaramContractUnsupported):
+		// garam's own contract answers a dependency it cannot use with 503 (garam@59fe68d
+		// api/machine.yaml:26-31).
+		writeJSON(w, http.StatusServiceUnavailable, errorBody{Kind: kindGaramContractUnsupported, Message: err.Error()})
 	default:
 		s.logger.Error("console request failed", "trace_id", newTraceID(), "error", err)
 		writeMessage(w, http.StatusInternalServerError, "internal error")

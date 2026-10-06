@@ -1,6 +1,9 @@
 package execution
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Contract is the agent-execution.v1 value every request and answer of these routes carries in
 // Garam-Contract-Version (garam@e81a1e0, ADR-0084).
@@ -64,3 +67,14 @@ var (
 	// one the agent's anchor names, or as one that has ended.
 	ErrActivationSuperseded = errors.New("garam refused the activation as superseded")
 )
+
+// GaramContractError is returned when garam answered under a contract version this service does
+// not take, or under none. Nothing in the answer is read, so it decides nothing.
+type GaramContractError struct {
+	// Call names garam's route, Contract the contract it answered under, empty for none.
+	Call, Contract string
+}
+
+func (e *GaramContractError) Error() string {
+	return fmt.Sprintf("garam answered %s under contract %q, which this service does not take", e.Call, e.Contract)
+}
