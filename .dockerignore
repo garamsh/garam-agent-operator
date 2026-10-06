@@ -6,8 +6,9 @@
 !**/*.go
 **/*_test.go
 
-# Re-include the files Go source embeds
-!internal/definition/repository/schema.sql
+# Re-include the files Go source embeds (make verify-build-context checks every
+# //go:embed file against this list)
+!internal/definition/repository/migrations/*.up.sql
 
 # Re-include Go module files
 !go.mod
