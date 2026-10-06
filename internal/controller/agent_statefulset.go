@@ -335,10 +335,16 @@ func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agent
 		return nil, err
 	}
 
+	lineage, err := r.credentialLineage(ctx, agent)
+	if err != nil {
+		return nil, err
+	}
+
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, statefulSet, func() error {
 		if statefulSet.CreationTimestamp.IsZero() && seed {
 			statefulSet.Annotations = map[string]string{seedAnnotation: stateVolumeName}
 		}
+		applyLineage(statefulSet, lineage)
 
 		return r.applyAgent(agent, statefulSet, descriptor)
 	})
@@ -351,6 +357,39 @@ func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agent
 	}
 
 	return statefulSet, nil
+}
+
+// credentialLineage is the lineage garam recovered the agent's credential under,
+// as the recoverer records it on the credential Secret, and empty for a first
+// credential (ADR 0059). Only the Secret's metadata is read.
+func (r *AgentReconciler) credentialLineage(ctx context.Context, agent *agentv1alpha1.Agent) (string, error) {
+	secret := &metav1.PartialObjectMetadata{}
+	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
+	err := r.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: agent.Spec.CredentialsSecretName}, secret)
+	if apierrors.IsNotFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read the credential of the agent: %w", err)
+	}
+
+	return secret.GetAnnotations()[agentname.CredentialLineageAnnotation], nil
+}
+
+// applyLineage carries a recovered credential's lineage on the Pod template, so
+// a credential garam recovered moves the Pod, which copies its credential once,
+// at start (ADR 0010). A credential never recovered carries none and changes
+// nothing in the template.
+func applyLineage(statefulSet *appsv1.StatefulSet, lineage string) {
+	if lineage == "" {
+		delete(statefulSet.Spec.Template.Annotations, agentname.CredentialLineageAnnotation)
+
+		return
+	}
+	if statefulSet.Spec.Template.Annotations == nil {
+		statefulSet.Spec.Template.Annotations = map[string]string{}
+	}
+	statefulSet.Spec.Template.Annotations[agentname.CredentialLineageAnnotation] = lineage
 }
 
 // replaceSharedShape deletes a StatefulSet whose workspace shares the state
