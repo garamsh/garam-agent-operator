@@ -5,20 +5,21 @@ import "context"
 // Repository persists the control service's desired state.
 // Every method that returns a value returns a copy the caller may change freely.
 type Repository interface {
-	// PublishProfile stores settings as the next version of the named profile.
-	PublishProfile(ctx context.Context, name string, settings ExecutionSettings) (Profile, error)
-	// GetProfile returns ErrNotFound for a version never published.
-	GetProfile(ctx context.Context, ref ProfileRef) (Profile, error)
+	// PublishProfile stores settings as the next version of org's named profile.
+	PublishProfile(ctx context.Context, org, name string, settings ExecutionSettings) (Profile, error)
+	// GetProfile returns ErrNotFound for a version org never published.
+	GetProfile(ctx context.Context, org string, ref ProfileRef) (Profile, error)
 
-	// PublishTemplate stores the next version of t.Name; t.Version is ignored.
-	PublishTemplate(ctx context.Context, t Template) (Template, error)
-	// GetTemplate returns ErrNotFound for a version never published.
-	GetTemplate(ctx context.Context, ref TemplateRef) (Template, error)
+	// PublishTemplate stores the next version of org's t.Name; t.Version is ignored. t.Profile is
+	// one of org's profiles.
+	PublishTemplate(ctx context.Context, org string, t Template) (Template, error)
+	// GetTemplate returns ErrNotFound for a version org never published.
+	GetTemplate(ctx context.Context, org string, ref TemplateRef) (Template, error)
 
 	// Configure stores r unless its key is already stored, and returns the request stored
 	// under the key either way. A new request stores d with it when d.Revision is one past
 	// the agent's latest, as Applied, and is stored as Stale otherwise. An agent with no
-	// revision stores nothing and returns ErrNotFound. r.Outcome is ignored.
+	// revision in d.Organization stores nothing and returns ErrNotFound. r.Outcome is ignored.
 	Configure(ctx context.Context, r Request, d Definition) (Request, error)
 	// GetDefinition returns the agent's latest revision, or ErrNotFound.
 	GetDefinition(ctx context.Context, agent GRN) (Definition, error)

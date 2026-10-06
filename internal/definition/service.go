@@ -4,8 +4,8 @@ import "context"
 
 // Service is what the control service offers over its desired state.
 type Service interface {
-	PublishProfile(ctx context.Context, name string, settings ExecutionSettings) (Profile, error)
-	PublishTemplate(ctx context.Context, t Template) (Template, error)
+	PublishProfile(ctx context.Context, org, name string, settings ExecutionSettings) (Profile, error)
+	PublishTemplate(ctx context.Context, org string, t Template) (Template, error)
 	CreateAgent(ctx context.Context, key RequestKey, actor string, template TemplateRef) (Creation, error)
 	Configure(ctx context.Context, in ConfigureInput) (Applied, error)
 	GetDefinition(ctx context.Context, agent GRN) (Definition, error)

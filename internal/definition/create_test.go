@@ -24,13 +24,13 @@ func TestCreateAgent_LaterTemplateVersionLeavesAgentUnchanged(t *testing.T) {
 	f := newFixture(t, registration{agent: firstAgent}, registration{agent: secondAgent})
 
 	tools := definition.ToolPins{webFetch: firstPin}
-	v1, err := f.service.PublishTemplate(ctx, definition.Template{Name: analyst, Profile: f.profile, Config: config("first ego", tools)})
+	v1, err := f.service.PublishTemplate(ctx, org, definition.Template{Name: analyst, Profile: f.profile, Config: config("first ego", tools)})
 	require.NoError(t, err)
 	_, err = f.service.CreateAgent(ctx, key("r1"), actor, definition.TemplateRef{Name: analyst, Version: v1.Version})
 	require.NoError(t, err)
 
 	tools[webFetch] = secondPin
-	v2, err := f.service.PublishTemplate(ctx, definition.Template{Name: analyst, Profile: f.profile, Config: config("second ego", tools)})
+	v2, err := f.service.PublishTemplate(ctx, org, definition.Template{Name: analyst, Profile: f.profile, Config: config("second ego", tools)})
 	require.NoError(t, err)
 
 	d, err := f.service.GetDefinition(ctx, firstAgent)
@@ -104,7 +104,7 @@ func TestCreateAgent_RequestIDReusedForAnotherTemplateRefused(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, registration{agent: firstAgent}, registration{agent: secondAgent})
 
-	v2, err := f.service.PublishTemplate(ctx, definition.Template{Name: f.template.Name, Profile: f.profile, Config: config("second ego", definition.ToolPins{webFetch: secondPin})})
+	v2, err := f.service.PublishTemplate(ctx, org, definition.Template{Name: f.template.Name, Profile: f.profile, Config: config("second ego", definition.ToolPins{webFetch: secondPin})})
 	require.NoError(t, err)
 	_, err = f.service.CreateAgent(ctx, key("r1"), actor, f.template)
 	require.NoError(t, err)
@@ -131,4 +131,34 @@ func TestCreateAgent_RequestIDReusedByAnotherActorRefused(t *testing.T) {
 	repeat, err := f.service.CreateAgent(ctx, key("r1"), actor, f.template)
 	require.NoError(t, err)
 	assert.Equal(t, definition.Registered{Agent: firstAgent}, repeat.Outcome)
+}
+
+func TestCreateAgent_AnotherOrganizationsTemplateRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, registration{agent: firstAgent})
+	inGlobex := definition.RequestKey{Organization: globex, RequestID: "r1"}
+
+	// f.template is published in org only.
+	_, err := f.service.CreateAgent(ctx, inGlobex, actor, f.template)
+	require.ErrorIs(t, err, definition.ErrNotFound)
+	_, err = f.service.GetDefinition(ctx, firstAgent)
+	require.ErrorIs(t, err, definition.ErrNotFound)
+
+	// Control: once globex publishes a template under that name and version, the same request
+	// creates the agent from globex's content.
+	p, err := f.service.PublishProfile(ctx, globex, "small", settings("1", "2Gi"))
+	require.NoError(t, err)
+	_, err = f.service.PublishTemplate(ctx, globex, definition.Template{
+		Name:    f.template.Name,
+		Profile: definition.ProfileRef{Name: p.Name, Version: p.Version},
+		Config:  config("globex ego", definition.ToolPins{webFetch: secondPin}),
+	})
+	require.NoError(t, err)
+	created, err := f.service.CreateAgent(ctx, inGlobex, actor, f.template)
+	require.NoError(t, err)
+	assert.Equal(t, definition.Registered{Agent: firstAgent}, created.Outcome)
+	d, err := f.service.GetDefinition(ctx, firstAgent)
+	require.NoError(t, err)
+	assert.Equal(t, globex, d.Organization)
+	assert.Equal(t, "globex ego", d.Config.Ego)
 }
