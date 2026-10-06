@@ -39,7 +39,13 @@ The PM's triage on #303 first directed issuance from the archive. That rested on
 
 **Two recovery routes, named in the message.**
 1. **Re-creation, proven.** The operator deletes the agent's `Agent` and creates the agent again through the console's create route (`POST /v1/orgs/{org}/agents`), which stores the creation's reference. garam mints a new GRN for it, so the old identity and its memory do not carry over.
-2. **Credential recovery, unproven here.** An owner or admin mints an `agent:recover` handoff, and the agent's credential is recovered through garam's `recoverAgentCredential` (`garamsh/garam@59fe68d` `api/machine.yaml:1277-1287`). garam's PM named this route as keeping the agent's GRN, identity and memory. It has not been tried on an agent that never had a certificate. `garamsh/garam-agent-operator#308` tracks proving it, and until it is proven, nothing here claims it works.
+2. **Credential recovery, unproven here.** This is control's recovery ([ADR 0057](0057-recover-an-agents-credential-through-a-prepared-request-and-stop-an-agent-without-a-replacement.md)), in four steps:
+   - an owner or admin opens it at `POST /v1/orgs/{org}/agents/{agent}/recovery` under an `agent:recover` authority;
+   - the agent's controller prepares it at `POST /v1/operators/self/agents/{agent}/recovery-requests`;
+   - it is read at `GET /v1/orgs/{org}/agents/{agent}/recovery`;
+   - its finalize at `POST /v1/orgs/{org}/agents/{agent}/recovery/finalize`, under the `agent:recover` handoff, sends garam's `recoverAgentCredential` (`garamsh/garam@59fe68d` `api/machine.yaml:1277-1287`).
+
+   garam's PM named this route as keeping the agent's GRN, identity and memory. It has not been tried on an agent that never had a certificate, and the controller's half of the preparation is #300. `garamsh/garam-agent-operator#308` tracks proving it, and until it is proven, nothing here claims it works.
 
 ## Consequences
 
