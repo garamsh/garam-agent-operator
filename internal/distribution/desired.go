@@ -59,6 +59,14 @@ type model struct {
 	BaseURL   string `json:"baseUrl"`
 	Name      string `json:"name"`
 	APIKeyRef string `json:"apiKeyRef"`
+	// Embedding is absent where the revision names none (ADR 0052, ADR 0053).
+	Embedding *embedding `json:"embedding,omitempty"`
+}
+
+type embedding struct {
+	BaseURL   string `json:"baseUrl"`
+	Name      string `json:"name"`
+	APIKeyRef string `json:"apiKeyRef"`
 }
 
 var (
@@ -171,6 +179,10 @@ func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 		size := settings.WorkspaceStorageSize.String()
 		workspaceSize = &size
 	}
+	var embedded *embedding
+	if e := def.Config.Model.Embedding; e != nil {
+		embedded = &embedding{BaseURL: e.BaseURL, Name: e.Name, APIKeyRef: string(e.APIKey)}
+	}
 	return desiredAgent{
 		Origin:   origin,
 		Agent:    string(def.Agent),
@@ -191,6 +203,7 @@ func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 				BaseURL:   def.Config.Model.BaseURL,
 				Name:      def.Config.Model.Name,
 				APIKeyRef: string(def.Config.Model.APIKey),
+				Embedding: embedded,
 			},
 			Ego:   def.Config.Ego,
 			Tools: def.Config.Tools,
