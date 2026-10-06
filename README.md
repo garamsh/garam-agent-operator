@@ -27,6 +27,7 @@ The controller builds an Agent's workload and reports what it observed. `api/v1a
 - Go — the version in `go.mod`
 - Docker, or another container tool set through `CONTAINER_TOOL`
 - `kubectl` and access to a cluster, for the deploy targets
+- A cluster running Kubernetes 1.33 or later. There CRD validation ratcheting is GA and needs no feature gate, and the operator relies on it: an `Agent` stored before a CRD validation rule was added is still updated by every write that leaves the field the rule reads unchanged (#289). The lab is measured on v1.36.3, with the gate on and not overridden (gitops, 2026-10-07).
 - Kind, for `make test-e2e`
 
 The Makefile downloads controller-gen, kustomize, setup-envtest, and golangci-lint into `bin/` on first use; they are not installed system-wide.
