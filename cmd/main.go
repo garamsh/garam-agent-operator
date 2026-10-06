@@ -26,6 +26,10 @@ import (
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 	"github.com/garamsh/garam-agent-operator/internal/controller"
+	"github.com/garamsh/garam-agent-operator/internal/desired"
+	"github.com/garamsh/garam-agent-operator/internal/desired/credential"
+	"github.com/garamsh/garam-agent-operator/internal/desired/placement"
+	"github.com/garamsh/garam-agent-operator/internal/desired/renderer"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
 	"github.com/garamsh/garam-agent-operator/internal/garam/credentialstore"
@@ -58,13 +62,16 @@ func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
-	var enableLeaderElection, agentAssignmentEpoch bool
+	var enableLeaderElection, agentAssignmentEpoch, agentInstructionsFile, agentMigrateSharedClaims bool
+	var agentAdapterControl bool
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var garamAddress, garamCertificateFile, garamKeyFile, garamTrustFile string
 	var garamCredentialSecret, garamEnrollmentTokenFile string
+	var controlAddress, controlTrustFile string
 	var agentImage, agentStorageSize, agentCopyImage, agentWorkspaceImage, agentAdapterImage string
+	var agentWorkspaceStorageSize string
 	var garamPollInterval, garamRenewalInterval, garamReportInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -93,6 +100,12 @@ func main() {
 	flag.StringVar(&garamTrustFile, "garam-trust-file", "",
 		"The file holding what garam's machine listener is verified against. This is not the organization "+
 			"issuer an operator's own certificate arrives with.")
+	flag.StringVar(&controlAddress, "control-address", "",
+		"The host and port of the control service's API listener, which this operator pulls the desired state "+
+			"of the agents it controls from. Unset pulls nothing from it.")
+	flag.StringVar(&controlTrustFile, "control-trust-file", "",
+		"The file holding the root the control service's serving certificate is verified against. "+
+			"Required where control-address is set.")
 	flag.DurationVar(&garamPollInterval, "garam-poll-interval", time.Minute,
 		"How often this operator reads the definitions garam holds for it.")
 	flag.DurationVar(&garamReportInterval, "garam-report-interval", time.Minute,
@@ -115,6 +128,10 @@ func main() {
 	flag.StringVar(&agentStorageSize, "agent-storage-size", "",
 		"The size of the volume every agent this operator constructs keeps its state on, as a Kubernetes "+
 			"quantity. Required where garam-address is set.")
+	flag.StringVar(&agentWorkspaceStorageSize, "agent-workspace-storage-size", "",
+		"The size of the volume the workspace of every agent this operator constructs serves its files from, "+
+			"as a Kubernetes quantity. It is a volume of its own, apart from the agent's state. Unset claims it "+
+			"at agent-storage-size.")
 	flag.StringVar(&agentCopyImage, "agent-copy-image", "",
 		"The image the init container of every agent's Pod runs to copy that agent's credential into the "+
 			"volume the agent reads it from. It needs a shell and install, and nothing of the agent. It has "+
@@ -130,6 +147,23 @@ func main() {
 			"garam's own image, whose adapter subcommand carries messages between garam and the agent. "+
 			"It is built only where garam-address is set too. Unset builds agents' Pods carrying no adapter, "+
 			"which is an agent garam delivers no message to.")
+	flag.BoolVar(&agentInstructionsFile, "agent-instructions-file", false,
+		"Give every agent with garam's adapter garam's reply instruction as an operator instructions file, "+
+			"passed as --instructions-file, and leave its ego as its spec declares it. Off by default, which "+
+			"joins the instruction to the ego instead: set it only once the agent image this deployment runs "+
+			"accepts the flag (sherlock v0.1.0 or later), because an image that does not refuses to start on it.")
+	flag.BoolVar(&agentAdapterControl, "agent-adapter-control", false,
+		"Give the adapter of every agent the control service created the control service's settings, the "+
+			"placement token's file and the agent's outbox, so it activates through the control service rather "+
+			"than running unfenced. Off by default: set it only once the control service serves activation and "+
+			"agent-adapter-image is garam e81a1e0 or later, because an older adapter refuses to start without "+
+			"the setting this drops (ADR 0049). Requires control-address.")
+	flag.BoolVar(&agentMigrateSharedClaims, "agent-migrate-shared-claims", false,
+		"Replace every agent StatefulSet whose workspace shares the state claim with one claiming them "+
+			"separately, keeping the state claim and copying the workspace onto its own. Off by default: such "+
+			"a StatefulSet keeps its shape, and its Agent reports StateIsolated False, until a person has "+
+			"suspended the agent, copied its state and turned this on (ADR 0047). New agents always get "+
+			"separate claims.")
 	flag.BoolVar(&agentAssignmentEpoch, "agent-assignment-epoch", false,
 		"Pass every agent this operator constructed its assignment epoch on the command line, as "+
 			"--assignment-epoch. Off by default: set it only once the agent image this deployment runs "+
@@ -259,15 +293,26 @@ func main() {
 			"so garam delivers them no message")
 	}
 
+	if agentAdapterControl && controlAddress == "" {
+		setupLog.Error(errors.New("agent-adapter-control requires control-address"),
+			"Failed to configure agents' adapters")
+		os.Exit(1)
+	}
 	if err := (&controller.AgentReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
+		APIReader:      mgr.GetAPIReader(),
 		CopyImage:      agentCopyImage,
 		WorkspaceImage: agentWorkspaceImage,
 		AdapterImage:   agentAdapterImage,
 		GaramAddress:   garamAddress,
 
-		RenderAssignmentEpoch: agentAssignmentEpoch,
+		RenderAssignmentEpoch:  agentAssignmentEpoch,
+		RenderInstructionsFile: agentInstructionsFile,
+		MigrateSharedClaims:    agentMigrateSharedClaims,
+		AdapterControl:         agentAdapterControl,
+		ControlAddress:         controlAddress,
+		ControlRootFile:        controlTrustFile,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)
@@ -312,8 +357,19 @@ func main() {
 				"agent-storage-size", agentStorageSize)
 			os.Exit(1)
 		}
+		var workspaceStorageSize *resource.Quantity
+		if agentWorkspaceStorageSize != "" {
+			size, err := resource.ParseQuantity(agentWorkspaceStorageSize)
+			if err != nil {
+				setupLog.Error(err, "Failed to read agent-workspace-storage-size",
+					"agent-workspace-storage-size", agentWorkspaceStorageSize)
+				os.Exit(1)
+			}
+			workspaceStorageSize = &size
+		}
 		garamClient := garam.NewClient(garamAddress, tlsConfig)
-		builder := constructor.NewAgent(mgr.GetClient(), mgr.GetScheme(), namespace, agentImage, storageSize)
+		builder := constructor.NewAgent(mgr.GetClient(), mgr.GetScheme(), namespace, agentImage, storageSize,
+			workspaceStorageSize)
 		if err := mgr.Add(garam.NewPoller(garamClient, builder, garamPollInterval)); err != nil {
 			setupLog.Error(err, "Failed to add the garam poller", "address", garamAddress)
 			os.Exit(1)
@@ -354,6 +410,53 @@ func main() {
 		}
 	} else {
 		setupLog.Info("Reading no definitions and reporting nothing: garam-address is unset")
+	}
+
+	if controlAddress != "" {
+		// This operator is the controller its own certificate names, the same
+		// pair it presents to garam and reads at each handshake; only the root
+		// its peer is verified against differs (ADR 0043).
+		tlsConfig, err := garam.MutualTLS(garamCertificateFile, garamKeyFile, controlTrustFile)
+		if err != nil {
+			setupLog.Error(err, "Failed to configure the connection to the control service")
+			os.Exit(1)
+		}
+		namespace := os.Getenv(podNamespaceVariable)
+		if namespace == "" {
+			setupLog.Error(errors.New(podNamespaceVariable+" is unset"),
+				"Failed to name the namespace this operator writes in")
+			os.Exit(1)
+		}
+		if agentImage == "" {
+			setupLog.Error(errors.New("agent-image is required where control-address is set"),
+				"Failed to render agents")
+			os.Exit(1)
+		}
+		controlClient := desired.NewClient(controlAddress, tlsConfig)
+		puller := desired.NewPuller(controlClient, renderer.NewAgent(mgr.GetClient(), namespace, agentImage))
+		if err := mgr.Add(puller); err != nil {
+			setupLog.Error(err, "Failed to add the desired-state puller", "address", controlAddress)
+			os.Exit(1)
+		}
+		// A managed agent's first certificate is requested through the control
+		// service over a key generated and persisted here first (#218).
+		issuer := desired.NewIssuer(controlClient,
+			credential.NewSecrets(mgr.GetClient(), mgr.GetAPIReader(), mgr.GetScheme(), namespace))
+		if err := mgr.Add(issuer); err != nil {
+			setupLog.Error(err, "Failed to add the managed-credential issuer", "address", controlAddress)
+			os.Exit(1)
+		}
+		// Each managed agent's placement is registered with the control service,
+		// and presented again under each renewed leaf (#212, #218).
+		registrar := desired.NewRegistrar(controlClient,
+			placement.NewPods(mgr.GetClient(), mgr.GetAPIReader(), namespace),
+			desired.LeafFingerprint(garamCertificateFile))
+		if err := mgr.Add(registrar); err != nil {
+			setupLog.Error(err, "Failed to add the placement registrar", "address", controlAddress)
+			os.Exit(1)
+		}
+	} else {
+		setupLog.Info("Pulling no desired state: control-address is unset")
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

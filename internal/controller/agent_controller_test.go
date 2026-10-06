@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -93,6 +94,9 @@ func createAgent(agent *agentv1alpha1.Agent) {
 
 	Expect(k8sClient.Create(ctx, agent)).To(Succeed())
 	DeferCleanup(func() {
+		// No controller runs here to release the Agent's workload fence, so the
+		// spec releases it to let the Agent go.
+		releaseFinalizers(agent)
 		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, agent))).To(Succeed())
 
 		workload := &appsv1.StatefulSet{
@@ -108,6 +112,22 @@ const testCopyImage = "example.com/copy:v0.1.0"
 // testWorkspaceImage is the image the specs expect an agent's workspace
 // container to run, where this operator names one.
 const testWorkspaceImage = "example.com/workspace:v0.1.0"
+
+// releaseFinalizers removes every finalizer from obj as the API server now holds
+// it, where it still exists.
+func releaseFinalizers(obj client.Object) {
+	GinkgoHelper()
+
+	current := obj.DeepCopyObject().(client.Object)
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(obj), current); err != nil {
+		Expect(client.IgnoreNotFound(err)).To(Succeed())
+
+		return
+	}
+	released := current.DeepCopyObject().(client.Object)
+	released.SetFinalizers(nil)
+	Expect(client.IgnoreNotFound(k8sClient.Patch(ctx, released, client.MergeFrom(current)))).To(Succeed())
+}
 
 // reconcileAgent runs one reconcile for the named Agent, with this operator
 // naming no workspace image.
@@ -152,6 +172,33 @@ func reconcileAgentWithAdapter(name string) (reconcile.Result, error) {
 	})
 }
 
+// reconcileAgentMigrating runs one reconcile for the named Agent, with this
+// operator running agents' workspace from testWorkspaceImage and told to replace
+// a StatefulSet whose workspace shares the state claim.
+func reconcileAgentMigrating(name string) (reconcile.Result, error) {
+	return runReconcile(name, &AgentReconciler{
+		Client:              k8sClient,
+		Scheme:              k8sClient.Scheme(),
+		CopyImage:           testCopyImage,
+		WorkspaceImage:      testWorkspaceImage,
+		MigrateSharedClaims: true,
+	})
+}
+
+// reconcileAgentWithInstructions runs one reconcile for the named Agent, with
+// this operator placing garam's adapter and rendering garam's reply instruction
+// as an instructions file.
+func reconcileAgentWithInstructions(name string) (reconcile.Result, error) {
+	return runReconcile(name, &AgentReconciler{
+		Client:                 k8sClient,
+		Scheme:                 k8sClient.Scheme(),
+		CopyImage:              testCopyImage,
+		AdapterImage:           testAdapterImage,
+		GaramAddress:           testGaramAddress,
+		RenderInstructionsFile: true,
+	})
+}
+
 // reconcileAgentRenderingEpoch runs one reconcile for the named Agent, with this
 // operator passing agents their assignment epoch.
 func reconcileAgentRenderingEpoch(name string) (reconcile.Result, error) {
@@ -165,6 +212,12 @@ func reconcileAgentRenderingEpoch(name string) (reconcile.Result, error) {
 
 // runReconcile runs one reconcile for the named Agent through reconciler.
 func runReconcile(name string, reconciler *AgentReconciler) (reconcile.Result, error) {
+	// envtest's client reads straight from the API server, which is what the
+	// manager's API reader does.
+	if reconciler.APIReader == nil {
+		reconciler.APIReader = k8sClient
+	}
+
 	return reconciler.Reconcile(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: name, Namespace: agentNamespace},
 	})
@@ -276,6 +329,53 @@ var _ = Describe("Agent", func() {
 
 		Expect(readAgent(agent.Name).Spec.Identity).To(Equal(
 			&agentv1alpha1.AgentIdentity{GRN: testGRN, AssignmentEpoch: "8"}))
+	})
+
+	It("lets an identity's source move from Garam to Control and never back", func() {
+		agent := newAgent("moves-its-source")
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceGaram}
+		createAgent(agent)
+
+		By("the control: switching from Garam to Control, which the #1171 switch does")
+		switched := readAgent(agent.Name)
+		switched.Spec.Identity.Source = agentv1alpha1.DesiredSourceControl
+		Expect(k8sClient.Update(ctx, switched)).To(Succeed())
+
+		By("moving back to Garam")
+		back := readAgent(agent.Name)
+		back.Spec.Identity.Source = agentv1alpha1.DesiredSourceGaram
+		Expect(k8sClient.Update(ctx, back)).To(MatchError(ContainSubstring("identity.source cannot leave Control once set")))
+
+		By("clearing it, which would read as Garam")
+		cleared := readAgent(agent.Name)
+		cleared.Spec.Identity.Source = ""
+		Expect(k8sClient.Update(ctx, cleared)).To(MatchError(ContainSubstring("identity.source cannot leave Control once set")))
+
+		Expect(readAgent(agent.Name).Spec.Identity.Source).To(Equal(agentv1alpha1.DesiredSourceControl))
+	})
+
+	It("reports a storage class the claimed volume cannot change to, beside an unchanged one", func() {
+		name := "changes-its-storage-class"
+		createSecret(credentialsSecretName(name))
+		createAgent(newAgent(name))
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("the control: the class the volume was claimed with")
+		synced := meta.FindStatusCondition(readAgent(name).Status.Conditions, agentv1alpha1.ConditionSynced)
+		Expect(synced.Reason).To(Equal(agentv1alpha1.ReasonWorkloadReconciled))
+
+		By("asking for another class")
+		edited := readAgent(name)
+		edited.Spec.StorageClassName = ptr.To("fast")
+		Expect(k8sClient.Update(ctx, edited)).To(Succeed())
+		_, err = reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		synced = meta.FindStatusCondition(readAgent(name).Status.Conditions, agentv1alpha1.ConditionSynced)
+		Expect(synced.Status).To(Equal(metav1.ConditionFalse))
+		Expect(synced.Reason).To(Equal(agentv1alpha1.ReasonStorageClassImmutable))
+		Expect(statefulSetFor(name).Spec.VolumeClaimTemplates[0].Spec.StorageClassName).To(BeNil())
 	})
 
 	It("reconciles an Agent that is gone without returning an error", func() {

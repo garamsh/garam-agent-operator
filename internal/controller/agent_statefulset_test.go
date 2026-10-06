@@ -71,8 +71,9 @@ var _ = Describe("Agent workload", func() {
 		Expect(container.EnvFrom).To(BeEmpty())
 
 		By("claiming the Agent's storage size for the volume it keeps state on")
-		Expect(workload.Spec.VolumeClaimTemplates).To(HaveLen(1))
+		Expect(workload.Spec.VolumeClaimTemplates).To(HaveLen(2))
 		claim := workload.Spec.VolumeClaimTemplates[0]
+		Expect(claim.Name).To(Equal(stateVolumeName))
 		Expect(claim.Spec.Resources.Requests.Storage().String()).To(Equal("1Gi"))
 		Expect(container.VolumeMounts).To(ContainElement(corev1.VolumeMount{
 			Name:      claim.Name,
@@ -324,9 +325,9 @@ var _ = Describe("Agent workload", func() {
 		Expect(listen[agentTypeSherlock.listenAddressVariable]).To(Equal(agentTypeSherlock.workspaceAddress))
 		Expect(environmentOf(pod.Containers[0])[agentTypeSherlock.workspaceAddressVariable]).To(Equal(listen[agentTypeSherlock.listenAddressVariable]))
 
-		By("giving it a directory on the volume the agent's state is claimed on, which it can create in")
+		By("giving it a directory on a volume of its own, at the path the agent holds its state at")
 		Expect(workspace.VolumeMounts).To(ConsistOf(
-			corev1.VolumeMount{Name: stateVolumeName, MountPath: agentTypeSherlock.stateMountPath}))
+			corev1.VolumeMount{Name: workspaceVolumeName, MountPath: agentTypeSherlock.stateMountPath}))
 		Expect(listen[agentTypeSherlock.workspaceDirVariable]).To(HavePrefix(agentTypeSherlock.stateMountPath + "/"))
 
 		By("leaving what its image runs alone, and mounting it no credential it does not read")
@@ -335,7 +336,7 @@ var _ = Describe("Agent workload", func() {
 		Expect(workspace.VolumeMounts).NotTo(ContainElement(HaveField("Name", credentialsVolumeName)))
 	})
 
-	It("puts the agent's memory store and its outbox on the state volume, in a subtree disjoint from the workspace's", func() {
+	It("puts the agent's memory store and its outbox on the state volume, which the workspace does not mount", func() {
 		name := "keeps-memory-on-its-volume"
 		createSecret(credentialsSecretName(name))
 		createAgent(newAgent(name))
@@ -359,11 +360,15 @@ var _ = Describe("Agent workload", func() {
 		Expect(memoryDir).To(HavePrefix(volume))
 		Expect(memoryDir).NotTo(Equal(volume))
 
-		By("keeping that subtree and the workspace's apart, neither holding the other")
-		workspaceDir := environmentOf(containerOf(pod, workspaceContainerName))[agentTypeSherlock.workspaceDirVariable] + "/"
-		Expect(workspaceDir).To(HavePrefix(volume))
-		Expect(memoryDir).NotTo(HavePrefix(workspaceDir))
-		Expect(workspaceDir).NotTo(HavePrefix(memoryDir))
+		By("mounting the state volume into the agent alone, so the memory path resolves to nothing in the workspace")
+		for _, container := range append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...) {
+			if container.Name == agentContainerName {
+				continue
+			}
+			Expect(container.VolumeMounts).NotTo(ContainElement(HaveField("Name", stateVolumeName)), container.Name)
+		}
+		workspace := containerOf(pod, workspaceContainerName)
+		Expect(workspace.VolumeMounts).To(ConsistOf(HaveField("Name", workspaceVolumeName)))
 	})
 
 	It("tells the workspace to run exec children as the user the Pod names, which is what lets it run any", func() {
@@ -502,19 +507,20 @@ var _ = Describe("Agent workload", func() {
 		By("configuring it as the agent, against garam's listener and the agent's gateway")
 		gatewayAddress := agentTypeSherlock.gatewayAddress
 		Expect(environmentOf(adapter)).To(Equal(map[string]string{
-			"GARAM_ADAPTER_AGENT":            testGRN,
-			"GARAM_ADAPTER_MACHINE_URL":      "https://" + testGaramAddress,
-			"GARAM_ADAPTER_GATEWAY_URL":      "http://" + gatewayAddress,
-			"GARAM_ADAPTER_GATEWAY_AGENT":    testGRN,
-			"GARAM_ADAPTER_TLS_CERT_FILE":    adapterCredentialsMountPath + "/certificate.pem",
-			"GARAM_ADAPTER_TLS_KEY_FILE":     adapterCredentialsMountPath + "/key.pem",
-			"GARAM_ADAPTER_SERVER_ROOT_FILE": adapterCredentialsMountPath + "/server-root.pem",
+			adapterAgentSetting:        testGRN,
+			adapterMachineURLSetting:   "https://" + testGaramAddress,
+			adapterGatewayURLSetting:   "http://" + gatewayAddress,
+			adapterGatewayAgentSetting: testGRN,
+			adapterCertFileSetting:     adapterCredentialsMountPath + "/certificate.pem",
+			adapterKeyFileSetting:      adapterCredentialsMountPath + "/key.pem",
+			adapterServerRootSetting:   adapterCredentialsMountPath + "/server-root.pem",
 		}))
 
-		By("mounting the agent's credential copy read-only, and nothing else")
-		Expect(adapter.VolumeMounts).To(ConsistOf(corev1.VolumeMount{
-			Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true,
-		}))
+		By("mounting the agent's credential copy and the placement token's copy read-only, and nothing else")
+		Expect(adapter.VolumeMounts).To(ConsistOf(
+			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true},
+			corev1.VolumeMount{Name: placementVolumeName, MountPath: placementMountPath, ReadOnly: true},
+		))
 
 		By("telling the agent's gateway to listen where the adapter dials, and mounting nothing new on the agent")
 		agentContainer := containerOf(pod, agentContainerName)
@@ -746,6 +752,113 @@ var _ = Describe("Agent workload", func() {
 		Expect(environmentOf(agentContainer)).To(HaveKeyWithValue(agentTypeSherlock.configHomeVariable, agentTypeSherlock.configMountPath))
 	})
 
+	It("writes garam's reply instruction into an instructions file, leaving the ego the Agent's, once that file is rendered", func() {
+		agentWith := func(name, ego string) {
+			createSecret(credentialsSecretName(name))
+			agent := newAgent(name)
+			agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+			agent.Spec.Ego = ego
+			createAgent(agent)
+		}
+		egoFile := agentTypeSherlock.egoFileIn(agentTypeSherlock.configMountPath)
+		instructionsFile := agentTypeSherlock.instructionsFileIn(agentTypeSherlock.configMountPath)
+
+		By("the control: with the switch off, the instruction is joined to the declared ego and no instructions file is named")
+		joined := "instructions-switch-off"
+		agentWith(joined, testEgo)
+		_, err := reconcileAgentWithAdapter(joined)
+		Expect(err).NotTo(HaveOccurred())
+		pod := statefulSetFor(joined).Spec.Template.Spec
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).
+			To(HaveKeyWithValue(egoContentVariable, testEgo+"\n\n"+agentTypeSherlock.garamReplyInstruction))
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).NotTo(HaveKey(instructionsContentVariable))
+		Expect(containerOf(pod, agentContainerName).Args).NotTo(ContainElement(sherlockInstructionsFlag))
+
+		By("with the switch on, the instruction is the instructions file, and the ego exactly as declared")
+		declared := "instructions-beside-ego"
+		agentWith(declared, testEgo)
+		_, err = reconcileAgentWithInstructions(declared)
+		Expect(err).NotTo(HaveOccurred())
+		pod = statefulSetFor(declared).Spec.Template.Spec
+		written := environmentOf(initContainerOf(pod, configContainerName))
+		Expect(written).To(HaveKeyWithValue(instructionsContentVariable, agentTypeSherlock.garamReplyInstruction))
+		Expect(written).To(HaveKeyWithValue(egoContentVariable, testEgo))
+		Expect(containerOf(pod, agentContainerName).Args).To(Equal([]string{sherlockAgentCommand,
+			sherlockAgentIDFlag, testGRN, sherlockEgoFileFlag, egoFile, sherlockInstructionsFlag, instructionsFile}))
+
+		By("with the switch on and no declared ego, no ego file, so the image's default ego is kept")
+		bare := "instructions-default-ego"
+		agentWith(bare, "")
+		_, err = reconcileAgentWithInstructions(bare)
+		Expect(err).NotTo(HaveOccurred())
+		pod = statefulSetFor(bare).Spec.Template.Spec
+		written = environmentOf(initContainerOf(pod, configContainerName))
+		Expect(written).To(HaveKeyWithValue(instructionsContentVariable, agentTypeSherlock.garamReplyInstruction))
+		Expect(written).NotTo(HaveKey(egoContentVariable))
+		Expect(containerOf(pod, agentContainerName).Args).To(Equal([]string{sherlockAgentCommand,
+			sherlockAgentIDFlag, testGRN, sherlockInstructionsFlag, instructionsFile}))
+
+		By("mounting the file read-only into the agent and into no other container that runs beside it")
+		Expect(containerOf(pod, agentContainerName).VolumeMounts).To(ContainElement(corev1.VolumeMount{
+			Name: configVolumeName, MountPath: agentTypeSherlock.configMountPath, ReadOnly: true}))
+		for _, container := range append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...) {
+			if container.Name == agentContainerName || container.Name == configContainerName {
+				continue
+			}
+			Expect(container.VolumeMounts).NotTo(ContainElement(HaveField("Name", configVolumeName)), container.Name)
+		}
+	})
+
+	It("renders no instructions file where no adapter is placed, whether or not the switch is on", func() {
+		By("the control: an Agent with an identity, with the adapter placed and the switch on")
+		placed := "instructions-adapter-placed"
+		createSecret(credentialsSecretName(placed))
+		withAdapter := newAgent(placed)
+		withAdapter.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(withAdapter)
+		_, err := reconcileAgentWithInstructions(placed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(containerOf(statefulSetFor(placed).Spec.Template.Spec, agentContainerName).Args).
+			To(ContainElement(sherlockInstructionsFlag))
+
+		By("an Agent a user wrote, with no identity, so no adapter, under the same switch")
+		written := "instructions-no-adapter"
+		createSecret(credentialsSecretName(written))
+		withEgo := newAgent(written)
+		withEgo.Spec.Ego = testEgo
+		createAgent(withEgo)
+		_, err = reconcileAgentWithInstructions(written)
+		Expect(err).NotTo(HaveOccurred())
+		pod := statefulSetFor(written).Spec.Template.Spec
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).NotTo(HaveKey(instructionsContentVariable))
+		Expect(environmentOf(initContainerOf(pod, configContainerName))).To(HaveKeyWithValue(egoContentVariable, testEgo))
+		Expect(containerOf(pod, agentContainerName).Args).NotTo(ContainElement(sherlockInstructionsFlag))
+	})
+
+	It("writes the instructions file beside the ego, at the mode the config file takes", func() {
+		dir := GinkgoT().TempDir()
+		command := writeConfigCommand(dir, agentTypeSherlock, true, true, false)
+		run := exec.Command(command[0], command[1:]...)
+		run.Dir = dir
+		run.Env = append(os.Environ(), configContentVariable+"=tools: {}\n", egoContentVariable+"="+testEgo,
+			instructionsContentVariable+"="+agentTypeSherlock.garamReplyInstruction)
+		output, err := run.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), string(output))
+
+		By("the control: the ego file, holding the ego alone")
+		ego, err := os.ReadFile(agentTypeSherlock.egoFileIn(dir))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(ego)).To(Equal(testEgo))
+
+		By("the instructions file, holding the instruction exactly")
+		instructions, err := os.ReadFile(agentTypeSherlock.instructionsFileIn(dir))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(instructions)).To(Equal(agentTypeSherlock.garamReplyInstruction))
+		info, err := os.Stat(agentTypeSherlock.instructionsFileIn(dir))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
+	})
+
 	It("writes a config file only its owner can read, out of text no pin can turn into a command", func() {
 		dir := GinkgoT().TempDir()
 		// A pin is a string this operator does not read and a console user
@@ -757,7 +870,7 @@ var _ = Describe("Agent workload", func() {
 		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}})
 		Expect(err).NotTo(HaveOccurred())
 
-		command := writeConfigCommand(dir, agentTypeSherlock, false)
+		command := writeConfigCommand(dir, agentTypeSherlock, false, false, false)
 		run := exec.Command(command[0], command[1:]...)
 		run.Dir = dir
 		run.Env = append(os.Environ(), configContentVariable+"="+file)
@@ -908,7 +1021,7 @@ var _ = Describe("Agent workload", func() {
 		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: newModel("writes-an-ego")})
 		Expect(err).NotTo(HaveOccurred())
 
-		command := writeConfigCommand(dir, agentTypeSherlock, true)
+		command := writeConfigCommand(dir, agentTypeSherlock, true, false, false)
 		run := exec.Command(command[0], command[1:]...)
 		run.Dir = dir
 		run.Env = append(os.Environ(), configContentVariable+"="+file, egoContentVariable+"="+ego)
@@ -1086,17 +1199,19 @@ func restrictedNamespace(name string) string {
 
 // podOf is the Pod a StatefulSet's template describes, in namespace. The
 // StatefulSet controller is what turns a claim template into a volume and
-// envtest runs none, so the state volume is supplied here; PodSecurity reads an
-// emptyDir and a claim alike.
+// envtest runs none, so a volume for each claim template is supplied here;
+// PodSecurity reads an emptyDir and a claim alike.
 func podOf(statefulSet *appsv1.StatefulSet, namespace string) *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: statefulSet.Name + "-0", Namespace: namespace},
 		Spec:       *statefulSet.Spec.Template.Spec.DeepCopy(),
 	}
-	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-		Name:         stateVolumeName,
-		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-	})
+	for _, claim := range statefulSet.Spec.VolumeClaimTemplates {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name:         claim.Name,
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+	}
 
 	return pod
 }
@@ -1190,6 +1305,16 @@ func withoutWorkspace(pod corev1.PodSpec) corev1.PodSpec {
 // flag adds nothing anywhere else.
 func withoutAdapter(pod corev1.PodSpec) corev1.PodSpec {
 	stripped := withoutToolPins(pod)
+	isPlacement := func(name string) bool { return name == placementVolumeName || name == placementSecretVolumeName }
+	stripped.Volumes = slices.DeleteFunc(stripped.Volumes, func(volume corev1.Volume) bool { return isPlacement(volume.Name) })
+	for i := range stripped.InitContainers {
+		if stripped.InitContainers[i].Name != credentialsContainerName {
+			continue
+		}
+		stripped.InitContainers[i].VolumeMounts = slices.DeleteFunc(stripped.InitContainers[i].VolumeMounts,
+			func(mount corev1.VolumeMount) bool { return isPlacement(mount.Name) })
+		stripped.InitContainers[i].Command = copyCredentialsCommand(agentTypeSherlock, false)
+	}
 	for i := range stripped.Containers {
 		if at := slices.Index(stripped.Containers[i].Args, sherlockEgoFileFlag); at >= 0 {
 			stripped.Containers[i].Args = slices.Delete(stripped.Containers[i].Args, at, at+2)

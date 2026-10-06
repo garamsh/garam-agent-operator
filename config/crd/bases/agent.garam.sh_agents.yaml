@@ -24,6 +24,12 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Available")].status
       name: Available
       type: string
+    - jsonPath: .status.conditions[?(@.type=="StateIsolated")].status
+      name: Isolated
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Suspended")].status
+      name: Suspended
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -89,6 +95,18 @@ spec:
                       grn is the garam resource name of the agent, which the agent serves its
                       routes under. It is opaque here and passed to the agent verbatim.
                     minLength: 1
+                    type: string
+                  source:
+                    description: |-
+                      source is where this agent's desired state comes from. Garam is a garam
+                      definition, read once when the agent is constructed. Control is the
+                      control service's desired feed, which every new revision is rendered from.
+                      Absent is Garam, which is every agent constructed before this field
+                      existed. One source holds a GRN at a time, and Control is never left once
+                      set.
+                    enum:
+                    - Garam
+                    - Control
                     type: string
                 required:
                 - grn
@@ -222,8 +240,9 @@ spec:
                 type: object
               storageClassName:
                 description: |-
-                  storageClassName is the StorageClass the agent's persistent volume is
-                  provisioned from. Unset means the cluster's default StorageClass.
+                  storageClassName is the StorageClass the agent's persistent volumes are
+                  provisioned from, its state's and its workspace's. Unset means the
+                  cluster's default StorageClass.
                 minLength: 1
                 type: string
               storageSize:
@@ -237,6 +256,14 @@ spec:
                 x-kubernetes-validations:
                 - message: storageSize must be greater than zero
                   rule: quantity(string(self)).isGreaterThan(quantity('0'))
+              suspended:
+                description: |-
+                  suspended stops the agent without deleting anything: its workload is
+                  scaled to no replica, and its Pod is released only once its writers are
+                  seen to stop. The Agent, its credential and its volumes are kept, and
+                  clearing the field starts the agent again on the same volumes. It is a
+                  person's to set: this operator never writes it.
+                type: boolean
               tools:
                 description: |-
                   tools declares the tool set this agent accepts. Unset declares none, and
@@ -276,6 +303,20 @@ spec:
                 - claude-code
                 - codex
                 type: string
+              workspaceStorageSize:
+                anyOf:
+                - type: integer
+                - type: string
+                description: |-
+                  workspaceStorageSize is the size of the persistent volume the agent's
+                  workspace serves its files from, which is a volume of its own: code the
+                  agent runs reaches the workspace and never the agent's state. Unset means
+                  the size storageSize names.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+                x-kubernetes-validations:
+                - message: workspaceStorageSize must be greater than zero
+                  rule: quantity(string(self)).isGreaterThan(quantity('0'))
             required:
             - credentialsSecretName
             - image
@@ -285,6 +326,10 @@ spec:
             - message: identity.grn cannot be changed or removed once set
               rule: '!has(oldSelf.identity) || (has(self.identity) && self.identity.grn
                 == oldSelf.identity.grn)'
+            - message: identity.source cannot leave Control once set
+              rule: '!has(oldSelf.identity) || !has(oldSelf.identity.source) || oldSelf.identity.source
+                != ''Control'' || (has(self.identity) && has(self.identity.source)
+                && self.identity.source == ''Control'')'
           status:
             description: status defines the observed state of Agent
             properties:
@@ -395,6 +440,80 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              placement:
+                description: |-
+                  placement is the Pod this Agent's agent last ran in, and the volume claim
+                  it ran on, as the controller observed them. A new Pod is a new placement;
+                  a container restarted in the same Pod is not. It is a report and is never
+                  read back by the controller.
+                properties:
+                  podUID:
+                    description: podUID is the UID of the Pod.
+                    type: string
+                  pvcUID:
+                    description: |-
+                      pvcUID is the UID of the claim the agent's state volume is bound through,
+                      when the Pod was first seen.
+                    type: string
+                required:
+                - podUID
+                type: object
+              writerStopped:
+                description: |-
+                  writerStopped is the evidence on which the controller last released a
+                  deleting Pod's fence: every container that could write the agent's state
+                  had terminated, or the Pod was never scheduled. It is written before the
+                  fence is released, and each release replaces it.
+                properties:
+                  containers:
+                    description: |-
+                      containers are the containers that could write the agent's state, each in
+                      its terminated state. Empty where the Pod was never scheduled to a node, so
+                      none of them ever started.
+                    items:
+                      description: |-
+                        TerminatedContainer is one container's terminated state, as the kubelet
+                        reported it.
+                      properties:
+                        containerID:
+                          description: |-
+                            containerID is the runtime's ID of the container instance that
+                            terminated.
+                          type: string
+                        exitCode:
+                          description: exitCode is the code it exited with.
+                          format: int32
+                          type: integer
+                        finishedAt:
+                          description: finishedAt is when it terminated.
+                          format: date-time
+                          type: string
+                        name:
+                          description: name is the container's name.
+                          type: string
+                      required:
+                      - containerID
+                      - exitCode
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  observedAt:
+                    description: observedAt is when the controller read the evidence.
+                    format: date-time
+                    type: string
+                  podUID:
+                    description: podUID is the UID of the Pod the evidence is about.
+                    type: string
+                  pvcUID:
+                    description: |-
+                      pvcUID is the UID of the state volume's claim at the time, empty where the
+                      Pod was never scheduled.
+                    type: string
+                required:
+                - observedAt
+                - podUID
+                type: object
             type: object
         required:
         - spec

@@ -7,10 +7,29 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - secrets
+  - nodes
+  - persistentvolumeclaims
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - pods
   verbs:
   - get
   - list
+  - patch
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
   - watch
 - apiGroups:
   - agent.garam.sh
@@ -19,6 +38,7 @@ rules:
   verbs:
   - get
   - list
+  - patch
   - watch
 - apiGroups:
   - agent.garam.sh
@@ -32,6 +52,7 @@ rules:
   - statefulsets
   verbs:
   - create
+  - delete
   - get
   - list
   - update

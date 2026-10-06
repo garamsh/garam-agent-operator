@@ -5,8 +5,6 @@ package constructor
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -21,13 +19,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/agentname"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
-// credentialsSecretSuffix is what an agent's credential Secret is named after
-// the Agent it belongs to. The operator names it because nothing else can: the
-// Agent is constructed here and the definition carries no name for it.
-const credentialsSecretSuffix = "-credentials"
+// fieldOwnerName is the field manager every write this constructor makes to an
+// Agent is recorded under, so an Agent's managedFields show which fields it
+// owns: never spec.suspended, which is a person's (ADR 0046).
+const fieldOwnerName = "garam-operator-constructor"
+
+var fieldOwner = client.FieldOwner(fieldOwnerName)
 
 // Agent constructs the agents garam assigned this operator, keeps the image it
 // wrote for them current, and observes the ones it has constructed.
@@ -47,12 +48,19 @@ type Agent struct {
 	namespace   string
 	image       string
 	storageSize resource.Quantity
+
+	// workspaceStorageSize is nil where the operator names no workspace size,
+	// and the workspace is then claimed at storageSize.
+	workspaceStorageSize *resource.Quantity
 }
 
 // NewAgent returns an Agent constructing into namespace, giving each agent
-// image to run and storageSize to keep its state on.
-func NewAgent(c client.Client, scheme *runtime.Scheme, namespace, image string, storageSize resource.Quantity) *Agent {
-	return &Agent{client: c, scheme: scheme, namespace: namespace, image: image, storageSize: storageSize}
+// image to run, storageSize to keep its state on, and workspaceStorageSize for
+// its workspace where it is not nil.
+func NewAgent(c client.Client, scheme *runtime.Scheme, namespace, image string,
+	storageSize resource.Quantity, workspaceStorageSize *resource.Quantity) *Agent {
+	return &Agent{client: c, scheme: scheme, namespace: namespace, image: image,
+		storageSize: storageSize, workspaceStorageSize: workspaceStorageSize}
 }
 
 // HasCredential reports whether the Secret an agent's workload mounts exists.
@@ -98,14 +106,15 @@ func (a *Agent) ensureAgent(ctx context.Context, definition garam.Definition,
 		ObjectMeta: metav1.ObjectMeta{Name: Name(agent), Namespace: a.namespace},
 		Spec: agentv1alpha1.AgentSpec{
 			Image:                 a.image,
-			CredentialsSecretName: Name(agent) + credentialsSecretSuffix,
+			CredentialsSecretName: agentname.CredentialsSecret(string(agent)),
 			StorageSize:           a.storageSize,
+			WorkspaceStorageSize:  a.workspaceStorageSize,
 			Tools:                 agentv1alpha1.ToolSet{Pins: definition.Tools.Pins},
 			Identity:              identityOf(agent, epoch),
 		},
 	}
 
-	err := a.client.Create(ctx, constructed)
+	err := a.client.Create(ctx, constructed, fieldOwner)
 	if apierrors.IsAlreadyExists(err) {
 		if err := a.client.Get(ctx, client.ObjectKeyFromObject(constructed), constructed); err != nil {
 			return nil, fmt.Errorf("get the agent constructed for %s: %w", agent, err)
@@ -136,7 +145,7 @@ func (a *Agent) ensureAgent(ctx context.Context, definition garam.Definition,
 		return nil, fmt.Errorf("render the report of %s: %w", agent, err)
 	}
 	if err := a.client.Status().Patch(ctx, constructed,
-		client.RawPatch(types.MergePatchType, patch)); err != nil {
+		client.RawPatch(types.MergePatchType, patch), client.FieldOwner(fieldOwnerName)); err != nil {
 		return nil, fmt.Errorf("report %s on the agent constructed for it: %w", agent, err)
 	}
 	constructed.Status.Agent = string(agent)
@@ -197,7 +206,7 @@ func (a *Agent) CorrectSpec(ctx context.Context, agent garam.GRN) (bool, error) 
 	if err != nil {
 		return false, fmt.Errorf("get the agent constructed for %s: %w", agent, err)
 	}
-	if constructed.Status.Agent != string(agent) {
+	if constructed.Status.Agent != string(agent) || heldByControl(constructed) {
 		return false, nil
 	}
 
@@ -220,10 +229,30 @@ func (a *Agent) CorrectSpec(ctx context.Context, agent garam.GRN) (bool, error) 
 		return false, fmt.Errorf("render the corrections of %s: %w", agent, err)
 	}
 	if err := a.client.Patch(ctx, constructed,
-		client.RawPatch(types.MergePatchType, patch)); err != nil {
+		client.RawPatch(types.MergePatchType, patch), fieldOwner); err != nil {
 		return false, fmt.Errorf("correct the spec of the agent constructed for %s: %w", agent, err)
 	}
 	return true, nil
+}
+
+// HeldByControl implements garam.Constructor.
+func (a *Agent) HeldByControl(ctx context.Context, agent garam.GRN) (bool, error) {
+	existing := &agentv1alpha1.Agent{}
+	err := a.client.Get(ctx, client.ObjectKey{Namespace: a.namespace, Name: Name(agent)}, existing)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get the agent constructed for %s: %w", agent, err)
+	}
+
+	return heldByControl(existing), nil
+}
+
+// heldByControl reports whether an Agent's spec names the control service as
+// its source.
+func heldByControl(agent *agentv1alpha1.Agent) bool {
+	return agent.Spec.Identity != nil && agent.Spec.Identity.Source == agentv1alpha1.DesiredSourceControl
 }
 
 // identityOf is the identity an agent is started under: its GRN, and the epoch
@@ -231,7 +260,9 @@ func (a *Agent) CorrectSpec(ctx context.Context, agent garam.GRN) (bool, error) 
 // epochs start at one, and an agent constructed before epochs were recorded
 // carries none.
 func identityOf(agent garam.GRN, epoch int64) *agentv1alpha1.AgentIdentity {
-	identity := &agentv1alpha1.AgentIdentity{GRN: string(agent)}
+	// A garam definition is this agent's source: an agent the control service
+	// created never reaches the poller (ADR 0043).
+	identity := &agentv1alpha1.AgentIdentity{GRN: string(agent), Source: agentv1alpha1.DesiredSourceGaram}
 	if epoch > 0 {
 		identity.AssignmentEpoch = strconv.FormatInt(epoch, 10)
 	}
@@ -241,14 +272,10 @@ func identityOf(agent garam.GRN, epoch int64) *agentv1alpha1.AgentIdentity {
 // credentialsKey names the Secret an agent's workload mounts its credential
 // from.
 func (a *Agent) credentialsKey(agent garam.GRN) client.ObjectKey {
-	return client.ObjectKey{Namespace: a.namespace, Name: Name(agent) + credentialsSecretSuffix}
+	return client.ObjectKey{Namespace: a.namespace, Name: agentname.CredentialsSecret(string(agent))}
 }
 
-// Name is what the Agent constructed for a GRN is called. It is the digest of
-// the whole GRN rather than a part of it: what a GRN's segments mean is garam's,
-// and a name cut out of one moves when garam's format does, orphaning every
-// object already built under the old shape.
+// Name is what the Agent constructed for a GRN is called (agentname.Agent).
 func Name(agent garam.GRN) string {
-	digest := sha256.Sum256([]byte(agent))
-	return "agent-" + hex.EncodeToString(digest[:8])
+	return agentname.Agent(string(agent))
 }

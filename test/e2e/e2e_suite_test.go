@@ -88,7 +88,25 @@ func deployOperator() {
 	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+	// The base names no workspace image, and an overlay appends it as the only
+	// occurrence of the flag. The stand-in image waits as a workspace when it is
+	// started with no command, so every Agent's Pod carries the workspace and
+	// its own claim, the shape a deployment runs.
+	By("naming a workspace image, as an overlay does")
+	cmd = exec.Command("kubectl", "-n", namespace, "patch", "deployment", deploymentName, "--type=json", "-p",
+		`[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--agent-workspace-image=`+
+			agentImage+`"}]`)
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to name the workspace image")
+	cmd = exec.Command("kubectl", "-n", namespace, "rollout", "status", "deployment/"+deploymentName, "--timeout=3m")
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "The controller-manager did not roll out with the workspace image")
 }
+
+// deploymentName is the manager's Deployment, as config/default's name prefix
+// makes it.
+const deploymentName = "garam-agent-operator-controller-manager"
 
 // undeployOperator removes what deployOperator installed.
 func undeployOperator() {

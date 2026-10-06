@@ -9,6 +9,7 @@ import (
 
 // AgentSpec defines the desired state of Agent
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || (has(self.identity) && self.identity.grn == oldSelf.identity.grn)",message="identity.grn cannot be changed or removed once set"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || !has(oldSelf.identity.source) || oldSelf.identity.source != 'Control' || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="identity.source cannot leave Control once set"
 type AgentSpec struct {
 	// type names the agent binary the workload carries. Today three are admitted
 	// — sherlock, claude-code and codex — and each maps to a different
@@ -52,8 +53,25 @@ type AgentSpec struct {
 	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="storageSize must be greater than zero"
 	StorageSize resource.Quantity `json:"storageSize"`
 
-	// storageClassName is the StorageClass the agent's persistent volume is
-	// provisioned from. Unset means the cluster's default StorageClass.
+	// workspaceStorageSize is the size of the persistent volume the agent's
+	// workspace serves its files from, which is a volume of its own: code the
+	// agent runs reaches the workspace and never the agent's state. Unset means
+	// the size storageSize names.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="workspaceStorageSize must be greater than zero"
+	WorkspaceStorageSize *resource.Quantity `json:"workspaceStorageSize,omitempty"`
+
+	// suspended stops the agent without deleting anything: its workload is
+	// scaled to no replica, and its Pod is released only once its writers are
+	// seen to stop. The Agent, its credential and its volumes are kept, and
+	// clearing the field starts the agent again on the same volumes. It is a
+	// person's to set: this operator never writes it.
+	// +optional
+	Suspended bool `json:"suspended,omitempty"`
+
+	// storageClassName is the StorageClass the agent's persistent volumes are
+	// provisioned from, its state's and its workspace's. Unset means the
+	// cluster's default StorageClass.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	StorageClassName *string `json:"storageClassName,omitempty"`
@@ -112,7 +130,29 @@ type AgentIdentity struct {
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	AssignmentEpoch string `json:"assignmentEpoch,omitempty"`
+
+	// source is where this agent's desired state comes from. Garam is a garam
+	// definition, read once when the agent is constructed. Control is the
+	// control service's desired feed, which every new revision is rendered from.
+	// Absent is Garam, which is every agent constructed before this field
+	// existed. One source holds a GRN at a time, and Control is never left once
+	// set.
+	// +optional
+	// +kubebuilder:validation:Enum=Garam;Control
+	Source DesiredSource `json:"source,omitempty"`
 }
+
+// DesiredSource names where an agent's desired state comes from.
+type DesiredSource string
+
+// The sources an agent's desired state can come from.
+const (
+	// DesiredSourceGaram is a garam definition.
+	DesiredSourceGaram DesiredSource = "Garam"
+
+	// DesiredSourceControl is the control service's desired feed.
+	DesiredSourceControl DesiredSource = "Control"
+)
 
 // ModelSpec is the chat model an Agent answers with. Every field is required,
 // because a field left out would fall back to the agent's own default for it —
@@ -225,6 +265,77 @@ type AgentStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	Epoch int64 `json:"epoch,omitempty"`
+
+	// placement is the Pod this Agent's agent last ran in, and the volume claim
+	// it ran on, as the controller observed them. A new Pod is a new placement;
+	// a container restarted in the same Pod is not. It is a report and is never
+	// read back by the controller.
+	// +optional
+	Placement *Placement `json:"placement,omitempty"`
+
+	// writerStopped is the evidence on which the controller last released a
+	// deleting Pod's fence: every container that could write the agent's state
+	// had terminated, or the Pod was never scheduled. It is written before the
+	// fence is released, and each release replaces it.
+	// +optional
+	WriterStopped *WriterStoppedEvidence `json:"writerStopped,omitempty"`
+}
+
+// Placement is one Pod an agent runs in and the claim of its state volume.
+type Placement struct {
+	// podUID is the UID of the Pod.
+	// +required
+	PodUID string `json:"podUID"`
+
+	// pvcUID is the UID of the claim the agent's state volume is bound through,
+	// when the Pod was first seen.
+	// +optional
+	PVCUID string `json:"pvcUID,omitempty"`
+}
+
+// WriterStoppedEvidence is what showed that a deleting Pod's writers had
+// stopped.
+type WriterStoppedEvidence struct {
+	// podUID is the UID of the Pod the evidence is about.
+	// +required
+	PodUID string `json:"podUID"`
+
+	// pvcUID is the UID of the state volume's claim at the time, empty where the
+	// Pod was never scheduled.
+	// +optional
+	PVCUID string `json:"pvcUID,omitempty"`
+
+	// containers are the containers that could write the agent's state, each in
+	// its terminated state. Empty where the Pod was never scheduled to a node, so
+	// none of them ever started.
+	// +optional
+	// +listType=atomic
+	Containers []TerminatedContainer `json:"containers,omitempty"`
+
+	// observedAt is when the controller read the evidence.
+	// +required
+	ObservedAt metav1.Time `json:"observedAt"`
+}
+
+// TerminatedContainer is one container's terminated state, as the kubelet
+// reported it.
+type TerminatedContainer struct {
+	// name is the container's name.
+	// +required
+	Name string `json:"name"`
+
+	// containerID is the runtime's ID of the container instance that
+	// terminated.
+	// +required
+	ContainerID string `json:"containerID"`
+
+	// exitCode is the code it exited with.
+	// +required
+	ExitCode int32 `json:"exitCode"`
+
+	// finishedAt is when it terminated.
+	// +optional
+	FinishedAt metav1.Time `json:"finishedAt,omitzero"`
 }
 
 // ConditionSynced is the condition type reporting whether the cluster carries
@@ -244,9 +355,19 @@ const (
 	// model's API key does not exist, which leaves the workload unbuilt.
 	ReasonModelKeySecretMissing = "ModelKeySecretMissing"
 
+	// ReasonWorkloadReplacing is set while the StatefulSet is replaced to give the
+	// agent's state and its workspace separate volumes. The old one is deleted
+	// leaving its Pod and its claims in place, and the next is created once it
+	// is gone.
+	ReasonWorkloadReplacing = "WorkloadReplacing"
+
 	// ReasonStorageSizeImmutable is set when the spec asks for a volume size the
 	// workload cannot be changed to.
 	ReasonStorageSizeImmutable = "StorageSizeImmutable"
+
+	// ReasonStorageClassImmutable is set when the spec asks for a storage class
+	// the workload's volume cannot be changed to.
+	ReasonStorageClassImmutable = "StorageClassImmutable"
 
 	// ReasonTypeUnimplemented is set when the spec names an admitted type the
 	// controller has not yet learned to build. The workload is not built until
@@ -271,6 +392,84 @@ const (
 	// ReasonWorkloadNotObserved is set when the controller stopped before
 	// reconciling a workload, so it read none and observed no readiness.
 	ReasonWorkloadNotObserved = "WorkloadNotObserved"
+
+	// ReasonSuspended is set on Available while the spec suspends the agent,
+	// which asks for no replica.
+	ReasonSuspended = "Suspended"
+)
+
+// ConditionSuspended is the condition type reporting whether the agent is
+// stopped as its spec asks. True means the spec suspends it and its Pod is
+// gone, so its volumes are mounted by nothing: the point at which its state
+// can be copied.
+const ConditionSuspended = "Suspended"
+
+// Reasons for the Suspended condition. ReasonSuspended, shared with
+// Available, is the True one.
+const (
+	// ReasonSuspending is set while the spec suspends the agent and its Pod
+	// still exists: running, or held by its writer fence.
+	ReasonSuspending = "Suspending"
+
+	// ReasonNotSuspended is set while the spec does not suspend the agent.
+	ReasonNotSuspended = "NotSuspended"
+)
+
+// ConditionWriterFence is the condition type reporting the controller's last
+// decision on a deleting Pod of this Agent: whether the agent's writers there
+// were positively seen to stop. True is released on evidence; Unknown is
+// unverified, and the Pod is held until the evidence arrives or a person
+// releases it. The fence is never released on a timeout.
+const ConditionWriterFence = "WriterFence"
+
+// Reasons for the WriterFence condition.
+const (
+	// ReasonWriterStopped is set when every writing container was seen
+	// terminated, or the Pod was never scheduled, and the evidence was recorded
+	// in writerStopped before the Pod was released.
+	ReasonWriterStopped = "WriterStopped"
+
+	// ReasonContainerRunning is set when a writing container is still running,
+	// which is what a force-deleted Pod looks like until its node reports.
+	ReasonContainerRunning = "ContainerRunning"
+
+	// ReasonContainerWaiting is set when a writing container on a scheduled Pod
+	// is waiting. A waiting state reported by a node that may be partitioned is
+	// not evidence that the container never started.
+	ReasonContainerWaiting = "ContainerWaiting"
+
+	// ReasonNoContainerStatus is set when a scheduled Pod reports no status, or
+	// no container ID, for a writing container. An absent report can be a
+	// started process nobody observed.
+	ReasonNoContainerStatus = "NoContainerStatus"
+
+	// ReasonNodeUnknown is set when the Pod's node is gone or its Ready
+	// condition is Unknown, so the container states it reported may be stale.
+	ReasonNodeUnknown = "NodeUnknown"
+
+	// ReasonPVCChanged is set when the state volume's claim is missing or is
+	// not the one the Pod started with.
+	ReasonPVCChanged = "PVCChanged"
+)
+
+// ConditionStateIsolated is the condition type reporting which shape the
+// agent's workload runs in: whether the agent's state and its workspace are on
+// separate claims, so the code the agent runs cannot reach its state (ADR 0044).
+// False lists an agent still in the shape where the workspace shares the state
+// claim, which this operator replaces only where it is told to (ADR 0047).
+const ConditionStateIsolated = "StateIsolated"
+
+// Reasons for the StateIsolated condition. WorkloadNotObserved and
+// WorkloadReplacing are shared with Synced.
+const (
+	// ReasonSeparateClaims is set when the workload claims the state and the
+	// workspace separately, and only the agent's container mounts the state.
+	ReasonSeparateClaims = "SeparateClaims"
+
+	// ReasonSharedClaim is set when the workload is in the shape where the
+	// workspace mounts the state claim, and this operator is not told to replace
+	// it.
+	ReasonSharedClaim = "SharedClaim"
 )
 
 // +kubebuilder:object:root=true
@@ -279,6 +478,8 @@ const (
 // +kubebuilder:printcolumn:name="Synced",type=string,JSONPath=`.status.conditions[?(@.type=="Synced")].status`
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Synced")].reason`
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
+// +kubebuilder:printcolumn:name="Isolated",type=string,JSONPath=`.status.conditions[?(@.type=="StateIsolated")].status`
+// +kubebuilder:printcolumn:name="Suspended",type=string,JSONPath=`.status.conditions[?(@.type=="Suspended")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Agent is the Schema for the agents API

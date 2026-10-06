@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"path"
 	"reflect"
 
 	"sigs.k8s.io/yaml"
@@ -55,9 +56,15 @@ type agentTypeDescriptor struct {
 	// egoFile is the ego file's path relative to configMountPath.
 	egoFile string
 
+	// instructionsFile is the operator instructions file's path relative to
+	// configMountPath.
+	instructionsFile string
+
 	// garamReplyInstruction tells the agent how to read a message garam's
 	// adapter delivers and how to address its reply, in the agent's own tool
-	// and channel names. It is joined to the ego wherever the adapter is placed.
+	// and channel names. Wherever the adapter is placed it is the instructions
+	// file, or, where this operator renders none, it is joined to the ego
+	// (ADR 0045).
 	garamReplyInstruction string
 
 	// renderArgs are the agent container's arguments for what the Pod builder
@@ -126,14 +133,19 @@ var agentTypeSherlock = agentTypeDescriptor{
 	// layout of sherlock's names an ego file; only the flag does.
 	egoFile: "sherlock/ego.md",
 
+	// Beside the ego file, for the same reason: only the flag names it.
+	instructionsFile: "sherlock/instructions.md",
+
 	// Says only what garam's garam-message.v1 envelope allows
 	// (garamsh/garam-agent-operator#236, the envelope pinned 2026-10-04): the
 	// adapter posts content
 	// {"contract":"garam-message.v1","sender":"<verified sender GRN>","body":"<original body>"},
 	// and a reply goes through sherlock's message_send on channel garam to that
 	// sender. sherlock supplies in_reply_to, so the instruction does not ask for it.
-	// The ego is the one place sherlock takes text of the operator's: its
-	// instructions are the ego followed by its own fixed contract
+	// Since v0.1.0 sherlock takes it as operator instructions, composed between
+	// the ego and its own fixed contract and never replacing the ego
+	// (sherlock@a44bbaa, #951; sherlock@44aaa55:docs/architecture/agent.md:26).
+	// Before that the ego was the one place it took text of the operator's
 	// (sherlock@2ad4c13:internal/agent/instructions.go:138-144).
 	garamReplyInstruction: "## Messages from garam\n" +
 		"A message that garam delivers arrives as JSON whose `contract` is `garam-message.v1`. " +
@@ -178,6 +190,10 @@ type agentArguments struct {
 	// egoFile is the absolute path of the agent's ego file.
 	egoFile string
 
+	// instructionsFile is the absolute path of the agent's operator
+	// instructions file.
+	instructionsFile string
+
 	// assignmentEpoch is the assignment epoch the agent is told it runs at.
 	assignmentEpoch string
 }
@@ -187,14 +203,16 @@ const (
 	sherlockAgentCommand        = "agent"
 	sherlockAgentIDFlag         = "--agent-id"
 	sherlockEgoFileFlag         = "--ego-file"
+	sherlockInstructionsFlag    = "--instructions-file"
 	sherlockAssignmentEpochFlag = "--assignment-epoch"
 )
 
 // renderSherlockArgs is sherlock's command line for args.
 //
-// All three are flags read off the flag and through no other layer: the agent
+// All four are flags read off the flag and through no other layer: the agent
 // ID and the epoch at sherlock@0ced773:cmd/sherlock/agent.go:71-72,99-102, the
-// ego file at sherlock@07aa5c4:internal/config/ego.go:15. Arguments replace the
+// ego file at sherlock@07aa5c4:internal/config/ego.go:15, and the instructions
+// file at sherlock@44aaa55:docs/architecture/deployment.md:101. Arguments replace the
 // image's CMD, so they restate the image's subcommand ahead of the flags
 // (sherlock@0ced773:build/agent.Dockerfile, ENTRYPOINT ["/sherlock"] and
 // CMD ["agent"]). The agent ID is always passed, because sherlock refuses to
@@ -203,6 +221,9 @@ func renderSherlockArgs(args agentArguments) []string {
 	rendered := []string{sherlockAgentCommand, sherlockAgentIDFlag, args.agentID}
 	if args.egoFile != "" {
 		rendered = append(rendered, sherlockEgoFileFlag, args.egoFile)
+	}
+	if args.instructionsFile != "" {
+		rendered = append(rendered, sherlockInstructionsFlag, args.instructionsFile)
 	}
 	if args.assignmentEpoch != "" {
 		rendered = append(rendered, sherlockAssignmentEpochFlag, args.assignmentEpoch)
@@ -330,6 +351,11 @@ func (d agentTypeDescriptor) implemented() bool {
 // volume.
 func (d agentTypeDescriptor) memoryPath() string { return d.stateMountPath + "/" + d.memoryFile }
 
+// outboxDir is the agent's outbox relative to its state volume: the directory
+// beside the memory store, as sherlock derives it from the memory path
+// (sherlock@44aaa55:internal/gateway/outbox.go:18-26).
+func (d agentTypeDescriptor) outboxDir() string { return path.Dir(d.memoryFile) + "/outbox" }
+
 // configFileIn is where the agent looks for its config file under the
 // configuration directory dir.
 func (d agentTypeDescriptor) configFileIn(dir string) string { return dir + "/" + d.configFile }
@@ -337,3 +363,9 @@ func (d agentTypeDescriptor) configFileIn(dir string) string { return dir + "/" 
 // egoFileIn is where the agent's ego file is written under the configuration
 // directory dir.
 func (d agentTypeDescriptor) egoFileIn(dir string) string { return dir + "/" + d.egoFile }
+
+// instructionsFileIn is where the agent's operator instructions file is written
+// under the configuration directory dir.
+func (d agentTypeDescriptor) instructionsFileIn(dir string) string {
+	return dir + "/" + d.instructionsFile
+}

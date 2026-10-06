@@ -2,6 +2,7 @@ package constructor_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func newScheme(t *testing.T) *runtime.Scheme {
 func newConstructor(t *testing.T, scheme *runtime.Scheme, c client.Client) *constructor.Agent {
 	t.Helper()
 
-	return constructor.NewAgent(c, scheme, namespace, image, resource.MustParse(storageSize))
+	return constructor.NewAgent(c, scheme, namespace, image, resource.MustParse(storageSize), nil)
 }
 
 // newClient substitutes the API server, which is the boundary this unit is
@@ -99,6 +100,29 @@ func TestConstructBuildsTheAgentFromTheOperatorsOwnConfiguration(t *testing.T) {
 	g.Expect(constructed.Spec.StorageSize).To(Equal(resource.MustParse(storageSize)))
 	g.Expect(constructed.Spec.CredentialsSecretName).To(Equal(constructor.Name(sampleAgent) + "-credentials"))
 	g.Expect(constructed.Status.Agent).To(Equal(string(sampleAgent)))
+}
+
+func TestConstructSizesTheWorkspaceWhereTheOperatorNamesASize(t *testing.T) {
+	g := NewWithT(t)
+	scheme := newScheme(t)
+	key := client.ObjectKey{Namespace: namespace, Name: constructor.Name(sampleAgent)}
+
+	// The control: an operator naming no workspace size leaves the field unset,
+	// which claims the workspace at the state's size.
+	unnamed := newClient(scheme)
+	g.Expect(newConstructor(t, scheme, unnamed).
+		Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	constructed := &agentv1alpha1.Agent{}
+	g.Expect(unnamed.Get(context.Background(), key, constructed)).To(Succeed())
+	g.Expect(constructed.Spec.WorkspaceStorageSize).To(BeNil())
+
+	named := newClient(scheme)
+	workspaceSize := resource.MustParse("7Gi")
+	g.Expect(constructor.NewAgent(named, scheme, namespace, image, resource.MustParse(storageSize), &workspaceSize).
+		Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	g.Expect(named.Get(context.Background(), key, constructed)).To(Succeed())
+	g.Expect(constructed.Spec.WorkspaceStorageSize).To(HaveValue(Equal(workspaceSize)))
+	g.Expect(constructed.Spec.StorageSize).To(Equal(resource.MustParse(storageSize)))
 }
 
 func TestConstructDeclaresTheToolSetTheDefinitionCarriesAndNoneWhereItCarriesNone(t *testing.T) {
@@ -163,7 +187,7 @@ func TestConstructWritesTheIdentityTheCertificateRouteProvedIntoTheSpec(t *testi
 	g.Expect(err).NotTo(HaveOccurred())
 
 	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{
-		GRN: string(sampleAgent), AssignmentEpoch: "7",
+		GRN: string(sampleAgent), AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceGaram,
 	}))
 }
 
@@ -280,6 +304,45 @@ func TestConstructAdoptsTheAgentItAlreadyBuilt(t *testing.T) {
 // anywhere. Reported as constructed, that credential is gone: garam generated
 // the key per certificate and keeps none, and nothing would ask for another.
 // What is read is the Secret that holds the key, never the Agent beside it.
+// TestConstructBuildsNoSecondAgentWhileOneIsDeleting says that while an Agent
+// is held deleting, by its workload fence or a Pod whose writers are not yet seen
+// to stop, a pass over its definition reconstructs nothing under its name: the
+// name is still taken, so the Agent being deleted is the one the pass reads. A
+// new Agent can follow only once the deleting one is gone. The control is the
+// same pass after it is gone, which does construct.
+func TestConstructBuildsNoSecondAgentWhileOneIsDeleting(t *testing.T) {
+	g := NewWithT(t)
+	scheme := newScheme(t)
+	c := newClient(scheme)
+	building := newConstructor(t, scheme, c)
+	key := client.ObjectKey{Namespace: namespace, Name: constructor.Name(sampleAgent)}
+
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	deleting := &agentv1alpha1.Agent{}
+	g.Expect(c.Get(context.Background(), key, deleting)).To(Succeed())
+	deleting.Finalizers = []string{"agent.garam.sh/workload-fenced"}
+	g.Expect(c.Update(context.Background(), deleting)).To(Succeed())
+	g.Expect(c.Delete(context.Background(), deleting)).To(Succeed())
+	g.Expect(c.Get(context.Background(), key, deleting)).To(Succeed())
+	g.Expect(deleting.DeletionTimestamp).NotTo(BeNil())
+
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	still := &agentv1alpha1.Agent{}
+	g.Expect(c.Get(context.Background(), key, still)).To(Succeed())
+	g.Expect(still.UID).To(Equal(deleting.UID))
+	g.Expect(still.DeletionTimestamp).NotTo(BeNil())
+
+	// The control: once its fence is released the Agent is gone, and the next
+	// pass builds a new one under the same name.
+	still.Finalizers = nil
+	g.Expect(c.Update(context.Background(), still)).To(Succeed())
+	g.Expect(c.Get(context.Background(), key, &agentv1alpha1.Agent{})).NotTo(Succeed())
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	rebuilt := &agentv1alpha1.Agent{}
+	g.Expect(c.Get(context.Background(), key, rebuilt)).To(Succeed())
+	g.Expect(rebuilt.DeletionTimestamp).To(BeNil())
+}
+
 func TestHasCredentialReportsNothingHeldWhereOnlyTheAgentWasBuilt(t *testing.T) {
 	g := NewWithT(t)
 	scheme := newScheme(t)
@@ -383,7 +446,7 @@ func TestConstructNamesTheAgentInTheOperatorsOwnNamespace(t *testing.T) {
 func newCorrector(t *testing.T, scheme *runtime.Scheme, c client.Client) *constructor.Agent {
 	t.Helper()
 
-	return constructor.NewAgent(c, scheme, namespace, laterImage, resource.MustParse(storageSize))
+	return constructor.NewAgent(c, scheme, namespace, laterImage, resource.MustParse(storageSize), nil)
 }
 
 // imageOf is what the cluster carries in the spec of the Agent constructed for
@@ -480,7 +543,7 @@ func TestCorrectSpecLeavesTheSpecOfAnAgentThisOperatorDidNotConstructAlone(t *te
 	g.Expect(accepted).To(BeTrue())
 	g.Expect(imageOf(t, c, otherAgent)).To(Equal(laterImage))
 	g.Expect(identityOf(t, c, otherAgent)).To(Equal(&agentv1alpha1.AgentIdentity{
-		GRN: string(otherAgent), AssignmentEpoch: "7",
+		GRN: string(otherAgent), AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceGaram,
 	}))
 }
 
@@ -537,7 +600,7 @@ func TestCorrectSpecFillsTheIdentityOfAnAgentConstructedBeforeTheSpecCarriedOne(
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(corrected).To(BeTrue())
 	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{
-		GRN: string(sampleAgent), AssignmentEpoch: "7",
+		GRN: string(sampleAgent), AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceGaram,
 	}))
 
 	secondPass := "a second pass, which finds the identity filled and writes nothing"
@@ -558,7 +621,7 @@ func TestCorrectSpecFillsNoEpochWhereTheConstructionRecordedNone(t *testing.T) {
 	_, err := newCorrector(t, scheme, c).CorrectSpec(context.Background(), sampleAgent)
 
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{GRN: string(sampleAgent)}))
+	g.Expect(identityOf(t, c, sampleAgent)).To(Equal(&agentv1alpha1.AgentIdentity{GRN: string(sampleAgent), Source: agentv1alpha1.DesiredSourceGaram}))
 }
 
 // TestCorrectSpecCorrectsNothingWhereNoAgentIsBuilt says a pass that reaches a
@@ -574,4 +637,65 @@ func TestCorrectSpecCorrectsNothingWhereNoAgentIsBuilt(t *testing.T) {
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(corrected).To(BeFalse())
+}
+
+// ownersOf is every field manager the Agent's managedFields record as owning
+// the field at path, each step written as the API server writes it ("f:spec").
+func ownersOf(t *testing.T, agent *agentv1alpha1.Agent, path ...string) []string {
+	t.Helper()
+
+	var owners []string
+	for _, entry := range agent.ManagedFields {
+		if entry.FieldsV1 == nil {
+			continue
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(entry.FieldsV1.GetRawBytes(), &fields); err != nil {
+			t.Fatalf("read the fields %s manages: %v", entry.Manager, err)
+		}
+		owned := true
+		for _, step := range path {
+			next, ok := fields[step].(map[string]any)
+			if !ok {
+				owned = false
+				break
+			}
+			fields = next
+		}
+		if owned {
+			owners = append(owners, entry.Manager)
+		}
+	}
+	return owners
+}
+
+// TestCorrectSpecLeavesSuspendedToThePersonWhoSetIt holds the poller to ADR
+// 0046: spec.suspended is a person's, and the correction this operator makes on
+// the poller's clock never writes it.
+func TestCorrectSpecLeavesSuspendedToThePersonWhoSetIt(t *testing.T) {
+	g := NewWithT(t)
+	scheme := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&agentv1alpha1.Agent{}).WithReturnManagedFields().Build()
+	ctx := context.Background()
+
+	g.Expect(newConstructor(t, scheme, c).Construct(ctx, definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	key := client.ObjectKey{Namespace: namespace, Name: constructor.Name(sampleAgent)}
+	constructed := &agentv1alpha1.Agent{}
+	g.Expect(c.Get(ctx, key, constructed)).To(Succeed())
+	suspended := constructed.DeepCopy()
+	suspended.Spec.Suspended = true
+	g.Expect(c.Patch(ctx, suspended, client.MergeFrom(constructed), client.FieldOwner("kubectl-edit"))).To(Succeed())
+
+	corrected, err := newCorrector(t, scheme, c).CorrectSpec(ctx, sampleAgent)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(corrected).To(BeTrue())
+
+	read := &agentv1alpha1.Agent{}
+	g.Expect(c.Get(ctx, key, read)).To(Succeed())
+	g.Expect(read.Spec.Image).To(Equal(laterImage))
+	g.Expect(read.Spec.Suspended).To(BeTrue(), "the correction cleared spec.suspended")
+	// The control: the constructor is recorded as the owner of the field it corrected.
+	g.Expect(ownersOf(t, read, "f:spec", "f:image")).To(ConsistOf("garam-operator-constructor"))
+	g.Expect(ownersOf(t, read, "f:spec", "f:suspended")).To(ConsistOf("kubectl-edit"))
 }

@@ -55,6 +55,19 @@ func (p *Poller) poll(ctx context.Context) {
 	log.V(1).Info("Read the definitions garam holds for this operator", "count", len(definitions))
 
 	for _, definition := range definitions {
+		// garam omits a frozen or switched agent from this listing
+		// (garam@1a5273d api/machine.yaml:1405), so a cutover agent does not
+		// arrive here; should it arrive anyway, the Agent's own source says it
+		// is the control service's.
+		held, err := p.constructor.HeldByControl(ctx, definition.Agent)
+		if err != nil {
+			log.Error(err, "Failed to read the source of an agent garam lists", "agent", definition.Agent)
+			continue
+		}
+		if held {
+			log.V(1).Info("Left alone an agent the control service holds", "agent", definition.Agent)
+			continue
+		}
 		claim := definition.Claim
 		if claim == nil {
 			assignment, held := p.claim(ctx, definition.Agent)
