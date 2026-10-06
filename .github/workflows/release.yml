@@ -1,0 +1,149 @@
+name: release
+
+# Publishes a release: the manager's image to garam/garam-agent-operator and the
+# control service's to garam/garam-agent-operator-control, each as X.Y.Z, from a
+# vX.Y.Z git tag on main (ADR 0051, delivery.md). Modelled on sherlock's release
+# workflow (garamsh/sherlock@b3c05c2:.github/workflows/release.yml), which garam's
+# shares (garamsh/garam@9a3f8a6:.github/workflows/release.yml, its ADR-0039).
+#
+# Action pins are a full commit SHA with the version it resolved to as the line's
+# last word (ci.md §Verify a pinned dependency before adopting it);
+# .github/dependabot.yml's github-actions entry moves them, and `make verify-pins`
+# checks the pair agrees.
+#
+# The trigger is the release tag and nothing else. A tag filter is a glob and
+# cannot spell vX.Y.Z, so `v*` is as narrow as the trigger goes. It is also exactly
+# the ref the push role admits: arn:aws:iam::486152169996:role/garam-agent-operator-github-actions
+# trusts the subject
+# `repo:garamsh@307152666/garam-agent-operator@1335647420:ref:refs/tags/v*`
+# (garamsh/infra#292, #293), so a run on any other ref gets no credential. What
+# `v*` admits and the scheme does not is refused by the first step, before any
+# AWS call: both repositories are IMMUTABLE and a wrong name is permanent.
+#
+# Nothing here creates a tag. A person tags main's tip after a promotion and pushes
+# the tag; this workflow reads it.
+on:
+  push:
+    tags: ["v*"]
+
+permissions: read-all
+
+# No concurrency group, and the absence is the guard rather than an omission. A
+# group cancels a queued run when a newer one arrives, whichever way
+# `cancel-in-progress` is set, so a vX.Y.Z tag could publish nothing; and a run
+# cancelled between the two pushes leaves the version half-published, which only
+# the next version repairs (ADR 0051).
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      # A job's block replaces the workflow's rather than adding to it, so the read
+      # the checkout needs is written here beside the federated push credential:
+      # the one job that needs a write holds it (ci.md §Security baseline). This
+      # job writes nothing back to the repository.
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, so that the commit the tag names can be found on
+          # main below.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # A release is vX.Y.Z and the image tag is that without the `v`. This step
+      # stands before any credential, so a tag the scheme does not name costs
+      # nothing. The tag name reaches the shell through the environment, never
+      # the command text (ci.md §Security baseline).
+      - id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if ! printf '%s' "$REF_NAME" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "tag $REF_NAME is not vX.Y.Z: nothing published" >&2
+            exit 1
+          fi
+          echo "version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # A release is a tag on main, placed after the promotion that put the commit
+      # there (ADR 0051, integration.md). A tag on a commit main does not hold —
+      # one only dev carries — is refused here, still before any credential.
+      - run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "$GITHUB_SHA is not on main: a release is tagged on main after a promotion, nothing published" >&2
+            exit 1
+          fi
+
+      # Both images are built before either is pushed, through the one entry point
+      # a person also uses (ci.md §One entry point per task); the Makefile owns the
+      # commands and pushes nothing. Each is one linux/amd64 manifest, labelled
+      # with the commit the tag names.
+      - run: make build-images REVISION="$GITHUB_SHA"
+
+      # Every step above is reversible, so the credential is obtained after them: a
+      # build that fails, on either image, fails before anything can be pushed.
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::486152169996:role/garam-agent-operator-github-actions
+          aws-region: ap-northeast-2
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      # The only irreversible step. Both images are renamed first, so a reference
+      # that cannot be formed fails before any upload begins. The local names are
+      # the ones build-images writes; a rename there leaves `docker tag` with no
+      # such image, which fails here rather than pushing something else.
+      - env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for image in garam-agent-operator garam-agent-operator-control; do
+            docker tag "$image:$GITHUB_SHA" "$REGISTRY/garam/$image:$VERSION"
+          done
+          for image in garam-agent-operator garam-agent-operator-control; do
+            docker push "$REGISTRY/garam/$image:$VERSION"
+          done
+
+      # What the registry holds, read back from the registry: the digest each
+      # reference resolves to, which is what a deployment pins (delivery.md), and
+      # that the object behind it is one manifest and not an index, so the digest
+      # names the image. It runs after the irreversible step because there is
+      # nothing to read before it, so a failure here means the registry does not
+      # hold what this run meant to publish, never that nothing was published.
+      #
+      # `aws ecr batch-get-image` needs ecr:BatchGetImage alone, which the push
+      # role holds because a push calls it; reading through `docker buildx
+      # imagetools` would also need ecr:GetDownloadUrlForLayer (sherlock#960). A
+      # tag that resolves to nothing returns no image, so a missing digest is
+      # refused before the media type is read.
+      - env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for image in garam-agent-operator garam-agent-operator-control; do
+            ref="$REGISTRY/garam/$image:$VERSION"
+            fields=$(aws ecr batch-get-image \
+              --repository-name "garam/$image" \
+              --image-ids imageTag="$VERSION" \
+              --query 'images[0].[imageManifestMediaType, imageId.imageDigest]' \
+              --output text)
+            read -r media digest <<<"$fields"
+            if ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "$ref: the registry returned no image for that tag" >&2
+              exit 1
+            fi
+            case "$media" in
+              application/vnd.docker.distribution.manifest.v2+json | application/vnd.oci.image.manifest.v1+json) ;;
+              *)
+                echo "$ref: the registry holds $media, so that digest names an index and not the image" >&2
+                exit 1
+                ;;
+            esac
+            printf '%s@%s\n' "$ref" "$digest"
+            printf -- '- `%s@%s`\n' "$ref" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          done

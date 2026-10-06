@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; one-image scope superseded by ADR-0033. Settled on issue #169's follow-up after the rename work and the
+Accepted; one-image scope superseded by ADR-0033; the release tag superseded by ADR-0051. Settled on issue #169's follow-up after the rename work and the
 sherlock rename closed and the operator's image was first published under the
 new name. Extends ADR 0014, supersedes nothing.
 
