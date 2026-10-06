@@ -2,6 +2,7 @@ package definition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -26,8 +27,10 @@ func (s *service) GetProfile(ctx context.Context, org string, ref ProfileRef) (P
 }
 
 // Execution returns what is known of an agent's execution. An agent another organization's
-// creation made is ErrNotFound, as one nobody created is. Effective stays nil: no runtime report
-// is accepted yet, and it is never inferred.
+// creation made is ErrNotFound, as one nobody created is. Effective is the runtime's own accepted
+// report, and only while the activation it was made under is the agent's latest, so a generation
+// a newer activation replaced is never shown as effective. It is nil until such a report is
+// accepted, and never inferred from what a controller rendered.
 func (s *service) Execution(ctx context.Context, org string, agent GRN) (Execution, error) {
 	d, err := s.repository.GetDefinition(ctx, agent)
 	if err != nil {
@@ -40,5 +43,20 @@ func (s *service) Execution(ctx context.Context, org string, agent GRN) (Executi
 	if err != nil {
 		return Execution{}, err
 	}
-	return Execution{Desired: d.Revision, Rendered: status.Rendered}, nil
+	e := Execution{Desired: d.Revision, Rendered: status.Rendered}
+	applied, err := s.repository.GetRuntimeApplied(ctx, agent)
+	if errors.Is(err, ErrNotFound) {
+		return e, nil
+	}
+	if err != nil {
+		return Execution{}, err
+	}
+	latest, err := s.repository.LatestActivation(ctx, agent)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return Execution{}, err
+	}
+	if latest != "" && applied.ActivationID == latest {
+		e.Effective = &Effective{Revision: applied.Revision, Generation: applied.Generation, ObservedAt: applied.ObservedAt}
+	}
+	return e, nil
 }

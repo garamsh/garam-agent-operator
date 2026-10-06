@@ -68,6 +68,9 @@ var (
 	ErrDigestMismatch = errors.New("request body is not the body the authority binds")
 )
 
+// fieldRequestID is the bound field a body's request id is compared with.
+const fieldRequestID = "request id"
+
 // MismatchError is returned for an authority that binds a field to another value than the
 // request carries.
 type MismatchError struct {

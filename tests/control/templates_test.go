@@ -61,15 +61,14 @@ func TestTemplates_PublishThenReadThroughGaram(t *testing.T) {
 	status, published := sendTargeted(t, http.MethodPost, publish, "agent-template:publish", real.orgGRN,
 		in.RequestID, body, publish)
 	require.Equal(t, http.StatusCreated, status, published)
-	assert.Equal(t, template, published["name"])
-	assert.InDelta(t, 1, published["version"], 0)
+	assert.Equal(t, firstVersion(template), published)
 
 	list := base + "/templates"
 	status, listed := sendTargeted(t, http.MethodGet, list, "agent-template:read", real.orgGRN,
 		name(t, "list"), nil, list)
 	require.Equal(t, http.StatusOK, status, listed)
-	listedTemplate := map[string]any{"version": float64(1), "profile": map[string]any{"version": float64(1)}}
-	listedTemplate["name"], listedTemplate["profile"].(map[string]any)["name"] = template, profile
+	listedTemplate := firstVersion(template)
+	listedTemplate["profile"] = firstVersion(profile)
 	assert.Contains(t, listed["templates"], listedTemplate)
 
 	version := base + "/templates/" + template + "/versions/1"
@@ -94,4 +93,9 @@ func TestTemplates_PublishThenReadThroughGaram(t *testing.T) {
 	status, _ = sendTargeted(t, http.MethodGet, missing, "agent-template:read", real.orgGRN,
 		name(t, "foreign"), nil, missing)
 	assert.Equal(t, http.StatusNotFound, status)
+}
+
+// firstVersion is version 1 of name as a decoded answer holds it.
+func firstVersion(name string) map[string]any {
+	return map[string]any{"name": name, "version": float64(1)}
 }

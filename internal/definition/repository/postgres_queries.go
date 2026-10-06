@@ -201,13 +201,15 @@ WHERE agent = $1 AND generation = $2 AND activation_id IS NOT NULL LIMIT 1`
 SELECT operation_ref FROM requests WHERE agent = $1 AND revision = $2 AND outcome = 'applied'`
 
 	recordRuntimeApplied = `
-INSERT INTO agent_status (agent, observed_revision, rendered_revision, applied_revision, applied_activation_id)
-VALUES ($1, $2, $2, $2, $3)
+INSERT INTO agent_status (agent, observed_revision, rendered_revision, applied_revision, applied_activation_id,
+    applied_generation, applied_observed_at)
+VALUES ($1, $2, $2, $2, $3, $4, $5)
 ON CONFLICT (agent) DO UPDATE SET applied_revision = EXCLUDED.applied_revision,
-    applied_activation_id = EXCLUDED.applied_activation_id`
+    applied_activation_id = EXCLUDED.applied_activation_id, applied_generation = EXCLUDED.applied_generation,
+    applied_observed_at = EXCLUDED.applied_observed_at`
 
 	getRuntimeApplied = `
-SELECT applied_revision, applied_activation_id FROM agent_status
+SELECT applied_revision, applied_activation_id, applied_generation, applied_observed_at FROM agent_status
 WHERE agent = $1 AND applied_revision IS NOT NULL`
 
 	cutoverColumns = `organization, import_id, epoch, assignee, source_digest, source_values, dispositions, profile_name,

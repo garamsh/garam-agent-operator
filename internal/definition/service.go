@@ -30,7 +30,7 @@ type Service interface {
 	PrepareActivation(ctx context.Context, agent GRN, req ActivationRequest) (Activation, error)
 	RecordActivation(ctx context.Context, agent GRN, requestID, activationID string) error
 	ActivationOfGeneration(ctx context.Context, agent GRN, generation string) (string, error)
-	RecordRuntimeStatus(ctx context.Context, agent GRN, activationID, configRevision string, serving bool) error
+	RecordRuntimeStatus(ctx context.Context, agent GRN, report RuntimeReport) error
 }
 
 type service struct {

@@ -2,7 +2,9 @@ package definition_test
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,4 +143,42 @@ func TestExecution_AnswersOnlyInTheAgentsOrganization(t *testing.T) {
 	e, err = f.service.Execution(ctx, org, "grn:acme:default:agent:1")
 	require.NoError(t, err)
 	assert.Equal(t, definition.Execution{Desired: 1, Rendered: 1}, e)
+}
+
+func TestExecution_EffectiveIsTheLatestActivationsAcceptedReport(t *testing.T) {
+	ctx := context.Background()
+	agent := definition.GRN("grn:acme:default:agent:1")
+	f := newFixture(t, registration{agent: agent})
+	_, _, err := f.service.CreateAgent(ctx, f.create("create", f.template))
+	require.NoError(t, err)
+	activate := func(requestID, generation, activationID string) {
+		t.Helper()
+		_, err := f.service.PrepareActivation(ctx, agent, definition.ActivationRequest{
+			RequestID: requestID, Epoch: "7", Generation: generation, ConfigRevision: 1, PlacementPodUID: "pod",
+		})
+		require.NoError(t, err)
+		require.NoError(t, f.service.RecordActivation(ctx, agent, requestID, activationID))
+	}
+	observed := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
+	first := strings.Repeat("a", 32)
+
+	// Activated, and nothing reported: nothing is effective.
+	activate("a1", first, "activation-1")
+	e, err := f.service.Execution(ctx, org, agent)
+	require.NoError(t, err)
+	assert.Nil(t, e.Effective)
+
+	// The runtime's accepted report of the revision it serves is what is effective.
+	require.NoError(t, f.service.RecordRuntimeStatus(ctx, agent, definition.RuntimeReport{
+		ActivationID: "activation-1", Generation: first, ConfigRevision: "1", Serving: true, ObservedAt: observed,
+	}))
+	e, err = f.service.Execution(ctx, org, agent)
+	require.NoError(t, err)
+	assert.Equal(t, &definition.Effective{Revision: 1, Generation: first, ObservedAt: observed}, e.Effective)
+
+	// A newer activation replaces that generation: its report is no longer the active one's.
+	activate("a2", strings.Repeat("b", 32), "activation-2")
+	e, err = f.service.Execution(ctx, org, agent)
+	require.NoError(t, err)
+	assert.Nil(t, e.Effective)
 }

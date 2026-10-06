@@ -350,6 +350,29 @@ func TestPublish_RefusesWhatItCannotPublish(t *testing.T) {
 	assert.Len(t, latest, 2, "only the control and the env's own template exist")
 }
 
+func TestPublish_RefusesAMalformedKeyReference(t *testing.T) {
+	e := newEnv(t)
+
+	// Control: a well-formed reference is published.
+	published := e.publishAs(t, "k1", e.publishBody("k1", "well formed"), nil)
+	require.Equal(t, http.StatusCreated, published.status, published.message)
+
+	for _, malformed := range []string{"model-api-key", "Model/api-key", "model/..", "model/a b"} {
+		body := publishBodyOf("k-"+malformed, versionOf(e.profile.Name, int64(e.profile.Version)),
+			testConfiguration("malformed", malformed))
+		refused := e.publishAs(t, "k-"+malformed, body, nil)
+		assert.Equal(t, http.StatusBadRequest, refused.status, malformed)
+		assert.Equal(t, "invalid_api_key_ref", refused.body["kind"], malformed)
+	}
+	latest, err := e.definitions.ListTemplates(context.Background(), org)
+	require.NoError(t, err)
+	for _, tmpl := range latest {
+		if tmpl.Name == templateName {
+			assert.Equal(t, definition.Version(1), tmpl.Version, "only the control was published")
+		}
+	}
+}
+
 func TestProfiles_ListEveryPublishedVersion(t *testing.T) {
 	e := newEnv(t)
 	_, err := e.definitions.PublishProfile(context.Background(), org, e.profile.Name, definition.ExecutionSettings{})
@@ -377,14 +400,28 @@ func TestExecution_ShowsNoEffectiveExecutionUntilARuntimeReportIsAccepted(t *tes
 	}
 
 	// Revision 1 asked for, nothing rendered, nothing reported.
-	assert.Equal(t, map[string]any{"desired": revisionOf("1", true), "rendered": nil, "effective": nil}, read())
+	assert.Equal(t, executionOf(revisionOf("1", true), nil, nil), read())
 
 	// A controller reporting it rendered revision 1 is not the running agent reporting it runs.
 	_, err := e.definitions.RecordStatus(context.Background(), agent, 1, 1)
 	require.NoError(t, err)
-	assert.Equal(t, map[string]any{
-		"desired": revisionOf("1", false), "rendered": map[string]any{"revision": "1"}, "effective": nil,
-	}, read())
+	assert.Equal(t, executionOf(revisionOf("1", false), rendered("1"), nil), read())
+
+	// The running agent's accepted report, under its latest activation, is what is effective.
+	ctx := context.Background()
+	generation := "0123456789abcdef0123456789abcdef"
+	_, err = e.definitions.PrepareActivation(ctx, agent, definition.ActivationRequest{
+		RequestID: "a1", Epoch: "7", Generation: generation, ConfigRevision: 1, PlacementPodUID: "pod",
+	})
+	require.NoError(t, err)
+	require.NoError(t, e.definitions.RecordActivation(ctx, agent, "a1", "activation-1"))
+	require.NoError(t, e.definitions.RecordRuntimeStatus(ctx, agent, definition.RuntimeReport{
+		ActivationID: "activation-1", Generation: generation, ConfigRevision: "1", Serving: true,
+		ObservedAt: time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC),
+	}))
+	effective := rendered("1")
+	effective["generation"], effective["observedAt"] = generation, "2026-10-06T09:00:00Z"
+	assert.Equal(t, executionOf(revisionOf("1", false), rendered("1"), effective), read())
 }
 
 func TestCORS_AnswersOnlyARegisteredOrigin(t *testing.T) {
@@ -432,6 +469,23 @@ func answered(name string, version float64) map[string]any {
 	m := versionOf(name, 0)
 	m["version"] = version
 	return m
+}
+
+// executionOf is an execution answer, decoded. A nil part is JSON null.
+func executionOf(desired map[string]any, renderedPart, effective map[string]any) map[string]any {
+	out := map[string]any{"desired": desired, "rendered": nil, "effective": nil}
+	if renderedPart != nil {
+		out["rendered"] = renderedPart
+	}
+	if effective != nil {
+		out["effective"] = effective
+	}
+	return out
+}
+
+// rendered is the rendered part of an execution answer, decoded.
+func rendered(revision string) map[string]any {
+	return map[string]any{"revision": revision}
 }
 
 // revisionOf is the desired part of an execution answer, decoded.

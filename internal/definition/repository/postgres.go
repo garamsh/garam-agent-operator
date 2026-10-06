@@ -847,21 +847,23 @@ func (p *Postgres) ConfigureReference(ctx context.Context, agent definition.GRN,
 }
 
 func (p *Postgres) RecordRuntimeApplied(ctx context.Context, agent definition.GRN, applied definition.RuntimeApplied) error {
-	if _, err := p.pool.Exec(ctx, recordRuntimeApplied, string(agent), int64(applied.Revision), applied.ActivationID); err != nil {
+	if _, err := p.pool.Exec(ctx, recordRuntimeApplied, string(agent), int64(applied.Revision), applied.ActivationID,
+		applied.Generation, applied.ObservedAt); err != nil {
 		return storeError("record runtime applied", err)
 	}
 	return nil
 }
 
 func (p *Postgres) GetRuntimeApplied(ctx context.Context, agent definition.GRN) (definition.RuntimeApplied, error) {
-	var (
-		revision   int64
-		activation string
-	)
-	if err := p.pool.QueryRow(ctx, getRuntimeApplied, string(agent)).Scan(&revision, &activation); err != nil {
+	var applied definition.RuntimeApplied
+	var revision int64
+	err := p.pool.QueryRow(ctx, getRuntimeApplied, string(agent)).
+		Scan(&revision, &applied.ActivationID, &applied.Generation, &applied.ObservedAt)
+	if err != nil {
 		return definition.RuntimeApplied{}, storeError("get runtime applied", notFound("get runtime applied", err))
 	}
-	return definition.RuntimeApplied{Revision: definition.Revision(revision), ActivationID: activation}, nil
+	applied.Revision = definition.Revision(revision)
+	return applied, nil
 }
 
 // scanActivation reads one activation_requests row.

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,7 +59,8 @@ func TestReportStatus_AcceptsTheActivatedGenerationAndRecordsWhatItServes(t *tes
 	}
 	applied, ok := e.applied(t)
 	require.True(t, ok)
-	assert.Equal(t, definition.RuntimeApplied{Revision: 1, ActivationID: firstActivation}, applied)
+	assert.Equal(t, definition.RuntimeApplied{Revision: 1, ActivationID: firstActivation, Generation: generation,
+		ObservedAt: time.Date(2026, 10, 5, 10, 0, 5, 0, time.UTC)}, applied)
 	assert.Equal(t, 1, e.garam.callCount(), "a report activated something")
 }
 

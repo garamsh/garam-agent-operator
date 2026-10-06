@@ -33,7 +33,7 @@ func (s *server) publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.RequestID != b.RequestID {
-		s.respondError(w, &MismatchError{Field: "request id"})
+		s.respondError(w, &MismatchError{Field: fieldRequestID})
 		return
 	}
 	org, name := r.PathValue("org"), r.PathValue("name")

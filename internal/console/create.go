@@ -52,7 +52,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case in.RequestID != b.RequestID:
-		s.respondError(w, &MismatchError{Field: "request id"})
+		s.respondError(w, &MismatchError{Field: fieldRequestID})
 		return
 	case in.Controller != b.Target:
 		s.respondError(w, &MismatchError{Field: "target"})

@@ -571,11 +571,13 @@ type Activation struct {
 	ActivationID         string
 }
 
-// RuntimeApplied is the revision the agent's runtime last reported effective, and the activation
-// it reported it under.
+// RuntimeApplied is the revision the agent's runtime last reported effective, the activation and
+// the generation it reported it under, and when it said so.
 type RuntimeApplied struct {
 	Revision     Revision
 	ActivationID string
+	Generation   string
+	ObservedAt   time.Time
 }
 
 // CutoverStage is how far a cutover import has gone.

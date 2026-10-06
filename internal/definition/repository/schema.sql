@@ -117,7 +117,11 @@ CREATE TABLE IF NOT EXISTS agent_status (
     rendered_revision     bigint NOT NULL CHECK (rendered_revision >= 1),
     applied_revision      bigint,
     applied_activation_id text,
-    CHECK ((applied_revision IS NULL) = (applied_activation_id IS NULL))
+    applied_generation    text,
+    applied_observed_at   timestamptz,
+    CHECK ((applied_revision IS NULL) = (applied_activation_id IS NULL)),
+    CHECK ((applied_revision IS NULL) = (applied_generation IS NULL)),
+    CHECK ((applied_revision IS NULL) = (applied_observed_at IS NULL))
 );
 
 -- A creation's agent names one creation, which a first-certificate request is sent under.
