@@ -487,6 +487,13 @@ var (
 	// certificate request's outcome is unknown, so it stays pending and is sent again unchanged.
 	ErrIssuanceUndecided = errors.New("certificate issuance undecided")
 
+	// ErrCreationArchived is returned for a first certificate asked for an agent whose only creation
+	// is one the published 7c216469476d registered, which migration 2 archived without the agent:create
+	// reference garam requires, because that release never stored one (ADR 0058). The agent is
+	// re-created through the console's create route to get its first certificate.
+	ErrCreationArchived = errors.New("the agent's creation was archived by the upgrade, with no agent:create " +
+		"reference to ask garam under: re-create the agent through the console's create route, which gives it a new GRN")
+
 	// ErrInvalidProfile is returned for a profile publication with no name, a version below 1, or
 	// settings an agent's workload could not run with (ADR 0056).
 	ErrInvalidProfile = errors.New("the profile is not one an agent can run with")

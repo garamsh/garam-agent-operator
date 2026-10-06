@@ -125,6 +125,10 @@ SELECT actor, operation, target, body_sha256, operation_ref, assignment_operator
     agent, outcome, revision
 FROM requests WHERE organization = $1 AND request_id = $2`
 
+	// archivedRegistration reads the archive migration 2 makes only where an earlier creation
+	// moved into it (ADR 0055 §4, ADR 0058).
+	archivedRegistration = `SELECT EXISTS (SELECT 1 FROM creations_n1 WHERE agent = $1 AND state = 'registered')`
+
 	creationOfAgent = `
 SELECT organization, request_id FROM creations WHERE agent = $1 AND state = 'registered'`
 
