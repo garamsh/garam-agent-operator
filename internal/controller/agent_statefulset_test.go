@@ -514,12 +514,14 @@ var _ = Describe("Agent workload", func() {
 			adapterCertFileSetting:     adapterCredentialsMountPath + "/certificate.pem",
 			adapterKeyFileSetting:      adapterCredentialsMountPath + "/key.pem",
 			adapterServerRootSetting:   adapterCredentialsMountPath + "/server-root.pem",
+			adapterOutboxDirSetting:    outboxMountPath,
 		}))
 
-		By("mounting the agent's credential copy and the placement token's copy read-only, and nothing else")
+		By("mounting the credential and placement token copies read-only, and the agent's outbox, and nothing else")
 		Expect(adapter.VolumeMounts).To(ConsistOf(
 			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true},
 			corev1.VolumeMount{Name: placementVolumeName, MountPath: placementMountPath, ReadOnly: true},
+			corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: agentTypeSherlock.outboxDir()},
 		))
 
 		By("telling the agent's gateway to listen where the adapter dials, and mounting nothing new on the agent")
@@ -598,8 +600,8 @@ var _ = Describe("Agent workload", func() {
 		_, err := reconcileAgentWithAdapter(name)
 		Expect(err).NotTo(HaveOccurred())
 		// The credential's copy, the config writer the reply instruction brings,
-		// and the adapter.
-		Expect(statefulSetFor(name).Spec.Template.Spec.InitContainers).To(HaveLen(3))
+		// the outbox's maker and the adapter.
+		Expect(statefulSetFor(name).Spec.Template.Spec.InitContainers).To(HaveLen(4))
 
 		_, err = reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
@@ -698,7 +700,7 @@ var _ = Describe("Agent workload", func() {
 
 		By("creating the Pod the StatefulSet describes, which carries the adapter and which is admitted")
 		admitted := podOf(statefulSetFor(name), namespace)
-		Expect(admitted.Spec.InitContainers).To(HaveLen(3))
+		Expect(admitted.Spec.InitContainers).To(HaveLen(4))
 		Expect(k8sClient.Create(ctx, admitted)).To(Succeed())
 
 		By("creating the same Pod with the adapter allowed to escalate its privileges, which it refuses")
@@ -1430,7 +1432,7 @@ func withoutAdapter(pod corev1.PodSpec) corev1.PodSpec {
 		}
 	}
 	stripped.InitContainers = slices.DeleteFunc(stripped.InitContainers, func(container corev1.Container) bool {
-		return container.Name == adapterContainerName
+		return container.Name == adapterContainerName || container.Name == outboxContainerName
 	})
 	for i := range stripped.Containers {
 		stripped.Containers[i].Env = slices.DeleteFunc(stripped.Containers[i].Env,

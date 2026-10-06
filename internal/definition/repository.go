@@ -60,6 +60,9 @@ type Repository interface {
 	FailCreation(ctx context.Context, key RequestKey, failed Failed) (Creation, error)
 	// CreationOf returns the registered creation of agent, or ErrNotFound.
 	CreationOf(ctx context.Context, agent GRN) (Creation, error)
+	// ArchivedRegistration reports whether a creation registered under an earlier release and
+	// archived by migration 2 names agent (ADR 0058). It is the archive's one reader.
+	ArchivedRegistration(ctx context.Context, agent GRN) (bool, error)
 
 	// BeginInitialCertificate stores r as agent's pending first-certificate request unless one is
 	// already stored, and returns the one stored either way.

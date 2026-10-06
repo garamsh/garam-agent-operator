@@ -147,6 +147,8 @@ type env struct {
 	prover      *prover
 	issuer      *issuer
 	definitions definition.Service
+	// store is the in-memory store the definitions are kept in.
+	store       *repository.Memory
 	profile     definition.ProfileRef
 	withCert    *http.Client
 	withoutCert *http.Client
@@ -165,7 +167,8 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 	t.Helper()
 	ctx := context.Background()
 	iss := &issuer{}
-	definitions := definition.NewService(repository.NewMemory(), registrar{}, iss)
+	store := repository.NewMemory()
+	definitions := definition.NewService(store, registrar{}, iss)
 	class := "standard"
 	p, err := definitions.PublishProfile(ctx, orgID, "small", definition.ExecutionSettings{
 		Resources:        corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")}},
@@ -181,6 +184,7 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 		prover:      &prover{agents: map[string]verdict{}, epochs: map[string]string{agentA: epoch, agentB: epoch}},
 		issuer:      iss,
 		definitions: definitions,
+		store:       store,
 		profile:     profile,
 	}
 	for _, a := range []string{agentA, agentB, agentC} {
