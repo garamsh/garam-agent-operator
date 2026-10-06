@@ -19,6 +19,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// keyName, keyVersion, keyRequests and keyCPU are members of a profile file.
+const (
+	keyName     = "name"
+	keyVersion  = "version"
+	keyRequests = "requests"
+	keyCPU      = "cpu"
+)
+
 // published is what one run of the binary's publish-profile did: its exit code and what it wrote.
 type published struct {
 	code   int
@@ -29,7 +37,8 @@ type published struct {
 // runPublishProfile runs the built binary's publish-profile over files, against the suite's store.
 func runPublishProfile(t *testing.T, files ...string) published {
 	t.Helper()
-	args := []string{"publish-profile"}
+	args := make([]string, 0, 1+2*len(files))
+	args = append(args, "publish-profile")
 	for _, f := range files {
 		args = append(args, "--file", f)
 	}
@@ -61,7 +70,7 @@ func profileFile(t *testing.T, fields map[string]any) string {
 
 // runnable is a profile version publish-profile accepts, of organization's profile name.
 func runnable(organization, profile string, version int) map[string]any {
-	return map[string]any{"organization": organization, "name": profile, "version": version, "storageSize": "1Gi"}
+	return map[string]any{"organization": organization, keyName: profile, keyVersion: version, "storageSize": "1Gi"}
 }
 
 // publishProfile publishes version 1 of a profile of organization, named for the test, through the
@@ -102,7 +111,7 @@ func TestPublishProfile_PublishesAVersionOnceThroughTheBinary(t *testing.T) {
 	organization, profile := name(t, "organization"), name(t, "profile")
 	fields := runnable(organization, profile, 1)
 	fields["workspaceStorageSize"] = "5Gi"
-	fields["resources"] = map[string]any{"requests": map[string]string{"cpu": "500m"}}
+	fields["resources"] = map[string]any{keyRequests: map[string]string{keyCPU: "500m"}}
 
 	got := runPublishProfile(t, profileFile(t, fields))
 	require.Equal(t, 0, got.code, got.stderr)
@@ -130,7 +139,9 @@ func TestPublishProfile_RefusesSettingsNoWorkloadCouldRunWith(t *testing.T) {
 		{"a zero workspace size", func(f map[string]any) { f["workspaceStorageSize"] = "0" }, 1},
 		{"a storage class no name", func(f map[string]any) { f["storageClassName"] = "Fast_SSD" }, 1},
 		{"a request above its limit", func(f map[string]any) {
-			f["resources"] = map[string]any{"requests": map[string]string{"cpu": "2"}, "limits": map[string]string{"cpu": "1"}}
+			f["resources"] = map[string]any{
+				keyRequests: map[string]string{keyCPU: "2"}, "limits": map[string]string{keyCPU: "1"},
+			}
 		}, 1},
 		{"a field a profile file does not name", func(f map[string]any) { f["image"] = "example.com/agent:v1" }, 2},
 	}
@@ -170,7 +181,7 @@ func TestPublishProfile_RefusesOtherSettingsUnderAPublishedVersionAndAGap(t *tes
 	assert.Contains(t, got.stderr, "not the next one")
 
 	// Control: the changed settings as the next version are published.
-	changed["version"] = 2
+	changed[keyVersion] = 2
 	got = runPublishProfile(t, profileFile(t, changed))
 	require.Equal(t, 0, got.code, got.stderr)
 	assert.Equal(t, "2Gi", storedProfiles(t, organization, profile)[2]["storageSize"])
