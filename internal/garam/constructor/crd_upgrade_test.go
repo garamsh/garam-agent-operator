@@ -18,13 +18,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
-	"github.com/garamsh/garam-agent-operator/internal/controller"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
 )
@@ -32,16 +29,12 @@ import (
 // The CRDs the upgrade goes from and to: the one at 7c21646, before #278's embedding rule, and the
 // one config/crd/bases holds now.
 const (
-	crdBefore = "testdata/agent-crd-7c21646.yaml"
+	crdBefore = "../../../test/testdata/crd-7c21646/agent.garam.sh_agents.yaml"
 	crdNow    = "../../../config/crd/bases/agent.garam.sh_agents.yaml"
 )
 
 // embeddingRequired is the message #278's rule refuses a model with no embedding under.
 const embeddingRequired = "embedding is required"
-
-// workloadFenced is the finalizer the Agent reconciler writes onto an Agent before it builds
-// anything for it.
-const workloadFenced = "agent.garam.sh/workload-fenced"
 
 // upgradeEnv is an API server holding the Agent CRD from before #278, and a client of it.
 type upgradeEnv struct {
@@ -154,7 +147,6 @@ func TestCRDUpgrade_AnAgentStoredBeforeTheEmbeddingRuleIsStillWrittenAsTheRollou
 	suspended := e.store(t, "grn:lab:default:agent:a", modelWithoutEmbedding("MiniMax-M2"))
 	edited := e.store(t, "grn:lab:default:agent:b", modelWithoutEmbedding("MiniMax-M2"))
 	corrected := e.store(t, "grn:lab:default:agent:c", modelWithoutEmbedding("MiniMax-M2"))
-	reconciled := e.store(t, "grn:lab:default:agent:d", modelWithoutEmbedding("MiniMax-M2"))
 	remodelled := e.store(t, "grn:lab:default:agent:e", modelWithoutEmbedding("MiniMax-M2"))
 	modelless := e.store(t, "grn:lab:default:agent:f", nil)
 
@@ -170,8 +162,9 @@ func TestCRDUpgrade_AnAgentStoredBeforeTheEmbeddingRuleIsStillWrittenAsTheRollou
 	// (b) An edit elsewhere in the spec.
 	assert.NoError(t, e.patch(edited, `{"ego":"edited after the upgrade"}`), "an unrelated spec edit was refused")
 
-	// (c) The manager's own writes of a Garam-source agent: the spec correction to the image the
-	// manager now runs (ADR 0018), and the reconciler's first write, the workload fence.
+	// (c) The manager's own spec write of a Garam-source agent: the correction to the image the
+	// manager now runs (ADR 0018). The reconciler's write, the workload fence, is asserted in
+	// internal/controller (agent_crd_upgrade_test.go).
 	correcting := constructor.NewAgent(e.client, e.scheme, e.namespace, "example.com/sherlock:next",
 		resource.MustParse("1Gi"), nil)
 	changed, err := correcting.CorrectSpec(ctx, "grn:lab:default:agent:c")
@@ -179,13 +172,6 @@ func TestCRDUpgrade_AnAgentStoredBeforeTheEmbeddingRuleIsStillWrittenAsTheRollou
 	assert.True(t, changed)
 	require.NoError(t, e.client.Get(ctx, client.ObjectKeyFromObject(corrected), read))
 	assert.Equal(t, "example.com/sherlock:next", read.Spec.Image)
-
-	reconciler := &controller.AgentReconciler{Client: e.client, Scheme: e.scheme, APIReader: e.client,
-		CopyImage: "example.com/copy:v1"}
-	_, reconcileErr := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(reconciled)})
-	require.NoError(t, e.client.Get(ctx, client.ObjectKeyFromObject(reconciled), read))
-	assert.True(t, controllerutil.ContainsFinalizer(read, workloadFenced),
-		"the reconciler's workload fence was refused: %v", reconcileErr)
 
 	// An Agent with no model at all, as the lab's is, has nothing the rule reads.
 	assert.NoError(t, e.patch(modelless, `{"suspended":true}`), "suspending an agent with no model was refused")
