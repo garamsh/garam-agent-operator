@@ -2,6 +2,7 @@ package definition
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -17,6 +18,9 @@ func (s *service) Configure(ctx context.Context, in ConfigureInput) (Applied, er
 		return Applied{}, fmt.Errorf("profile %s version %d: %w", in.Profile.Name, in.Profile.Version, err)
 	}
 	if err := s.cutoverSwitchedOrNone(ctx, in.Agent); err != nil {
+		return Applied{}, err
+	}
+	if err := s.embeddingKept(ctx, in); err != nil {
 		return Applied{}, err
 	}
 	request := Request{Key: in.Request, Binding: in.Binding, Agent: in.Agent}
@@ -44,4 +48,27 @@ func (s *service) Configure(ctx context.Context, in ConfigureInput) (Applied, er
 	default:
 		return Applied{}, fmt.Errorf("request %s stored with outcome %T", in.Request.RequestID, outcome)
 	}
+}
+
+// embeddingKept refuses, with ErrEmbeddingImmutable, a request based on the agent's latest
+// revision that changes the base URL or name of the embedding that revision names, or removes it.
+// A request based on an earlier revision is left to be stored as stale, and one for an agent with
+// no revision in the request's organization to be refused as not found.
+func (s *service) embeddingKept(ctx context.Context, in ConfigureInput) error {
+	latest, err := s.repository.GetDefinition(ctx, in.Agent)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	was := latest.Config.Model.Embedding
+	if latest.Organization != in.Request.Organization || latest.Revision != in.ExpectedRevision || was == nil {
+		return nil
+	}
+	if !in.Config.Model.Embedding.sameEndpoint(*was) {
+		return ErrEmbeddingImmutable
+	}
+
+	return nil
 }

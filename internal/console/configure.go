@@ -34,6 +34,15 @@ type model struct {
 	BaseURL   string `json:"baseUrl"`
 	Name      string `json:"name"`
 	APIKeyRef string `json:"apiKeyRef"`
+
+	Embedding *embedding `json:"embedding,omitempty"`
+}
+
+// embedding is a model's embeddings endpoint, absent where the request names none (ADR 0052).
+type embedding struct {
+	BaseURL   string `json:"baseUrl"`
+	Name      string `json:"name"`
+	APIKeyRef string `json:"apiKeyRef"`
 }
 
 // configureResponse is the answer to an applied configure request, and to every repeat of it.
@@ -81,10 +90,11 @@ func (s *server) configure(w http.ResponseWriter, r *http.Request) {
 		Profile:          definition.ProfileRef{Name: in.Profile.Name, Version: definition.Version(in.Profile.Version)},
 		Config: definition.Configuration{
 			Model: definition.Model{
-				Provider: in.Configuration.Model.Provider,
-				BaseURL:  in.Configuration.Model.BaseURL,
-				Name:     in.Configuration.Model.Name,
-				APIKey:   definition.SecretRef(in.Configuration.Model.APIKeyRef),
+				Provider:  in.Configuration.Model.Provider,
+				BaseURL:   in.Configuration.Model.BaseURL,
+				Name:      in.Configuration.Model.Name,
+				APIKey:    definition.SecretRef(in.Configuration.Model.APIKeyRef),
+				Embedding: embeddingOf(in.Configuration.Model.Embedding),
 			},
 			Ego:   in.Configuration.Ego,
 			Tools: in.Configuration.Tools,
@@ -111,4 +121,12 @@ func parseConfigure(body []byte) (configureRequest, definition.Revision, error) 
 		return configureRequest{}, 0, errInvalidBody
 	}
 	return in, expected, nil
+}
+
+// embeddingOf is the embeddings endpoint a request names, nil where it names none.
+func embeddingOf(e *embedding) *definition.Embedding {
+	if e == nil {
+		return nil
+	}
+	return &definition.Embedding{BaseURL: e.BaseURL, Name: e.Name, APIKey: definition.SecretRef(e.APIKeyRef)}
 }

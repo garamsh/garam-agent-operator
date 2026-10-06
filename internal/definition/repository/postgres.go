@@ -58,17 +58,30 @@ type configColumn struct {
 	APIKeyRef string            `json:"apiKeyRef"`
 	Ego       string            `json:"ego"`
 	Tools     map[string]string `json:"tools"`
+
+	Embedding *embeddingColumn `json:"embedding,omitempty"`
+}
+
+// embeddingColumn is a model's embeddings endpoint as stored, absent where it names none.
+type embeddingColumn struct {
+	BaseURL   string `json:"baseURL"`
+	Name      string `json:"name"`
+	APIKeyRef string `json:"apiKeyRef"`
 }
 
 func encodeConfig(c definition.Configuration) ([]byte, error) {
-	return json.Marshal(configColumn{
+	column := configColumn{
 		Provider:  c.Model.Provider,
 		BaseURL:   c.Model.BaseURL,
 		ModelName: c.Model.Name,
 		APIKeyRef: string(c.Model.APIKey),
 		Ego:       c.Ego,
 		Tools:     c.Tools,
-	})
+	}
+	if e := c.Model.Embedding; e != nil {
+		column.Embedding = &embeddingColumn{BaseURL: e.BaseURL, Name: e.Name, APIKeyRef: string(e.APIKey)}
+	}
+	return json.Marshal(column)
 }
 
 func decodeConfig(raw []byte) (definition.Configuration, error) {
@@ -76,7 +89,7 @@ func decodeConfig(raw []byte) (definition.Configuration, error) {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return definition.Configuration{}, storeError("decode configuration", err)
 	}
-	return definition.Configuration{
+	config := definition.Configuration{
 		Model: definition.Model{
 			Provider: c.Provider,
 			BaseURL:  c.BaseURL,
@@ -85,7 +98,13 @@ func decodeConfig(raw []byte) (definition.Configuration, error) {
 		},
 		Ego:   c.Ego,
 		Tools: c.Tools,
-	}, nil
+	}
+	if e := c.Embedding; e != nil {
+		config.Model.Embedding = &definition.Embedding{
+			BaseURL: e.BaseURL, Name: e.Name, APIKey: definition.SecretRef(e.APIKeyRef),
+		}
+	}
+	return config, nil
 }
 
 func (p *Postgres) PublishProfile(ctx context.Context, org, name string, settings definition.ExecutionSettings) (definition.Profile, error) {

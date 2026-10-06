@@ -606,6 +606,10 @@ func cloneSettings(s definition.ExecutionSettings) definition.ExecutionSettings 
 
 func cloneConfig(c definition.Configuration) definition.Configuration {
 	c.Tools = maps.Clone(c.Tools)
+	if c.Model.Embedding != nil {
+		e := *c.Model.Embedding
+		c.Model.Embedding = &e
+	}
 	return c
 }
 

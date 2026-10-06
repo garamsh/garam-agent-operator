@@ -65,7 +65,22 @@ type Model struct {
 	BaseURL  string
 	Name     string
 	APIKey   SecretRef
+	// Embedding is the embeddings endpoint the agent's memory is recalled with, nil where the
+	// model names none. Every model but the mock needs one (ADR 0052).
+	Embedding *Embedding
 }
+
+// Embedding is an embeddings endpoint. APIKey is empty where the endpoint takes no key. Once an
+// agent's revision names one, its base URL and name never change and it is never removed: the
+// agent's stored memory carries the vectors it produced (ADR 0052).
+type Embedding struct {
+	BaseURL string
+	Name    string
+	APIKey  SecretRef
+}
+
+// mockProvider is the model provider sherlock runs offline, with no embeddings endpoint.
+const mockProvider = "mock"
 
 // Configuration is the desired configuration delivered to the agent.
 type Configuration struct {
@@ -75,14 +90,36 @@ type Configuration struct {
 }
 
 // check refuses a configuration the manager could not render: a model whose key reference is
-// not what SecretRef states. A configuration naming no model at all names no key.
+// not what SecretRef states, a model other than the mock naming no embedding, or an embedding
+// missing its base URL or name or with a malformed key reference. A configuration naming no
+// model at all names no key and no embedding.
 func (c Configuration) check() error {
 	if c.Model == (Model{}) {
 		return nil
 	}
-	_, _, err := c.Model.APIKey.Parts()
+	if _, _, err := c.Model.APIKey.Parts(); err != nil {
+		return err
+	}
+	e := c.Model.Embedding
+	switch {
+	case e == nil && c.Model.Provider != mockProvider:
+		return fmt.Errorf("%w: model provider %q names no embedding", ErrEmbeddingRequired, c.Model.Provider)
+	case e == nil:
+		return nil
+	case e.BaseURL == "" || e.Name == "":
+		return fmt.Errorf("%w: an embedding missing its base URL or name", ErrEmbeddingRequired)
+	case e.APIKey != "":
+		_, _, err := e.APIKey.Parts()
+		return err
+	}
 
-	return err
+	return nil
+}
+
+// sameEndpoint reports whether e names the embeddings endpoint was set to: the same base URL and
+// name. The key it is reached with may differ.
+func (e *Embedding) sameEndpoint(was Embedding) bool {
+	return e != nil && e.BaseURL == was.BaseURL && e.Name == was.Name
 }
 
 // ProfileRef names one published version of a profile, within an organization the caller states
@@ -350,6 +387,14 @@ var (
 	// ErrInvalidSecretRef is returned for a model key reference that is not "<secret-name>/<key>"
 	// as SecretRef states it, which the manager could not render.
 	ErrInvalidSecretRef = errors.New("model key reference is not <secret-name>/<key>")
+
+	// ErrEmbeddingRequired is returned for a model other than the mock naming no embedding, or
+	// for an embedding missing its base URL or name: sherlock refuses to start on either (ADR 0052).
+	ErrEmbeddingRequired = errors.New("the model needs an embeddings endpoint with a base URL and a name")
+
+	// ErrEmbeddingImmutable is returned for a configure changing the base URL or name of the
+	// embedding the agent's latest revision names, or removing it (ADR 0052).
+	ErrEmbeddingImmutable = errors.New("an agent's embedding cannot be changed or removed once set")
 
 	// ErrImportOpen is returned for a cutover import of an agent that holds another import.
 	ErrImportOpen = errors.New("another cutover import is open for the agent")

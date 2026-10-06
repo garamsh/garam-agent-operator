@@ -195,6 +195,7 @@ func configurationOf(c definition.Configuration) configuration {
 	return configuration{
 		Model: model{
 			Provider: c.Model.Provider, BaseURL: c.Model.BaseURL, Name: c.Model.Name, APIKeyRef: string(c.Model.APIKey),
+			Embedding: embeddingWireOf(c.Model.Embedding),
 		},
 		Ego:   c.Ego,
 		Tools: tools,
@@ -212,4 +213,13 @@ func parseVersion(s string) (definition.Version, error) {
 		return 0, definition.ErrNotFound
 	}
 	return definition.Version(n), nil
+}
+
+// embeddingWireOf is an embeddings endpoint as the wire carries it, nil where there is none. Its
+// key is the reference to where it is held, as the model's is.
+func embeddingWireOf(e *definition.Embedding) *embedding {
+	if e == nil {
+		return nil
+	}
+	return &embedding{BaseURL: e.BaseURL, Name: e.Name, APIKeyRef: string(e.APIKey)}
 }

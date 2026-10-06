@@ -126,6 +126,9 @@ func config(ego string, tools definition.ToolPins) definition.Configuration {
 			BaseURL:  "https://api.anthropic.com",
 			Name:     "claude-opus-5-5",
 			APIKey:   "model-api-key/api-key",
+			Embedding: &definition.Embedding{
+				BaseURL: embeddingBaseURL, Name: embeddingName, APIKey: "model-api-key/api-key",
+			},
 		},
 		Ego:   ego,
 		Tools: tools,
@@ -133,6 +136,10 @@ func config(ego string, tools definition.ToolPins) definition.Configuration {
 }
 
 const (
+	// embeddingBaseURL and embeddingName are the embeddings endpoint config gives every model.
+	embeddingBaseURL = "https://embeddings.example/v1"
+	embeddingName    = "bge-base-en-v1.5"
+
 	// actor is the user every test's requests are made for.
 	actor = "grn:acme:default:user:7c1d"
 	// org is the organization every test's requests are made in, unless the test names another.
