@@ -9,8 +9,10 @@ import (
 
 // The ignore file's lines before and after #301, in order, as ignorefile.ReadAll returns them.
 var (
-	before = []string{"**", "!**/*.go", "**/*_test.go", "!internal/definition/repository/schema.sql", "!go.mod", "!go.sum"}
-	after  = []string{"**", "!**/*.go", "**/*_test.go", "!internal/definition/repository/migrations/*.up.sql", "!go.mod", "!go.sum"}
+	before = []string{"**", "!**/*.go", "**/*_test.go",
+		"!internal/definition/repository/schema.sql", "!go.mod", "!go.sum"}
+	after = []string{"**", "!**/*.go", "**/*_test.go",
+		"!internal/definition/repository/migrations/*.up.sql", "!go.mod", "!go.sum"}
 )
 
 func TestExcluded_NamesAnEmbeddedFileTheIgnoreFileLeavesOut(t *testing.T) {

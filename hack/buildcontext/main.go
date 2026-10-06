@@ -72,7 +72,8 @@ func run(root string, out, errOut io.Writer) int {
 	if len(missing) > 0 {
 		return 1
 	}
-	_, _ = fmt.Fprintf(out, "build context: %d embedded file(s), from %d package(s), all in the Docker build context %s leaves\n",
+	_, _ = fmt.Fprintf(out,
+		"build context: %d embedded file(s), from %d package(s), all in the Docker build context %s leaves\n",
 		len(files), packages, ignoreFile)
 	return 0
 }
