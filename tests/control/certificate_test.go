@@ -23,9 +23,9 @@ import (
 // returns its GRN and epoch.
 func managedAgent(t *testing.T) (agent, epoch string) {
 	t.Helper()
-	profile := publishProfile(t)
+	profile := publishProfile(t, real.orgID)
 	requestID := name(t, "create")
-	body := createAgentBody(requestID, real.controllerGRN, publishTemplate(t, profile), profile)
+	body := createAgentBody(requestID, real.controllerGRN, publishTemplate(t, real.orgID, profile), profile)
 	authority, err := mintCreate(requestID, body)
 	require.NoError(t, err)
 	status, created := createThroughConsole(t, authority, body)
