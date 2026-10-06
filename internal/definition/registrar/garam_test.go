@@ -18,6 +18,9 @@ import (
 
 const controller = "grn:acme:default:operator:k8s"
 
+// operationRef is the creation's reference every registration here sends.
+const operationRef = "ref-1"
+
 // sent is what the stand-in garam last received.
 type sent struct {
 	path     string
@@ -41,7 +44,7 @@ func register(t *testing.T, status int, answer string) (definition.Registered, s
 	r, err := registrar.NewGaram(machine).Register(context.Background(), definition.Registration{
 		Request:      definition.RequestKey{Organization: "acme", RequestID: "n1"},
 		Controller:   controller,
-		OperationRef: "ref-1",
+		OperationRef: operationRef,
 	})
 	return r, got, err
 }
@@ -111,7 +114,7 @@ func TestGaram_AnAnswerUnderAnotherContractOrNoneDecidesNothing(t *testing.T) {
 			t.Cleanup(server.Close)
 			_, err := registrar.NewGaram(garammachine.New(server.URL, server.Client())).Register(context.Background(),
 				definition.Registration{Request: definition.RequestKey{Organization: "acme", RequestID: "n1"},
-					Controller: controller, OperationRef: "ref-1"})
+					Controller: controller, OperationRef: operationRef})
 			if header != nil && *header == garammachine.ManagedEnrollment {
 				assert.NoError(t, err)
 				return

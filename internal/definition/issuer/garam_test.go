@@ -19,6 +19,11 @@ import (
 
 const agent = "grn:acme:default:agent:0a1b"
 
+// request is the certificate request every issuance here sends, and createRef its creation's reference.
+var request = definition.CertificateRequest{RequestID: "c1", Epoch: "3", CSRPEM: "csr"}
+
+const createRef = "create-ref"
+
 // issuedAnswer is garam's answer naming every field of an issued certificate.
 const issuedAnswer = `{"certificatePem":"cert","issuerPem":"issuer","serverRootPem":"root","notAfter":"2026-11-05T12:00:00Z"}`
 
@@ -44,8 +49,8 @@ func issue(t *testing.T, status int, answer string) (definition.IssuedCertificat
 	machine.Backoff = time.Millisecond
 	c, err := issuer.NewGaram(machine).Issue(context.Background(), definition.Issuance{
 		Agent:        agent,
-		Request:      definition.CertificateRequest{RequestID: "c1", Epoch: "3", CSRPEM: "csr"},
-		OperationRef: "create-ref",
+		Request:      request,
+		OperationRef: createRef,
 	})
 	return c, got, err
 }
@@ -135,8 +140,8 @@ func TestGaram_AnAnswerUnderAnotherContractOrNoneDecidesNothing(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			_, err := issuer.NewGaram(garammachine.New(server.URL, server.Client())).Issue(context.Background(),
-				definition.Issuance{Agent: agent, Request: definition.CertificateRequest{RequestID: "c1", Epoch: "3", CSRPEM: "csr"},
-					OperationRef: "create-ref"})
+				definition.Issuance{Agent: agent, Request: request,
+					OperationRef: createRef})
 			if header != nil && *header == garammachine.ManagedEnrollment {
 				assert.NoError(t, err)
 				return

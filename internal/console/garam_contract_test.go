@@ -21,6 +21,12 @@ import (
 // take, or under none, is refused under.
 const kindGaramContractUnsupported = "garam_contract_unsupported"
 
+// keyOperation and keyRequestID are members of garam's introspection answer.
+const (
+	keyOperation = "operation"
+	keyRequestID = "requestId"
+)
+
 // contractCase is how a garam double answers, and what the route then answers.
 type contractCase struct {
 	name     string
@@ -45,8 +51,8 @@ func introspectionGaram(t *testing.T, binding console.Binding, contract string, 
 	t.Helper()
 	wire := map[string]any{
 		"operationRef": binding.OperationRef, "grantId": binding.GrantID, "orgGrn": binding.Org,
-		"actorGrn": binding.Actor, "audienceGrn": binding.Audience, "operation": binding.Operation,
-		"targetGrn": binding.Target, "requestId": binding.RequestID, "bodySha256": binding.BodySHA256,
+		"actorGrn": binding.Actor, "audienceGrn": binding.Audience, keyOperation: binding.Operation,
+		"targetGrn": binding.Target, keyRequestID: binding.RequestID, "bodySha256": binding.BodySHA256,
 		"requestTarget": binding.RequestTarget, "expiresAt": binding.ExpiresAt.Format(time.RFC3339),
 	}
 	if binding.Assignment != nil {

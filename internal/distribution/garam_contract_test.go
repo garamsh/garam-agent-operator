@@ -22,6 +22,9 @@ import (
 // take, or under none, is refused under.
 const kindGaramContractUnsupported = "garam_contract_unsupported"
 
+// keyEpoch is the epoch's member in garam's proof of an agent.
+const keyEpoch = "epoch"
+
 // proofGaram stands in for garam's controller proof: it proves the controller, and each agent
 // asked about at epoch, under contract, or under no contract header where omit.
 func proofGaram(t *testing.T, contract string, omit bool) *garammachine.Client {
@@ -33,7 +36,7 @@ func proofGaram(t *testing.T, contract string, omit bool) *garammachine.Client {
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		proof := map[string]any{"operator": controller, "org": org}
 		if in.Agent != nil {
-			proof["agent"] = map[string]string{"grn": *in.Agent, "epoch": epoch}
+			proof["agent"] = map[string]string{"grn": *in.Agent, keyEpoch: epoch}
 		}
 		if !omit {
 			w.Header().Set("Garam-Contract-Version", contract)
@@ -73,9 +76,8 @@ func TestDesired_GaramsProofUnderAnotherContractOrNoneIsRefused503(t *testing.T)
 			server.StartTLS()
 			t.Cleanup(server.Close)
 			e.server = server
-			client, _ := clientWithLeaf(t, server, controller)
-
-			got := e.desired(t, client, "")
+			// Every httptest TLS server serves one certificate, so the env's client trusts this one.
+			got := e.desired(t, e.withCert, "")
 			assert.Equal(t, tc.status, got.status, got.message)
 			assert.Equal(t, tc.kind, got.kind)
 			if tc.status == http.StatusOK {
