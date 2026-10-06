@@ -635,3 +635,41 @@ var _ = Describe("Agent deletion", func() {
 			To(MatchError(apierrors.IsNotFound, "a not-found error"))
 	})
 })
+
+var _ = Describe("Memory-backed volumes", func() {
+	// tmpfs charges every file whole pages, and the kubelet evicts a Pod whose
+	// memory volume passes its sizeLimit (#265). A limit below a page evicts the
+	// Pod as soon as one file is written.
+	It("sizes every memory volume at least one page, and the placement volume to hold its token", func() {
+		name := "memory-volume-pages"
+		createSecret(credentialsSecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(agent)
+		_, err := reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		page := resource.NewQuantity(memoryPageBytes, resource.BinarySI)
+		var memory []string
+		for _, volume := range statefulSetFor(name).Spec.Template.Spec.Volumes {
+			if volume.EmptyDir == nil || volume.EmptyDir.Medium != corev1.StorageMediumMemory {
+				continue
+			}
+			memory = append(memory, volume.Name)
+			Expect(volume.EmptyDir.SizeLimit).NotTo(BeNil(), "memory volume %q has no limit", volume.Name)
+			Expect(volume.EmptyDir.SizeLimit.Cmp(*page)).To(BeNumerically(">=", 0),
+				"memory volume %q is limited below one %s page", volume.Name, page)
+			if volume.Name == placementVolumeName {
+				token, err := newPlacementToken()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(int64(len(token))).To(BeNumerically("<=", memoryPageBytes), "the token does not fit one page")
+				held := resource.NewQuantity(placementVolumeFiles*memoryPageBytes, resource.BinarySI)
+				Expect(volume.EmptyDir.SizeLimit.Cmp(*held)).To(BeNumerically(">=", 0),
+					"the placement volume cannot hold its token's pages")
+			}
+		}
+		// The check reached both memory volumes: the credentials copy, which
+		// passes it at its own size, and the placement copy.
+		Expect(memory).To(ConsistOf(credentialsVolumeName, placementVolumeName))
+	})
+})

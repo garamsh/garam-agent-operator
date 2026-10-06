@@ -92,6 +92,16 @@ const (
 	// is (sherlock@44aaa55:tools/message_send/message_send.go:108).
 	outboxDirMode = "0770"
 
+	// memoryPageBytes is the largest page a Linux node's kernel runs with (64 KiB
+	// on arm64 and ppc64le, 4 KiB on amd64). A memory volume is tmpfs, which
+	// charges each file whole pages, so its sizeLimit is counted in pages (#265).
+	memoryPageBytes = 64 << 10
+
+	// placementVolumeFiles is what the placement volume holds: the token, copied
+	// alone by the credentials init container (ADR 0042). The token is
+	// placementTokenBytes of randomness hex-encoded, 64 bytes, inside one page.
+	placementVolumeFiles = 1
+
 	// placementVolumeName holds the copy of the placement token, which only the
 	// adapter mounts; placementSecretVolumeName is the Secret's projection, which
 	// only the init container that copies it mounts.
@@ -559,7 +569,7 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{
 					Medium:    corev1.StorageMediumMemory,
-					SizeLimit: resource.NewQuantity(1<<10, resource.BinarySI),
+					SizeLimit: resource.NewQuantity(placementVolumeFiles*memoryPageBytes, resource.BinarySI),
 				},
 			},
 		})

@@ -1,6 +1,6 @@
 # ADR 0014: The image repository is immutable and a tag names one commit, and a deployment references the image by digest with the tag beside it
 
-> Status: accepted
+> Status: accepted; the index digest, and the commit hash as a release's tag, superseded by ADR-0051
 > Date: 2026-08-31
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

@@ -269,6 +269,29 @@ CONTROL_IMG ?= control:latest
 docker-build-control: ## Build docker image with the control service.
 	$(CONTAINER_TOOL) build --build-arg REVISION=$$(git rev-parse HEAD) -f build/control.Dockerfile -t ${CONTROL_IMG} .
 
+# The two images this project publishes, built for publishing and pushed by nothing
+# here (delivery.md, ADR 0051): the manager's from Dockerfile and the control
+# service's from build/control.Dockerfile, each one linux/amd64 manifest, tagged
+# locally garam-agent-operator:<REVISION> and garam-agent-operator-control:<REVISION>
+# and labelled with REVISION. The release workflow and the manual procedure for a
+# development image both build through this target, then tag and push what it built.
+#
+# The default driver writes each image into the local image store, where `docker
+# push` finds it. BUILDX_NO_DEFAULT_ATTESTATIONS turns off the provenance and SBOM
+# attestations buildx attaches by default, which are carried in an index over the
+# image, so the digest a deployment pins names the image itself. It is set in the
+# environment rather than as `--provenance=false --sbom=false` because a builder
+# that does not know it ignores it, where the flags fail the build — the reasoning
+# sherlock@b3c05c2:Makefile records for its own target.
+REVISION ?= $(shell git rev-parse HEAD 2>/dev/null)
+IMAGE_PLATFORM = linux/amd64
+
+.PHONY: build-images
+build-images: ## Build the manager's and the control service's images to publish, one linux/amd64 manifest each, and push nothing.
+	@test -n "$(REVISION)" || { echo "build-images: REVISION is empty; pass one: make build-images REVISION=<commit>"; exit 1; }
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -t garam-agent-operator:$(REVISION) .
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/control.Dockerfile -t garam-agent-operator-control:$(REVISION) .
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
