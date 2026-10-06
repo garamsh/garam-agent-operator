@@ -104,8 +104,9 @@ setup-test-e2e: kind ## Set up a Kind cluster for e2e tests if it does not exist
 # Builds cmd/control and runs it against a PostgreSQL container testcontainers-go
 # starts on the Docker daemon DOCKER_HOST names; it needs no cluster.
 .PHONY: test-e2e-control
-test-e2e-control: ## Run the control service's e2e tests: the built binary against a PostgreSQL container.
-	go test -tags=e2e ./tests/control/ -v -count=1
+test-e2e-control: garam-e2e ## Run the control service's e2e tests: the built binary against PostgreSQL and garam at GARAM_REVISION.
+	GARAM_BIN_DIR="$(GARAM_DIR)" GARAM_MIGRATIONS_DIR="$(GARAM_DIR)/src/migrations" \
+		go test -tags=e2e ./tests/control/ -v -count=1
 
 .PHONY: test-e2e
 test-e2e: test-e2e-control setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
@@ -355,6 +356,26 @@ undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.
 LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
 	mkdir -p "$(LOCALBIN)"
+
+# The garam the control e2e suite runs against, built from garamsh/garam at
+# GARAM_REVISION into a directory named for it: `garam`, and the test-principal
+# fixture that prepares its database (tests/testprincipal/README.md §Invocation
+# at that commit). garamsh/garam is private, so the fetch needs git credentials
+# that can read it. The PM moves the pin by hand and reviews it at each
+# promotion to main; no Dependabot ecosystem reads a Makefile variable.
+GARAM_REVISION ?= 7ca51b94d670f0345f58645058930b02e6904006
+GARAM_REPOSITORY ?= https://github.com/garamsh/garam.git
+GARAM_DIR = $(LOCALBIN)/garam-$(GARAM_REVISION)
+
+.PHONY: garam-e2e
+garam-e2e: $(GARAM_DIR)/garam ## Build garam and its test-principal fixture at GARAM_REVISION for the control e2e suite.
+
+$(GARAM_DIR)/garam:
+	rm -rf "$(GARAM_DIR)" && mkdir -p "$(GARAM_DIR)/src"
+	git -C "$(GARAM_DIR)/src" init --quiet
+	git -C "$(GARAM_DIR)/src" fetch --quiet --depth 1 "$(GARAM_REPOSITORY)" $(GARAM_REVISION)
+	git -C "$(GARAM_DIR)/src" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
+	cd "$(GARAM_DIR)/src" && go build -o ../testprincipal ./tests/testprincipal && go build -o ../garam ./cmd/garam
 
 ## Tool Binaries
 # kubectl is not pinned the way the tools below are: k8s.io/kubernetes carries
