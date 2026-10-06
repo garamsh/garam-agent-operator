@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/garamsh/garam-agent-operator/internal/console"
 	"github.com/garamsh/garam-agent-operator/internal/definition"
@@ -512,4 +513,47 @@ func corsHeaders(h http.Header) http.Header {
 		}
 	}
 	return out
+}
+
+func TestTemplateVersion_AnswersTheEmbeddingWhereTheModelNamesOne(t *testing.T) {
+	e := newEnv(t)
+	require.Equal(t, http.StatusCreated, e.publishAs(t, "p1", e.publishBody("p1", "with embedding"), nil).status)
+	mock := testConfiguration("offline", keyRef)
+	model := mock["model"].(map[string]any)
+	model["provider"] = "mock"
+	delete(model, "embedding")
+	require.Equal(t, http.StatusCreated,
+		e.publishAs(t, "p2", publishBodyOf("p2", versionOf(e.profile.Name, int64(e.profile.Version)), mock), nil).status)
+
+	read := func(version string) map[string]any {
+		c := request{http.MethodGet, "/v1/orgs/" + org + "/templates/" + templateName + "/versions/" + version, nil}
+		got := e.send(t, c, e.bound(c, console.OperationTemplateRead, orgTarget, nil), nil)
+		require.Equal(t, http.StatusOK, got.status, got.message)
+		return got.body["configuration"].(map[string]any)["model"].(map[string]any)
+	}
+	assert.Equal(t, map[string]any{"baseUrl": embeddingBaseURL, "name": embeddingName, "apiKeyRef": "embeddings/key"},
+		read("1")["embedding"])
+
+	// Control: version 2, the mock naming none, answers no embedding rather than an empty one.
+	assert.NotContains(t, read("2"), "embedding")
+}
+
+func TestProfileVersion_AnswersTheWorkspaceSizeWhereTheProfileNamesOne(t *testing.T) {
+	e := newEnv(t)
+	workspace := resource.MustParse("5Gi")
+	_, err := e.definitions.PublishProfile(context.Background(), org, "large", definition.ExecutionSettings{
+		StorageSize: resource.MustParse("1Gi"), WorkspaceStorageSize: &workspace,
+	})
+	require.NoError(t, err)
+
+	read := func(name string) map[string]any {
+		c := request{http.MethodGet, "/v1/orgs/" + org + "/profiles/" + name + "/versions/1", nil}
+		got := e.send(t, c, e.bound(c, console.OperationProfileRead, orgTarget, nil), nil)
+		require.Equal(t, http.StatusOK, got.status, got.message)
+		return got.body
+	}
+	assert.Equal(t, "5Gi", read("large")["workspaceStorageSize"])
+
+	// Control: the env's profile names no workspace size, and answers none.
+	assert.NotContains(t, read(e.profile.Name), "workspaceStorageSize")
 }

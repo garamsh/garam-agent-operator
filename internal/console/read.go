@@ -38,6 +38,8 @@ type (
 		Resources        corev1.ResourceRequirements `json:"resources"`
 		StorageSize      string                      `json:"storageSize"`
 		StorageClassName *string                     `json:"storageClassName"`
+		// WorkspaceStorageSize is absent where the profile leaves the workspace claim to StorageSize.
+		WorkspaceStorageSize *string `json:"workspaceStorageSize,omitempty"`
 	}
 	executionAnswer struct {
 		Desired   desiredExecution    `json:"desired"`
@@ -156,11 +158,16 @@ func (s *server) getProfile(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, profileAnswer{
+	answer := profileAnswer{
 		Name: p.Name, Version: int64(p.Version),
 		Resources: p.Settings.Resources, StorageSize: p.Settings.StorageSize.String(),
 		StorageClassName: p.Settings.StorageClassName,
-	})
+	}
+	if size := p.Settings.WorkspaceStorageSize; size != nil {
+		workspace := size.String()
+		answer.WorkspaceStorageSize = &workspace
+	}
+	writeJSON(w, http.StatusOK, answer)
 }
 
 func (s *server) execution(w http.ResponseWriter, r *http.Request) {
