@@ -19,6 +19,9 @@ const (
 	// recoverPass is how often the recoverer looks for recoveries to take a step.
 	recoverPass = time.Second
 
+	// pemCertificate is the PEM block type of a certificate.
+	pemCertificate = "CERTIFICATE"
+
 	// preparedWait is how long a prepared recovery waits before it is asked
 	// about again: until an administrator finalizes it, there is nothing new.
 	preparedWait = 10 * time.Second
@@ -357,7 +360,7 @@ func pemBlocks(data []byte) []*pem.Block {
 		if block == nil {
 			return blocks
 		}
-		if block.Type == "CERTIFICATE" {
+		if block.Type == pemCertificate {
 			blocks = append(blocks, block)
 		}
 	}

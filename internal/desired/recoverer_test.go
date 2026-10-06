@@ -47,7 +47,7 @@ func newAuthority(t *testing.T, name string) authority {
 	certificate, err := x509.ParseCertificate(der)
 	g.Expect(err).NotTo(HaveOccurred())
 
-	return authority{certificate: certificate, key: key, pem: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}
+	return authority{certificate: certificate, key: key, pem: pem.EncodeToMemory(&pem.Block{Type: pemCertificate, Bytes: der})}
 }
 
 // sign issues a certificate naming grn over the key in csrPEM, as garam signs a recovery.
@@ -71,7 +71,7 @@ func (a authority) sign(csrPEM []byte, grn string) ([]byte, error) {
 		return nil, err
 	}
 
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), nil
+	return pem.EncodeToMemory(&pem.Block{Type: pemCertificate, Bytes: der}), nil
 }
 
 // recoveryStore is a RecoveryStore in memory, holding one managed agent's placed credential.

@@ -6,20 +6,23 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr/funcr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/garamsh/garam-agent-operator/internal/desired"
 )
 
 // managerStore is the manager's recovery store in memory, holding one agent's first credential
-// as the issuer placed it.
+// as the issuer placed it, and nothing of any other agent.
 type managerStore struct {
 	mu                  sync.Mutex
 	agent               string
@@ -38,26 +41,29 @@ func (m *managerStore) Recovering(context.Context) ([]string, error) {
 	return []string{m.agent}, nil
 }
 
-func (m *managerStore) LoadRecovery(context.Context, string) (desired.PendingRequest, bool, error) {
+func (m *managerStore) LoadRecovery(_ context.Context, agent string) (desired.PendingRequest, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.request == nil {
+	if agent != m.agent || m.request == nil {
 		return desired.PendingRequest{}, false, nil
 	}
 	return *m.request, true, nil
 }
 
-func (m *managerStore) SaveRecovery(_ context.Context, _ string, request desired.PendingRequest) error {
+func (m *managerStore) SaveRecovery(_ context.Context, agent string, request desired.PendingRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if agent != m.agent {
+		return fmt.Errorf("the store holds no credential of %s", agent)
+	}
 	if m.request == nil {
 		m.request = &request
 	}
 	return nil
 }
 
-func (m *managerStore) KeptIssuer(context.Context, string) ([]byte, bool, error) {
-	return m.issuer, true, nil
+func (m *managerStore) KeptIssuer(_ context.Context, agent string) ([]byte, bool, error) {
+	return m.issuer, agent == m.agent, nil
 }
 
 func (m *managerStore) RefuseRecovery(_ context.Context, _, reason string) error {
@@ -103,7 +109,9 @@ func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
 	client := desired.NewClient(strings.TrimPrefix(attachedURL, "https://"),
 		real.feedClient().Transport.(*http.Transport).TLSClientConfig)
 	recoverer := desired.NewRecoverer(client, store)
-	ctx, cancel := context.WithCancel(context.Background())
+	// The recoverer's log is the test's, so a failure shows what it met.
+	logged := funcr.New(func(prefix, args string) { t.Log(prefix, args) }, funcr.Options{})
+	ctx, cancel := context.WithCancel(logf.IntoContext(context.Background(), logged))
 	stopped := make(chan struct{})
 	go func() {
 		_ = recoverer.Start(ctx)
@@ -132,7 +140,8 @@ func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
 	}
 	require.Equal(t, desired.OpenRecovery{RequestID: recoveryID, Epoch: epoch}, offered[grn],
 		"the manager's client does not read the open recovery off the feed")
-	recoverer.Offer(offered)
+	// Earlier tests leave other agents' recoveries open; this manager holds none of their credentials.
+	recoverer.Offer(map[string]desired.OpenRecovery{grn: offered[grn]})
 
 	// The recoverer persists its request and prepares the recovery with it.
 	require.Eventually(t, func() bool { return readRecovery(t, grn)["stage"] == "prepared" }, time.Minute, time.Second,
