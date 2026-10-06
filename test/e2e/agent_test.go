@@ -591,12 +591,20 @@ var _ = Describe("Agent workload", Ordered, func() {
 		_, err := kubectlIn("create", "secret", "generic", stuckSecret, "--from-literal=token="+credentialsToken)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { _, _ = kubectlIn("delete", "secret", stuckSecret, "--ignore-not-found") })
+		// Runs after deleteAgent below. Where the fence held the Pod, which is
+		// this spec failing, it releases both finalizers by hand so that undeploy
+		// is not left holding a namespace nothing will release (#287).
+		DeferCleanup(func() {
+			for _, object := range []string{"pod/" + stuckPod, "agent/" + stuck} {
+				_, _ = kubectlIn("patch", object, "--type", "merge", "-p", `{"metadata":{"finalizers":null}}`)
+			}
+		})
 		apply := exec.Command("kubectl", "apply", "-f", "-")
 		apply.Stdin = strings.NewReader(strings.Replace(agentManifestFor(stuck, agentImage),
 			"credentialsSecretName: "+credentialsSecret, "credentialsSecretName: "+stuckSecret, 1))
 		_, err = utils.Run(apply)
 		Expect(err).NotTo(HaveOccurred())
-		// Registered after the Secret's cleanup, so it runs first, while the
+		// Registered after both cleanups above, so it runs first, while the
 		// manager runs.
 		DeferCleanup(func() { deleteAgent(stuck) })
 		podField := func(path string) (string, error) {
