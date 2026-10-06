@@ -632,6 +632,127 @@ func scanPlacement(row pgx.Row, agent definition.GRN) (*definition.Placement, er
 	return &p, nil
 }
 
+func (p *Postgres) CurrentPlacement(ctx context.Context, agent definition.GRN) (definition.Placement, error) {
+	placement, err := scanPlacement(p.pool.QueryRow(ctx, currentPlacement, string(agent)), agent)
+	if err != nil {
+		return definition.Placement{}, storeError("get current placement", err)
+	}
+	if placement == nil {
+		return definition.Placement{}, definition.ErrNotFound
+	}
+	return *placement, nil
+}
+
+// WithAgentLock holds a session advisory lock on one connection for as long as fn runs, so every
+// instance of the service sharing the database waits on the same lock.
+func (p *Postgres) WithAgentLock(ctx context.Context, agent definition.GRN, fn func(context.Context) error) error {
+	conn, err := p.pool.Acquire(ctx)
+	if err != nil {
+		return storeError("acquire the activation lock's connection", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, lockAgent, string(agent)); err != nil {
+		return storeError("take the agent's activation lock", err)
+	}
+	// Released on a context of its own: the request's may already be done.
+	defer func() { _, _ = conn.Exec(context.WithoutCancel(ctx), unlockAgent, string(agent)) }()
+	return fn(ctx)
+}
+
+func (p *Postgres) InsertActivation(ctx context.Context, a definition.Activation) (definition.Activation, error) {
+	r := a.Request
+	stored, err := scanActivation(p.pool.QueryRow(ctx, insertActivation, string(a.Agent), r.RequestID, r.Epoch, r.Generation,
+		int64(r.ConfigRevision), r.PlacementPodUID, a.ReplacesActivationID, a.OperationRef), a.Agent)
+	if err != nil {
+		return definition.Activation{}, storeError("insert activation request", err)
+	}
+	return stored, nil
+}
+
+func (p *Postgres) GetActivation(ctx context.Context, agent definition.GRN, requestID string) (definition.Activation, error) {
+	stored, err := scanActivation(p.pool.QueryRow(ctx, getActivation, string(agent), requestID), agent)
+	if err != nil {
+		return definition.Activation{}, storeError("get activation request", notFound("get activation request", err))
+	}
+	return stored, nil
+}
+
+func (p *Postgres) RecordActivation(ctx context.Context, agent definition.GRN, requestID, activationID string) error {
+	err := p.inTx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, recordActivation, string(agent), requestID, activationID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return definition.ErrActivationMismatch
+		}
+		_, err = tx.Exec(ctx, recordLatestActivation, string(agent), activationID)
+		return err
+	})
+	if errors.Is(err, definition.ErrActivationMismatch) {
+		return err
+	}
+	if err != nil {
+		return storeError("record activation", err)
+	}
+	return nil
+}
+
+func (p *Postgres) LatestActivation(ctx context.Context, agent definition.GRN) (string, error) {
+	var latest string
+	if err := p.pool.QueryRow(ctx, latestActivation, string(agent)).Scan(&latest); err != nil {
+		return "", storeError("get latest activation", notFound("get latest activation", err))
+	}
+	return latest, nil
+}
+
+func (p *Postgres) ActivationOfGeneration(ctx context.Context, agent definition.GRN, generation string) (string, error) {
+	var activation string
+	if err := p.pool.QueryRow(ctx, activationOfGeneration, string(agent), generation).Scan(&activation); err != nil {
+		return "", storeError("get activation of generation", notFound("get activation of generation", err))
+	}
+	return activation, nil
+}
+
+func (p *Postgres) ConfigureReference(ctx context.Context, agent definition.GRN, revision definition.Revision) (string, error) {
+	var ref string
+	if err := p.pool.QueryRow(ctx, configureReference, string(agent), int64(revision)).Scan(&ref); err != nil {
+		return "", storeError("get configure reference", notFound("get configure reference", err))
+	}
+	return ref, nil
+}
+
+func (p *Postgres) RecordRuntimeApplied(ctx context.Context, agent definition.GRN, applied definition.RuntimeApplied) error {
+	if _, err := p.pool.Exec(ctx, recordRuntimeApplied, string(agent), int64(applied.Revision), applied.ActivationID); err != nil {
+		return storeError("record runtime applied", err)
+	}
+	return nil
+}
+
+func (p *Postgres) GetRuntimeApplied(ctx context.Context, agent definition.GRN) (definition.RuntimeApplied, error) {
+	var (
+		revision   int64
+		activation string
+	)
+	if err := p.pool.QueryRow(ctx, getRuntimeApplied, string(agent)).Scan(&revision, &activation); err != nil {
+		return definition.RuntimeApplied{}, storeError("get runtime applied", notFound("get runtime applied", err))
+	}
+	return definition.RuntimeApplied{Revision: definition.Revision(revision), ActivationID: activation}, nil
+}
+
+// scanActivation reads one activation_requests row.
+func scanActivation(row pgx.Row, agent definition.GRN) (definition.Activation, error) {
+	a := definition.Activation{Agent: agent}
+	r := &a.Request
+	var revision int64
+	if err := row.Scan(&r.RequestID, &r.Epoch, &r.Generation, &revision, &r.PlacementPodUID,
+		&a.ReplacesActivationID, &a.OperationRef, &a.ActivationID); err != nil {
+		return definition.Activation{}, err
+	}
+	r.ConfigRevision = definition.Revision(revision)
+	return a, nil
+}
+
 // inTx runs fn in one transaction, committed when fn returns nil.
 func (p *Postgres) inTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	return pgx.BeginFunc(ctx, p.pool, fn)

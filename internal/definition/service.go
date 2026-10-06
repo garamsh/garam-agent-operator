@@ -14,6 +14,12 @@ type Service interface {
 	RecordStatus(ctx context.Context, agent GRN, observed, rendered Revision) (Status, error)
 	RequestInitialCertificate(ctx context.Context, in InitialCertificateInput) (c InitialCertificate, first bool, err error)
 	RegisterPlacement(ctx context.Context, in PlacementInput) (p Placement, first bool, err error)
+	CurrentPlacement(ctx context.Context, agent GRN) (Placement, error)
+	WithActivationLock(ctx context.Context, agent GRN, fn func(context.Context) error) error
+	PrepareActivation(ctx context.Context, agent GRN, req ActivationRequest) (Activation, error)
+	RecordActivation(ctx context.Context, agent GRN, requestID, activationID string) error
+	ActivationOfGeneration(ctx context.Context, agent GRN, generation string) (string, error)
+	RecordRuntimeStatus(ctx context.Context, agent GRN, activationID, configRevision string, serving bool) error
 }
 
 type service struct {

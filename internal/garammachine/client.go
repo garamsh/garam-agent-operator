@@ -21,6 +21,8 @@ const (
 	OperationAuthority = "operation-authority.v1"
 	// ManagedEnrollment is the contract of managed create (garam@7ca51b9).
 	ManagedEnrollment = "managed-enrollment.v1"
+	// ExecutionFence is the contract of garam's activation and execution introspection.
+	ExecutionFence = "execution-fence.v1"
 
 	// maxAnswerBytes bounds an answer read from garam.
 	maxAnswerBytes = 1 << 20

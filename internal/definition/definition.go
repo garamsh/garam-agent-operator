@@ -322,6 +322,10 @@ var (
 	// as SecretRef states it, which the manager could not render.
 	ErrInvalidSecretRef = errors.New("model key reference is not <secret-name>/<key>")
 
+	// ErrActivationMismatch is returned when garam answers a stored activation request with
+	// another activation than the one recorded for it.
+	ErrActivationMismatch = errors.New("garam answered another activation for the request")
+
 	// ErrPlacementSuperseded is returned for a placement registration naming a Pod whose
 	// placement was replaced. Nothing revives it: not a repeat, and not a refresh of its leaf.
 	ErrPlacementSuperseded = errors.New("the placement was superseded")
@@ -488,4 +492,33 @@ func DecidePlacement(current, same *Placement, in PlacementInput) (PlacementActi
 		return 0, ErrEvidenceMissing
 	}
 	return PlacementRegister, nil
+}
+
+// ActivationRequest is an activation as the agent's adapter asks for it, on the placement it was
+// asked on. The adapter derives RequestID from the rest, so one intent has one identifier;
+// two requests under one identifier are the same request only when every field is equal.
+type ActivationRequest struct {
+	RequestID       string
+	Epoch           string
+	Generation      string
+	ConfigRevision  Revision
+	PlacementPodUID string
+}
+
+// Activation is a stored activation request with what it sends garam. ReplacesActivationID and
+// OperationRef are fixed when it is first stored, so every attempt sends garam the same request;
+// either is empty where garam is sent null. ActivationID is empty until garam answers.
+type Activation struct {
+	Agent                GRN
+	Request              ActivationRequest
+	ReplacesActivationID string
+	OperationRef         string
+	ActivationID         string
+}
+
+// RuntimeApplied is the revision the agent's runtime last reported effective, and the activation
+// it reported it under.
+type RuntimeApplied struct {
+	Revision     Revision
+	ActivationID string
 }
