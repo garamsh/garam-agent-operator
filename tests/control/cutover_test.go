@@ -164,7 +164,7 @@ func releasedCutovers(t *testing.T) map[string]string {
 func TestCutover_ImportFreezeSwitchReleasesALegacyAgentAgainstGaram(t *testing.T) {
 	agent := legacyAgent(t)
 	pair := legacyCertificate(t, agent)
-	profile := publishProfile(t)
+	profile := publishProfile(t, real.orgID)
 
 	status, imported := importLegacy(t, agent, profile)
 	require.Equal(t, http.StatusCreated, status, imported)
@@ -222,7 +222,7 @@ func TestCutover_ImportFreezeSwitchReleasesALegacyAgentAgainstGaram(t *testing.T
 
 func TestCutover_RollbackFromFrozenAgainstGaram(t *testing.T) {
 	agent := legacyAgent(t)
-	status, imported := importLegacy(t, agent, publishProfile(t))
+	status, imported := importLegacy(t, agent, publishProfile(t, real.orgID))
 	require.Equal(t, http.StatusCreated, status, imported)
 	freezeID := name(t, "freeze")
 	status, frozen := runStage(t, agent, "freeze", requestBody(t, stageBody{freezeID}), freezeID)

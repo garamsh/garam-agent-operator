@@ -15,7 +15,8 @@ const legacyAgent = definition.GRN("grn:acme:default:agent:1e9ac1")
 func (f fixture) importLegacy(t *testing.T) {
 	t.Helper()
 	_, first, err := f.service.ImportCutover(context.Background(), definition.CutoverImport{
-		Agent: legacyAgent, ImportID: "i1", Epoch: "3", Assignee: k8s, SourceDigest: "d", Profile: f.profile,
+		Agent: legacyAgent, Organization: org, ImportID: "i1", Epoch: "3", Assignee: k8s, SourceDigest: "d",
+		Profile: f.profile,
 	})
 	require.NoError(t, err)
 	require.True(t, first)
@@ -59,9 +60,36 @@ func TestCutover_AnAgentDefinedHereIsNotImported(t *testing.T) {
 	_, _, err := f.service.CreateAgent(ctx, f.create("r1", f.template))
 	require.NoError(t, err)
 
-	_, _, err = f.service.ImportCutover(ctx, definition.CutoverImport{Agent: firstAgent, ImportID: "i1", Profile: f.profile})
+	_, _, err = f.service.ImportCutover(ctx, definition.CutoverImport{
+		Agent: firstAgent, Organization: org, ImportID: "i1", Profile: f.profile,
+	})
 	require.ErrorIs(t, err, definition.ErrAlreadyDefined)
 
 	// Control: an agent with no definition here is imported.
 	f.importLegacy(t)
+}
+
+func TestCutover_AnotherOrganizationsProfileRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	imp := definition.CutoverImport{
+		Agent: legacyAgent, Organization: globex, ImportID: "i1", Epoch: "3", Assignee: k8s, SourceDigest: "d",
+		Profile: f.profile,
+	}
+
+	// f.profile is published in org only.
+	_, _, err := f.service.ImportCutover(ctx, imp)
+	require.ErrorIs(t, err, definition.ErrNotFound)
+	_, err = f.service.GetDefinition(ctx, legacyAgent)
+	require.ErrorIs(t, err, definition.ErrNotFound)
+
+	// Control: once globex publishes a profile under that name and version, the same import is stored.
+	_, err = f.service.PublishProfile(ctx, globex, f.profile.Name, settings("1", "2Gi"))
+	require.NoError(t, err)
+	_, first, err := f.service.ImportCutover(ctx, imp)
+	require.NoError(t, err)
+	assert.True(t, first)
+	d, err := f.service.GetDefinition(ctx, legacyAgent)
+	require.NoError(t, err)
+	assert.Equal(t, globex, d.Organization)
 }
