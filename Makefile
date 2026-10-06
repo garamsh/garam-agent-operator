@@ -246,13 +246,29 @@ verify-pins: ## Report every SHA-pinned action and fail when its version comment
 	[ "$$resolved" -gt 0 ] || { echo "pin check: $$total \`uses:\` lines and not one pin to resolve, so nothing was compared" >&2; exit 1; }; \
 	echo "pin check: $$total action pins across $$files tracked YAML files, $$resolved distinct tags resolved, every version comment names the SHA beside it"
 
+# go.mod's `go 1.26.0` admits `go mod tidy -diff` (added in Go 1.23): it prints
+# what `go mod tidy` would change in go.mod and go.sum and exits non-zero, and
+# writes neither, so the check leaves the tree as it found it whether it passes
+# or fails. A non-zero exit with no diff is tidy failing to run (a module it
+# could not fetch, say), which is reported as unchecked rather than as untidy.
+# The status is taken with `||` because the recipe shell runs with -e.
+.PHONY: verify-tidy
+verify-tidy: ## Fail when go.mod or go.sum is not what `go mod tidy` writes, naming the fix.
+	@status=0; diff=$$(go mod tidy -diff) || status=$$?; \
+	if [ "$$status" -eq 0 ]; then echo "tidy check: go mod tidy -diff changes nothing in go.mod or go.sum"; exit 0; fi; \
+	if [ -z "$$diff" ]; then echo "tidy check: go mod tidy -diff exited $$status without a diff, so tidiness was not checked" >&2; exit 1; fi; \
+	printf '%s\n' "$$diff" >&2; \
+	echo "tidy check: go.mod or go.sum is not tidy. Run \`go mod tidy\` and commit what it changes." >&2; exit 1
+
 # The single name for the whole check set. CI invokes this target, not the
 # commands inside it. `lint` runs before `fmt` so unformatted code fails the
-# check instead of being rewritten and passing. `verify-pins` runs last because
+# check instead of being rewritten and passing. `verify-tidy` runs first: it is
+# quick, and an untidy module is a fault in the change, not in the code the rest
+# of the set reads. `verify-pins` runs last because
 # it is the one step that needs the network, and a contributor who cannot reach
 # github.com cannot push what the rest of the set just cleared either.
 .PHONY: ci
-ci: lint-config lint fmt test build verify-pins ## Run the whole check set — lint, format, test, build.
+ci: verify-tidy lint-config lint fmt test build verify-pins ## Run the whole check set — module tidiness, lint, format, test, build.
 
 ##@ Build
 
