@@ -392,3 +392,49 @@ func count(t *testing.T, query string, args ...any) int {
 	require.NoError(t, pool.QueryRow(context.Background(), query, args...).Scan(&n))
 	return n
 }
+
+func TestCreate_AnotherOrganizationsTemplateOrProfileAnswersNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		// names publishes the template and profile the request names, one of them only in other,
+		// and returns publish, which publishes that one in garam's organization too.
+		names func(t *testing.T, other string) (template, profile string, publish func())
+	}{
+		{"another organization's template", func(t *testing.T, other string) (string, string, func()) {
+			own := publishProfile(t, real.orgID)
+			template := publishTemplate(t, other, publishProfile(t, other))
+			return template, own, func() {
+				require.NoError(t, execute(t, `INSERT INTO templates
+    (organization, name, version, profile_name, profile_version, config)
+VALUES ($1, $2, 1, $3, 1, '{"ego":"created"}')`, real.orgID, template, own))
+			}
+		}},
+		{"another organization's profile", func(t *testing.T, other string) (string, string, func()) {
+			template := publishTemplate(t, real.orgID, publishProfile(t, real.orgID))
+			profile := publishProfile(t, other)
+			return template, profile, func() { require.NoError(t, insertProfile(t, real.orgID, profile)) }
+		}},
+	}
+	for _, tt := range tests {
+		// The parent's name: a subtest's holds a '/', which garam's request ids refuse.
+		requestID := name(t, "create")
+		t.Run(tt.name, func(t *testing.T) {
+			template, profile, publish := tt.names(t, name(t, "organization"))
+			body := createAgentBody(requestID, real.controllerGRN, template, profile)
+
+			authority, err := mintCreate(requestID, body)
+			require.NoError(t, err)
+			status, refused := createThroughConsole(t, authority, body)
+			assert.Equal(t, http.StatusNotFound, status, refused)
+			assert.Equal(t, 0, count(t, "SELECT count(*) FROM creations WHERE organization = $1 AND request_id = $2",
+				real.orgID, requestID), "a refused creation was stored")
+
+			// Control: once garam's organization publishes the name, the same request creates the agent.
+			publish()
+			retry, err := mintCreate(requestID, body)
+			require.NoError(t, err)
+			status, created := createThroughConsole(t, retry, body)
+			assert.Equal(t, http.StatusCreated, status, created)
+		})
+	}
+}
