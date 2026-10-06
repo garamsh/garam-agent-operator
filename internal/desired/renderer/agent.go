@@ -5,18 +5,17 @@ package renderer
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 	"github.com/garamsh/garam-agent-operator/internal/agentname"
 	"github.com/garamsh/garam-agent-operator/internal/desired"
+	"github.com/garamsh/garam-agent-operator/internal/secretref"
 )
 
 // fieldOwnerName is the field manager every write the renderer makes to an Agent is
@@ -144,12 +143,8 @@ func (a *Agent) specOf(agent desired.Agent) (agentv1alpha1.AgentSpec, error) {
 }
 
 // modelOf is the model a revision configures, nil where it configures none. Its
-// key reference is "<secret-name>/<key>" in the Agent's namespace, each part as
-// Kubernetes allows it: the name a DNS subdomain and the key [-._a-zA-Z0-9]+ and
-// neither "." nor ".." (k8s.io/apimachinery@v0.36.0 pkg/util/validation
-// IsDNS1123Subdomain and IsConfigMapKey). The control service applies the same
-// rule to what it stores (its definition.SecretRef); the manager imports nothing
-// of that binary, so each side states the rule itself.
+// key reference is "<secret-name>/<key>" in the Agent's namespace, as
+// secretref.Parse states it for this binary and the control service both.
 func modelOf(model desired.Model) (*agentv1alpha1.ModelSpec, error) {
 	if model == (desired.Model{}) {
 		return nil, nil
@@ -189,11 +184,10 @@ func modelOf(model desired.Model) (*agentv1alpha1.ModelSpec, error) {
 // endpoint.
 const mockProvider = "mock"
 
-// secretKeyOf reads a "<secret-name>/<key>" reference as modelOf states the rule.
+// secretKeyOf reads a "<secret-name>/<key>" reference, as secretref.Parse states the form.
 func secretKeyOf(ref string) (*agentv1alpha1.SecretKeyReference, error) {
-	// A reference with no "/" leaves the key empty, which IsConfigMapKey refuses.
-	secret, key, _ := strings.Cut(ref, "/")
-	if len(validation.IsDNS1123Subdomain(secret)) > 0 || len(validation.IsConfigMapKey(key)) > 0 {
+	secret, key, err := secretref.Parse(ref)
+	if err != nil {
 		return nil, fmt.Errorf("%w: API key reference %q is not <secret-name>/<key>", desired.ErrMalformed, ref)
 	}
 
