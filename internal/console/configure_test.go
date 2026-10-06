@@ -120,7 +120,7 @@ func TestConfigure_BoundFieldMismatchRefused(t *testing.T) {
 	}{
 		{"audience", func(b *console.Binding) { b.Audience = "grn:root:default:operator:other" }},
 		{"organization", func(b *console.Binding) { b.Org = "grn:root:default:org:other" }},
-		{"operation", func(b *console.Binding) { b.Operation = "agent:create" }},
+		{"operation", func(b *console.Binding) { b.Operation = operationCreate }},
 		{"target", func(b *console.Binding) { b.Target = "grn:acme:default:agent:9f2ac1b40d8e7a35" }},
 		{"request id", func(b *console.Binding) { b.RequestID = "other" }},
 		{"assignment", func(b *console.Binding) { b.Assignment = nil }},

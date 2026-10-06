@@ -6,6 +6,12 @@ import "context"
 type Service interface {
 	PublishProfile(ctx context.Context, org, name string, settings ExecutionSettings) (Profile, error)
 	PublishTemplate(ctx context.Context, org string, t Template) (Template, error)
+	Publish(ctx context.Context, in PublishInput) (p Publication, created bool, err error)
+	ListTemplates(ctx context.Context, org string) ([]Template, error)
+	GetTemplate(ctx context.Context, org string, ref TemplateRef) (Template, error)
+	ListProfiles(ctx context.Context, org string) ([]ProfileRef, error)
+	GetProfile(ctx context.Context, org string, ref ProfileRef) (Profile, error)
+	Execution(ctx context.Context, org string, agent GRN) (Execution, error)
 	CreateAgent(ctx context.Context, in CreateInput) (created Creation, first bool, err error)
 	Configure(ctx context.Context, in ConfigureInput) (Applied, error)
 	GetDefinition(ctx context.Context, agent GRN) (Definition, error)

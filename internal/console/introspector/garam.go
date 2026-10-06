@@ -38,7 +38,8 @@ type bindingJSON struct {
 	Assignment   *assignmentJSON `json:"assignment"`
 	RequestID    string          `json:"requestId"`
 	BodySHA256   string          `json:"bodySha256"`
-	// RequestTarget is present for agent:cutover (garam@1a5273d), absent where the operation binds none.
+	// RequestTarget is present for agent:cutover (garam@1a5273d) and for the reads and the
+	// publication (garam@33b1c41), absent where the operation binds none.
 	RequestTarget string     `json:"requestTarget"`
 	ExpiresAt     *time.Time `json:"expiresAt"`
 }

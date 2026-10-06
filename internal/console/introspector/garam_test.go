@@ -108,3 +108,27 @@ func TestGaram_ContractErrorIsNotARefusal(t *testing.T) {
 	assert.NotErrorIs(t, err, console.ErrAuthorityUndecided)
 	assert.Equal(t, int32(1), g.calls.Load())
 }
+
+func TestIntrospect_ReadsTheBoundRequestTarget(t *testing.T) {
+	answerWith := func(binding string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Garam-Contract-Version", "operation-authority.v1")
+			_, _ = w.Write([]byte(binding))
+		}
+	}
+
+	// Control: a configure binding carries no request target, and none is read.
+	configure, err := introspect(t, answerWith(bindingAnswer))
+	require.NoError(t, err)
+	assert.Empty(t, configure.RequestTarget)
+
+	read := `{"operationRef":"ref-2","grantId":"grant-1","orgGrn":"grn:root:default:org:acme",
+"actorGrn":"grn:acme:default:user:7c1d","audienceGrn":"grn:root:default:operator:control",
+"operation":"agent-template:read","targetGrn":"grn:root:default:org:acme",
+"requestId":"r1","bodySha256":"e3","requestTarget":"/garam/v1/orgs/acme/templates/web%20agent/versions/1",
+"expiresAt":"2026-10-05T12:05:00Z"}`
+	b, err := introspect(t, answerWith(read))
+	require.NoError(t, err)
+	assert.Equal(t, "/garam/v1/orgs/acme/templates/web%20agent/versions/1", b.RequestTarget)
+	assert.Equal(t, "agent-template:read", b.Operation)
+}

@@ -20,6 +20,21 @@ CREATE TABLE IF NOT EXISTS templates (
     PRIMARY KEY (organization, name, version),
     FOREIGN KEY (organization, profile_name, profile_version) REFERENCES profiles (organization, name, version)
 );
+-- One row per publish request, keyed as configure's requests are, with the version it published,
+-- which every repeat of the key returns.
+CREATE TABLE IF NOT EXISTS publications (
+    organization     text   NOT NULL,
+    request_id       text   NOT NULL,
+    actor            text   NOT NULL,
+    operation        text   NOT NULL,
+    target           text   NOT NULL,
+    body_sha256      text   NOT NULL,
+    operation_ref    text   NOT NULL,
+    template_name    text   NOT NULL,
+    template_version bigint NOT NULL,
+    PRIMARY KEY (organization, request_id),
+    FOREIGN KEY (organization, template_name, template_version) REFERENCES templates (organization, name, version)
+);
 
 -- The one row holding the position the latest stored revision took. Every writer of a revision
 -- takes the next position by updating it, so writers serialize on it and positions are taken

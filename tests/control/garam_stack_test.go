@@ -274,8 +274,9 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	}{
 		RequestID:   "e2e-delegation",
 		Controllers: []string{s.controllerGRN},
-		Operations:  []string{"agent:create", "agent:configure", "agent:activate", "agent:recover", "agent:cutover"},
-		ExpiresAt:   time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
+		Operations: []string{"agent:create", "agent:configure", "agent:activate", "agent:recover", "agent:cutover",
+			"agent-template:read", "agent-template:publish", "execution-profile:read", "agent:execution-read"},
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 	}
 	return step("write the hosted operator's delegation",
 		s.create(http.MethodPut, "/orgs/"+s.orgID+"/operators/control/delegation", garamContract, delegation, nil),
@@ -344,17 +345,26 @@ func (s *garamStack) enroll(identifier string) (enrolled, error) {
 func (s *garamStack) mintAuthority(operation, target, requestID, bodySHA256 string) (
 	authority, operationRef string, err error,
 ) {
+	return s.mintTargeted(operation, target, requestID, bodySHA256, "")
+}
+
+// mintTargeted is mintAuthority binding requestTarget too, the exact origin-form target the
+// request is sent to, which garam binds for the reads and the publication (garam@33b1c41).
+func (s *garamStack) mintTargeted(operation, target, requestID, bodySHA256, requestTarget string) (
+	authority, operationRef string, err error,
+) {
 	var minted struct {
 		Authority    string `json:"authority"`
 		OperationRef string `json:"operationRef"`
 	}
 	err = s.create(http.MethodPost, "/orgs/"+s.orgID+"/operation-authorities", garamContract, struct {
-		Audience   string `json:"audience"`
-		Operation  string `json:"operation"`
-		Target     string `json:"target"`
-		RequestID  string `json:"requestId"`
-		BodySHA256 string `json:"bodySha256"`
-	}{s.hosted, operation, target, requestID, bodySHA256}, &minted)
+		Audience      string `json:"audience"`
+		Operation     string `json:"operation"`
+		Target        string `json:"target"`
+		RequestID     string `json:"requestId"`
+		BodySHA256    string `json:"bodySha256"`
+		RequestTarget string `json:"requestTarget,omitempty"`
+	}{s.hosted, operation, target, requestID, bodySHA256, requestTarget}, &minted)
 	return minted.Authority, minted.OperationRef, err
 }
 

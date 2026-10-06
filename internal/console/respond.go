@@ -48,7 +48,7 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeMessage(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrAuthorityUndecided):
 		writeMessage(w, http.StatusServiceUnavailable, err.Error())
-	case errors.Is(err, errInvalidBody):
+	case errors.Is(err, errInvalidBody), errors.Is(err, errInvalidPublish):
 		writeMessage(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, definition.ErrInvalidSecretRef):
 		writeJSON(w, http.StatusBadRequest, errorBody{Kind: kindInvalidAPIKeyRef, Message: err.Error()})

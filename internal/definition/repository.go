@@ -15,6 +15,15 @@ type Repository interface {
 	PublishTemplate(ctx context.Context, org string, t Template) (Template, error)
 	// GetTemplate returns ErrNotFound for a version org never published.
 	GetTemplate(ctx context.Context, org string, ref TemplateRef) (Template, error)
+	// ListTemplates returns the latest version of each of org's templates, ordered by name.
+	ListTemplates(ctx context.Context, org string) ([]Template, error)
+	// ListProfiles returns every version org published of every profile, ordered by name and
+	// then version.
+	ListProfiles(ctx context.Context, org string) ([]ProfileRef, error)
+	// PublishOnce stores t as the next version of org's t.Name and records p under p.Key with that
+	// version, unless p.Key is already recorded; it returns the publication recorded under the key
+	// either way, and whether this call stored it. t.Profile is one of org's profiles.
+	PublishOnce(ctx context.Context, p Publication, t Template) (Publication, bool, error)
 
 	// Configure stores r unless its key is already stored, and returns the request stored
 	// under the key either way. A new request stores d with it when d.Revision is one past
@@ -28,6 +37,8 @@ type Repository interface {
 	// Desired returns the latest revision of each agent recorded for operator, at most limit of
 	// them in the order stored, and the position they were read at.
 	Desired(ctx context.Context, operator string, limit int) (DesiredPage, error)
+	// GetStatus returns the agent's stored status, the zero Status before any report.
+	GetStatus(ctx context.Context, agent GRN) (Status, error)
 	// RecordStatus raises the agent's stored status to s field by field, never lowering one,
 	// and returns the status stored.
 	RecordStatus(ctx context.Context, agent GRN, s Status) (Status, error)
