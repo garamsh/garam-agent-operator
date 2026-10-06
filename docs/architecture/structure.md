@@ -28,6 +28,7 @@ The kubebuilder scaffold writes the manager's code into paths it names, and the 
 ### Shared code
 
 - **What two domains both need sits below them, never beside them.** It is extracted to a package named for what it is, which imports no domain, or it is owned by one domain and reached through that domain's surface. It never becomes a sibling folder that no domain owns.
+- **`internal/secretref` states and parses a Secret key reference, `<secret-name>/<key>`, for both binaries** (#248). The control service's `internal/definition` and the manager's `internal/desired/renderer` both parse with it, and neither restates the rule. It imports no domain.
 
 ### A new domain
 

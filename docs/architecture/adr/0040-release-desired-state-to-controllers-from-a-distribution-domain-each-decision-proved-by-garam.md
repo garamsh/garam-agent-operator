@@ -1,6 +1,6 @@
 # ADR 0040: Release desired state to controllers from a distribution domain, each decision proved by garam, as a whole set on every answer
 
-> Status: accepted
+> Status: accepted; C2 wire extended by ADR-0052 and amended by ADR-0053
 > Date: 2026-10-05
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

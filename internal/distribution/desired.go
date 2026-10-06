@@ -43,6 +43,9 @@ type profile struct {
 	Resources        corev1.ResourceRequirements `json:"resources"`
 	StorageSize      string                      `json:"storageSize"`
 	StorageClassName *string                     `json:"storageClassName"`
+	// WorkspaceStorageSize is absent where the profile leaves the workspace claim to StorageSize
+	// (ADR 0053).
+	WorkspaceStorageSize *string `json:"workspaceStorageSize,omitempty"`
 }
 
 type configuration struct {
@@ -53,6 +56,14 @@ type configuration struct {
 
 type model struct {
 	Provider  string `json:"provider"`
+	BaseURL   string `json:"baseUrl"`
+	Name      string `json:"name"`
+	APIKeyRef string `json:"apiKeyRef"`
+	// Embedding is absent where the revision names none (ADR 0052, ADR 0053).
+	Embedding *embedding `json:"embedding,omitempty"`
+}
+
+type embedding struct {
 	BaseURL   string `json:"baseUrl"`
 	Name      string `json:"name"`
 	APIKeyRef string `json:"apiKeyRef"`
@@ -163,6 +174,15 @@ func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 	if d.Cutover {
 		origin = originCutover
 	}
+	var workspaceSize *string
+	if settings.WorkspaceStorageSize != nil {
+		size := settings.WorkspaceStorageSize.String()
+		workspaceSize = &size
+	}
+	var embedded *embedding
+	if e := def.Config.Model.Embedding; e != nil {
+		embedded = &embedding{BaseURL: e.BaseURL, Name: e.Name, APIKeyRef: string(e.APIKey)}
+	}
 	return desiredAgent{
 		Origin:   origin,
 		Agent:    string(def.Agent),
@@ -174,6 +194,8 @@ func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 			Resources:        settings.Resources,
 			StorageSize:      settings.StorageSize.String(),
 			StorageClassName: settings.StorageClassName,
+
+			WorkspaceStorageSize: workspaceSize,
 		},
 		Configuration: configuration{
 			Model: model{
@@ -181,6 +203,7 @@ func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 				BaseURL:   def.Config.Model.BaseURL,
 				Name:      def.Config.Model.Name,
 				APIKeyRef: string(def.Config.Model.APIKey),
+				Embedding: embedded,
 			},
 			Ego:   def.Config.Ego,
 			Tools: def.Config.Tools,

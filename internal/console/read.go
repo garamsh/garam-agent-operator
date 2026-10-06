@@ -38,6 +38,8 @@ type (
 		Resources        corev1.ResourceRequirements `json:"resources"`
 		StorageSize      string                      `json:"storageSize"`
 		StorageClassName *string                     `json:"storageClassName"`
+		// WorkspaceStorageSize is absent where the profile leaves the workspace claim to StorageSize.
+		WorkspaceStorageSize *string `json:"workspaceStorageSize,omitempty"`
 	}
 	executionAnswer struct {
 		Desired   desiredExecution    `json:"desired"`
@@ -156,11 +158,16 @@ func (s *server) getProfile(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, profileAnswer{
+	answer := profileAnswer{
 		Name: p.Name, Version: int64(p.Version),
 		Resources: p.Settings.Resources, StorageSize: p.Settings.StorageSize.String(),
 		StorageClassName: p.Settings.StorageClassName,
-	})
+	}
+	if size := p.Settings.WorkspaceStorageSize; size != nil {
+		workspace := size.String()
+		answer.WorkspaceStorageSize = &workspace
+	}
+	writeJSON(w, http.StatusOK, answer)
 }
 
 func (s *server) execution(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +202,7 @@ func configurationOf(c definition.Configuration) configuration {
 	return configuration{
 		Model: model{
 			Provider: c.Model.Provider, BaseURL: c.Model.BaseURL, Name: c.Model.Name, APIKeyRef: string(c.Model.APIKey),
+			Embedding: embeddingWireOf(c.Model.Embedding),
 		},
 		Ego:   c.Ego,
 		Tools: tools,
@@ -212,4 +220,13 @@ func parseVersion(s string) (definition.Version, error) {
 		return 0, definition.ErrNotFound
 	}
 	return definition.Version(n), nil
+}
+
+// embeddingWireOf is an embeddings endpoint as the wire carries it, nil where there is none. Its
+// key is the reference to where it is held, as the model's is.
+func embeddingWireOf(e *definition.Embedding) *embedding {
+	if e == nil {
+		return nil
+	}
+	return &embedding{BaseURL: e.BaseURL, Name: e.Name, APIKeyRef: string(e.APIKey)}
 }

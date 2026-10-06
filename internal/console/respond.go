@@ -16,8 +16,16 @@ type errorBody struct {
 	Message string `json:"message"`
 }
 
-// kindInvalidAPIKeyRef is the kind a malformed model key reference is refused under.
-const kindInvalidAPIKeyRef = "invalid_api_key_ref"
+const (
+	// kindInvalidAPIKeyRef is the kind a malformed model or embedding key reference is refused under.
+	kindInvalidAPIKeyRef = "invalid_api_key_ref"
+	// kindEmbeddingRequired is the kind a model the manager could not render for want of its
+	// embeddings endpoint is refused under (ADR 0052).
+	kindEmbeddingRequired = "embedding_required"
+	// kindEmbeddingImmutable is the kind a change to, or removal of, an agent's embedding is
+	// refused under (ADR 0052).
+	kindEmbeddingImmutable = "embedding_immutable"
+)
 
 // respondError translates err to its status. It is the only place a status is chosen for an
 // error, and the only place one is logged.
@@ -52,6 +60,10 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeMessage(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, definition.ErrInvalidSecretRef):
 		writeJSON(w, http.StatusBadRequest, errorBody{Kind: kindInvalidAPIKeyRef, Message: err.Error()})
+	case errors.Is(err, definition.ErrEmbeddingRequired):
+		writeJSON(w, http.StatusBadRequest, errorBody{Kind: kindEmbeddingRequired, Message: err.Error()})
+	case errors.Is(err, definition.ErrEmbeddingImmutable):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindEmbeddingImmutable, Message: err.Error()})
 	case errors.Is(err, definition.ErrNotFound):
 		writeMessage(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, definition.ErrStaleRevision), errors.Is(err, definition.ErrRequestReused),

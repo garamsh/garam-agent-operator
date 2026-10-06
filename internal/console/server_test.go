@@ -96,7 +96,31 @@ type env struct {
 	repository   definition.Repository
 	profile      definition.ProfileRef
 	template     definition.TemplateRef
-	authorities  int
+	// embedding is the configure bodies' configuration.model.embedding, absent where nil.
+	embedding   *embeddingBody
+	authorities int
+}
+
+// The model and the embeddings endpoint the configure bodies name.
+const (
+	modelProvider    = "anthropic"
+	modelBaseURL     = "https://api.anthropic.com"
+	modelName        = "claude-opus-5-5"
+	embeddingBaseURL = "https://embeddings.example/v1"
+	embeddingName    = "bge-base-en-v1.5"
+	embeddingKeyRef  = "embeddings/key"
+)
+
+// embeddingBody is a configure body's configuration.model.embedding; an empty field is left out.
+type embeddingBody struct {
+	BaseURL   string `json:"baseUrl,omitempty"`
+	Name      string `json:"name,omitempty"`
+	APIKeyRef string `json:"apiKeyRef,omitempty"`
+}
+
+// anEmbedding is the embeddings endpoint the configure bodies name unless a test changes it.
+func anEmbedding() *embeddingBody {
+	return &embeddingBody{BaseURL: embeddingBaseURL, Name: embeddingName, APIKeyRef: embeddingKeyRef}
 }
 
 // controllerGRN is the controller agents are created on, where the configure tests' assignment is.
@@ -126,6 +150,7 @@ func newEnv(t *testing.T, consoleOrigins ...string) *env {
 	require.Equal(t, definition.Revision(1), d.Revision)
 
 	e := &env{
+		embedding:    anEmbedding(),
 		introspector: &introspector{answers: map[console.Authority]answer{}}, registrar: reg,
 		definitions: definitions, repository: store, profile: profile,
 		template: definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
@@ -148,8 +173,8 @@ func newEnv(t *testing.T, consoleOrigins ...string) *env {
 // reference apiKeyRef.
 func testConfiguration(ego, apiKeyRef string) map[string]any {
 	return map[string]any{
-		"model": map[string]string{"provider": "anthropic", "baseUrl": "https://api.anthropic.com",
-			"name": "claude-opus-5-5", "apiKeyRef": apiKeyRef},
+		"model": map[string]any{"provider": modelProvider, "baseUrl": modelBaseURL,
+			"name": modelName, "apiKeyRef": apiKeyRef, "embedding": anEmbedding()},
 		"ego":   ego,
 		"tools": map[string]string{"web_fetch": "sha256:aa"},
 	}
@@ -167,11 +192,13 @@ func (e *env) body(requestID, ego string, expected int) []byte {
 
 // bodyWithKey is a configure request's body whose model names its key by keyRef.
 func (e *env) bodyWithKey(requestID, ego string, expected int, keyRef string) []byte {
+	configuration := testConfiguration(ego, keyRef)
+	configuration["model"].(map[string]any)["embedding"] = e.embedding
 	b, err := json.Marshal(map[string]any{
 		"requestId":        requestID,
 		"expectedRevision": strconv.Itoa(expected),
 		"profile":          versionOf(e.profile.Name, int64(e.profile.Version)),
-		"configuration":    testConfiguration(ego, keyRef),
+		"configuration":    configuration,
 	})
 	if err != nil {
 		panic(err)

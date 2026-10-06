@@ -51,10 +51,11 @@ func (s *server) publish(w http.ResponseWriter, r *http.Request) {
 			Profile: definition.ProfileRef{Name: in.Profile.Name, Version: definition.Version(in.Profile.Version)},
 			Config: definition.Configuration{
 				Model: definition.Model{
-					Provider: in.Configuration.Model.Provider,
-					BaseURL:  in.Configuration.Model.BaseURL,
-					Name:     in.Configuration.Model.Name,
-					APIKey:   definition.SecretRef(in.Configuration.Model.APIKeyRef),
+					Provider:  in.Configuration.Model.Provider,
+					BaseURL:   in.Configuration.Model.BaseURL,
+					Name:      in.Configuration.Model.Name,
+					APIKey:    definition.SecretRef(in.Configuration.Model.APIKeyRef),
+					Embedding: embeddingOf(in.Configuration.Model.Embedding),
 				},
 				Ego:   in.Configuration.Ego,
 				Tools: in.Configuration.Tools,

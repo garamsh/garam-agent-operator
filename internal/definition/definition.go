@@ -10,7 +10,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/util/validation"
+
+	"github.com/garamsh/garam-agent-operator/internal/secretref"
 )
 
 // GRN is the agent's garam resource name, which garam mints at registration.
@@ -40,26 +41,16 @@ func ParseRevision(s string) (Revision, error) {
 // Version numbers a template's or a profile's published versions; the first is 1.
 type Version int64
 
-// SecretRef names where a secret is held. It is never the secret itself.
-//
-// Its form is "<secret-name>/<key>": a Secret, and one of its data keys, in the namespace the
-// manager renders the agent into (ADR 0043). The name is a DNS subdomain, as Kubernetes requires
-// of a Secret's name (k8s.io/apimachinery@v0.36.0 pkg/util/validation IsDNS1123Subdomain), and the
-// key matches [-._a-zA-Z0-9]+ and is neither "." nor "..", as Kubernetes requires of a Secret's
-// data key (IsConfigMapKey). Neither can hold a "/", so the split is unambiguous. This is the
-// one statement of the form; control.md cites it.
+// SecretRef names where a secret is held. It is never the secret itself. Its form is
+// "<secret-name>/<key>", in the namespace the manager renders the agent into (ADR 0043), as
+// secretref.Parse states it.
 type SecretRef string
 
 // Parts returns the Secret's name and key, or ErrInvalidSecretRef where the reference is not
 // "<secret-name>/<key>" with each part one Kubernetes accepts.
 func (r SecretRef) Parts() (name, key string, err error) {
-	// A reference with no "/" leaves the key empty, which IsConfigMapKey refuses.
-	name, key, _ = strings.Cut(string(r), "/")
-	if problems := validation.IsDNS1123Subdomain(name); len(problems) > 0 {
-		return "", "", fmt.Errorf("%w: secret name %q: %s", ErrInvalidSecretRef, name, strings.Join(problems, "; "))
-	}
-	if problems := validation.IsConfigMapKey(key); len(problems) > 0 {
-		return "", "", fmt.Errorf("%w: key %q: %s", ErrInvalidSecretRef, key, strings.Join(problems, "; "))
+	if name, key, err = secretref.Parse(string(r)); err != nil {
+		return "", "", fmt.Errorf("%w: %v", ErrInvalidSecretRef, err)
 	}
 
 	return name, key, nil
@@ -74,7 +65,22 @@ type Model struct {
 	BaseURL  string
 	Name     string
 	APIKey   SecretRef
+	// Embedding is the embeddings endpoint the agent's memory is recalled with, nil where the
+	// model names none. Every model but the mock needs one (ADR 0052).
+	Embedding *Embedding
 }
+
+// Embedding is an embeddings endpoint. APIKey is empty where the endpoint takes no key. Once an
+// agent's revision names one, its base URL and name never change and it is never removed: the
+// agent's stored memory carries the vectors it produced (ADR 0052).
+type Embedding struct {
+	BaseURL string
+	Name    string
+	APIKey  SecretRef
+}
+
+// mockProvider is the model provider sherlock runs offline, with no embeddings endpoint.
+const mockProvider = "mock"
 
 // Configuration is the desired configuration delivered to the agent.
 type Configuration struct {
@@ -84,14 +90,36 @@ type Configuration struct {
 }
 
 // check refuses a configuration the manager could not render: a model whose key reference is
-// not what SecretRef states. A configuration naming no model at all names no key.
+// not what SecretRef states, a model other than the mock naming no embedding, or an embedding
+// missing its base URL or name or with a malformed key reference. A configuration naming no
+// model at all names no key and no embedding.
 func (c Configuration) check() error {
 	if c.Model == (Model{}) {
 		return nil
 	}
-	_, _, err := c.Model.APIKey.Parts()
+	if _, _, err := c.Model.APIKey.Parts(); err != nil {
+		return err
+	}
+	e := c.Model.Embedding
+	switch {
+	case e == nil && c.Model.Provider != mockProvider:
+		return fmt.Errorf("%w: model provider %q names no embedding", ErrEmbeddingRequired, c.Model.Provider)
+	case e == nil:
+		return nil
+	case e.BaseURL == "" || e.Name == "":
+		return fmt.Errorf("%w: an embedding missing its base URL or name", ErrEmbeddingRequired)
+	case e.APIKey != "":
+		_, _, err := e.APIKey.Parts()
+		return err
+	}
 
-	return err
+	return nil
+}
+
+// sameEndpoint reports whether e names the embeddings endpoint was set to: the same base URL and
+// name. The key it is reached with may differ.
+func (e *Embedding) sameEndpoint(was Embedding) bool {
+	return e != nil && e.BaseURL == was.BaseURL && e.Name == was.Name
 }
 
 // ProfileRef names one published version of a profile, within an organization the caller states
@@ -114,6 +142,9 @@ type ExecutionSettings struct {
 	Resources        corev1.ResourceRequirements
 	StorageSize      resource.Quantity
 	StorageClassName *string
+	// WorkspaceStorageSize sizes the agent's workspace claim, nil where the profile leaves it to
+	// StorageSize (ADR 0044).
+	WorkspaceStorageSize *resource.Quantity
 }
 
 // Profile is a published, immutable version of a named set of execution settings. Its name and
@@ -359,6 +390,14 @@ var (
 	// ErrInvalidSecretRef is returned for a model key reference that is not "<secret-name>/<key>"
 	// as SecretRef states it, which the manager could not render.
 	ErrInvalidSecretRef = errors.New("model key reference is not <secret-name>/<key>")
+
+	// ErrEmbeddingRequired is returned for a model other than the mock naming no embedding, or
+	// for an embedding missing its base URL or name: sherlock refuses to start on either (ADR 0052).
+	ErrEmbeddingRequired = errors.New("the model needs an embeddings endpoint with a base URL and a name")
+
+	// ErrEmbeddingImmutable is returned for a configure changing the base URL or name of the
+	// embedding the agent's latest revision names, or removing it (ADR 0052).
+	ErrEmbeddingImmutable = errors.New("an agent's embedding cannot be changed or removed once set")
 
 	// ErrImportOpen is returned for a cutover import of an agent that holds another import.
 	ErrImportOpen = errors.New("another cutover import is open for the agent")

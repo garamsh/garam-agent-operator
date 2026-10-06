@@ -81,27 +81,50 @@ type configureRequest struct {
 			BaseURL   string `json:"baseUrl"`
 			Name      string `json:"name"`
 			APIKeyRef string `json:"apiKeyRef"`
+
+			Embedding *configureEmbedding `json:"embedding,omitempty"`
 		} `json:"model"`
 		Ego   string            `json:"ego"`
 		Tools map[string]string `json:"tools"`
 	} `json:"configuration"`
 }
 
+// configureEmbedding is the configure route's configuration.model.embedding.
+type configureEmbedding struct {
+	BaseURL   string `json:"baseUrl"`
+	Name      string `json:"name"`
+	APIKeyRef string `json:"apiKeyRef,omitempty"`
+}
+
 func configureBody(requestID, profile, ego string, expected int) []byte {
-	return configureBodyWithKey(requestID, profile, ego, expected, "model-api-key/api-key")
+	return newConfigureRequest(requestID, profile, ego, expected).body()
 }
 
 // configureBodyWithKey is configureBody with the model's key named by keyRef.
 func configureBodyWithKey(requestID, profile, ego string, expected int, keyRef string) []byte {
+	in := newConfigureRequest(requestID, profile, ego, expected)
+	in.Configuration.Model.APIKeyRef = keyRef
+	return in.body()
+}
+
+// newConfigureRequest is a configure request naming a model and its embeddings endpoint.
+func newConfigureRequest(requestID, profile, ego string, expected int) configureRequest {
 	var in configureRequest
 	in.RequestID, in.ExpectedRevision = requestID, strconv.Itoa(expected)
 	in.Profile.Name, in.Profile.Version = profile, 1
 	in.Configuration.Model.Provider = "anthropic"
 	in.Configuration.Model.BaseURL = "https://api.anthropic.com"
 	in.Configuration.Model.Name = "claude-opus-5-5"
-	in.Configuration.Model.APIKeyRef = keyRef
+	in.Configuration.Model.APIKeyRef = "model-api-key/api-key"
+	in.Configuration.Model.Embedding = &configureEmbedding{
+		BaseURL: "https://embeddings.example/v1", Name: "bge-base-en-v1.5", APIKeyRef: "embeddings/key",
+	}
 	in.Configuration.Ego = ego
 	in.Configuration.Tools = map[string]string{"web_fetch": "sha256:aa"}
+	return in
+}
+
+func (in configureRequest) body() []byte {
 	b, err := json.Marshal(in)
 	if err != nil {
 		panic(err)
