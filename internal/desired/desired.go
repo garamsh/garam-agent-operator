@@ -65,6 +65,18 @@ type Model struct {
 	BaseURL   string
 	Name      string
 	APIKeyRef string
+
+	// Embedding is the embeddings endpoint the agent's memory is recalled with,
+	// nil where the revision names none (ADR 0052).
+	Embedding *Embedding
+}
+
+// Embedding is an embeddings endpoint. APIKeyRef is "<secret-name>/<key>" as
+// the model's is, and empty where the endpoint takes no key.
+type Embedding struct {
+	BaseURL   string
+	Name      string
+	APIKeyRef string
 }
 
 // Certificate is a managed agent's first certificate as the control service

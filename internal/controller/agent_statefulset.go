@@ -627,6 +627,15 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 				Key:                  agent.Spec.Model.APIKeySecretRef.Key,
 			}},
 		})
+		if key := embeddingKeyOf(agent); key != nil {
+			container.Env = append(container.Env, corev1.EnvVar{
+				Name: descriptor.embeddingKeyVariable,
+				ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: key.Name},
+					Key:                  key.Key,
+				}},
+			})
+		}
 	}
 
 	// The agent's end of the link, written only where the other end is built:
