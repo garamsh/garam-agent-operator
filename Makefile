@@ -108,9 +108,23 @@ test-e2e-control: garam-e2e ## Run the control service's e2e tests: the built bi
 	GARAM_BIN_DIR="$(GARAM_DIR)" GARAM_MIGRATIONS_DIR="$(GARAM_DIR)/src/migrations" \
 		go test -tags=e2e ./tests/control/ -v -count=1
 
+# How long `go test` may run the Kind suite, every phase included. Without it
+# go test's default of 10 minutes applies, and AfterSuite was killed past it
+# with all nine specs passed (#276). Sized from the slowest phases measured on
+# the dev host, each a Ginkgo-reported duration:
+#   BeforeSuite  458.6 s  (#275; 342.4 s on #276's run)
+#   9 specs       70.0 s  (#276's run; the slowest single spec 26.0 s)
+#   AfterSuite  >=71.4 s  (#275: 600 - 458.6 - 70.0, still uninstalling
+#                          cert-manager when the default fired; 44.5 s on
+#                          #276's run)
+# The slowest run therefore needed more than 600 s. 30 minutes is three times
+# that, so every phase may take three times its slowest measure before the
+# timeout, rather than a slow host, ends the run.
+E2E_TIMEOUT ?= 30m
+
 .PHONY: test-e2e
 test-e2e: test-e2e-control setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KUBECONFIG="$(KUBECONFIG_E2E)" KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+	KUBECONFIG="$(KUBECONFIG_E2E)" KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e -timeout $(E2E_TIMEOUT) ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
