@@ -172,7 +172,8 @@ func (r *AgentReconciler) readFence(ctx context.Context, agent *agentv1alpha1.Ag
 		}}, nil
 	}
 
-	if reason, message, err := r.readNode(ctx, pod.Spec.NodeName); err != nil || reason != "" {
+	node, reason, message, err := r.readNode(ctx, pod.Spec.NodeName)
+	if err != nil || reason != "" {
 		return fenceVerdict{reason: reason, message: message}, err
 	}
 
@@ -181,26 +182,31 @@ func (r *AgentReconciler) readFence(ctx context.Context, agent *agentv1alpha1.Ag
 		return fenceVerdict{reason: reason, message: message}, err
 	}
 
-	containers, reason, message := terminatedWriters(pod)
+	containers, neverCreated, reason, message := terminatedWriters(pod, node)
 	if reason != "" {
 		return fenceVerdict{reason: reason, message: message}, nil
 	}
 
-	return fenceVerdict{evidence: &agentv1alpha1.WriterStoppedEvidence{
+	evidence := &agentv1alpha1.WriterStoppedEvidence{
 		PodUID: string(pod.UID), PVCUID: pvcUID, Containers: containers, ObservedAt: now,
-	}}, nil
+	}
+	if len(neverCreated) > 0 {
+		evidence.NeverCreated, evidence.PodPhase = neverCreated, pod.Status.Phase
+	}
+
+	return fenceVerdict{evidence: evidence}, nil
 }
 
 // readNode reads the Pod's node uncached, so that the controller holds no
 // informer over every node in the cluster.
-func (r *AgentReconciler) readNode(ctx context.Context, name string) (reason, message string, err error) {
-	node := &corev1.Node{}
+func (r *AgentReconciler) readNode(ctx context.Context, name string) (node *corev1.Node, reason, message string, err error) {
+	node = &corev1.Node{}
 	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: name}, node); err != nil {
 		if apierrors.IsNotFound(err) {
-			return agentv1alpha1.ReasonNodeUnknown, fmt.Sprintf("Node %q no longer exists", name), nil
+			return nil, agentv1alpha1.ReasonNodeUnknown, fmt.Sprintf("Node %q no longer exists", name), nil
 		}
 
-		return "", "", fmt.Errorf("get node %q: %w", name, err)
+		return nil, "", "", fmt.Errorf("get node %q: %w", name, err)
 	}
 
 	for _, condition := range node.Status.Conditions {
@@ -208,14 +214,14 @@ func (r *AgentReconciler) readNode(ctx context.Context, name string) (reason, me
 			continue
 		}
 		if condition.Status == corev1.ConditionUnknown {
-			return agentv1alpha1.ReasonNodeUnknown,
+			return nil, agentv1alpha1.ReasonNodeUnknown,
 				fmt.Sprintf("Node %q's Ready condition is Unknown, so the container states it reported may be stale", name), nil
 		}
 
-		return "", "", nil
+		return node, "", "", nil
 	}
 
-	return agentv1alpha1.ReasonNodeUnknown, fmt.Sprintf("Node %q reports no Ready condition", name), nil
+	return nil, agentv1alpha1.ReasonNodeUnknown, fmt.Sprintf("Node %q reports no Ready condition", name), nil
 }
 
 // readClaim checks that the state volume's claim is the one the Pod started on.
@@ -250,8 +256,10 @@ func (r *AgentReconciler) readClaim(ctx context.Context, agent *agentv1alpha1.Ag
 // terminatedWriters returns the terminated state of every container that could
 // write the agent's state: each regular container, and each init container
 // that keeps running beside them. An init container that ran to completion
-// before the agent started holds nothing of the store.
-func terminatedWriters(pod *corev1.Pod) ([]agentv1alpha1.TerminatedContainer, string, string) {
+// before the agent started holds nothing of the store. A writer the kubelet
+// reports with no container ever created is returned among the never created,
+// and counts as stopped only where neverCreatedRefusal finds nothing (ADR 0061).
+func terminatedWriters(pod *corev1.Pod, node *corev1.Node) ([]agentv1alpha1.TerminatedContainer, []string, string, string) {
 	statuses := map[string]corev1.ContainerStatus{}
 	for _, status := range append(append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...),
 		pod.Status.ContainerStatuses...) {
@@ -269,20 +277,36 @@ func terminatedWriters(pod *corev1.Pod) ([]agentv1alpha1.TerminatedContainer, st
 	}
 
 	terminated := make([]agentv1alpha1.TerminatedContainer, 0, len(writers))
+	var neverCreated []string
 	for _, name := range writers {
 		status, reported := statuses[name]
+		if reported && wasNeverCreated(status) {
+			refusal := neverCreatedRefusal(pod, node)
+			if refusal == "" {
+				neverCreated = append(neverCreated, name)
+
+				continue
+			}
+			reason := agentv1alpha1.ReasonNoContainerStatus
+			if status.State.Waiting != nil {
+				reason = agentv1alpha1.ReasonContainerWaiting
+			}
+
+			return nil, nil, reason, fmt.Sprintf("Container %q reports no container ever created, which counts only "+
+				"in a Pod the kubelet made terminal, and %s", name, refusal)
+		}
 		switch {
 		case !reported:
-			return nil, agentv1alpha1.ReasonNoContainerStatus,
+			return nil, nil, agentv1alpha1.ReasonNoContainerStatus,
 				fmt.Sprintf("Container %q reports no status", name)
 		case status.State.Running != nil:
-			return nil, agentv1alpha1.ReasonContainerRunning,
+			return nil, nil, agentv1alpha1.ReasonContainerRunning,
 				fmt.Sprintf("Container %q is running", name)
 		case status.State.Waiting != nil:
-			return nil, agentv1alpha1.ReasonContainerWaiting,
+			return nil, nil, agentv1alpha1.ReasonContainerWaiting,
 				fmt.Sprintf("Container %q is waiting", name)
 		case status.State.Terminated == nil || status.State.Terminated.ContainerID == "":
-			return nil, agentv1alpha1.ReasonNoContainerStatus,
+			return nil, nil, agentv1alpha1.ReasonNoContainerStatus,
 				fmt.Sprintf("Container %q reports no terminated instance", name)
 		}
 
@@ -292,7 +316,53 @@ func terminatedWriters(pod *corev1.Pod) ([]agentv1alpha1.TerminatedContainer, st
 		})
 	}
 
-	return terminated, "", ""
+	return terminated, neverCreated, "", ""
+}
+
+// wasNeverCreated reports whether the kubelet shows no container of status ever
+// created: no ID, no restart, no earlier state, and waiting or no state at all.
+// On its own that is no evidence: the API's status is rebuilt from what the
+// runtime lists now and lags it (ADR 0061).
+func wasNeverCreated(status corev1.ContainerStatus) bool {
+	return status.ContainerID == "" && status.RestartCount == 0 &&
+		status.LastTerminationState == (corev1.ContainerState{}) &&
+		status.State.Running == nil && status.State.Terminated == nil
+}
+
+// neverCreatedRefusal is why a writer the kubelet shows never created does not
+// count as stopped, or "" where it does (ADR 0061). It counts only in a Pod the
+// kubelet made terminal: the kubelet writes Failed or Succeeded only once it has
+// found no container of the Pod running (kubernetes v1.33.0
+// pkg/kubelet/kubelet.go:2174-2190, pkg/kubelet/status/status_manager.go:1131).
+// PodGC writes Failed too, for a Pod whose node is gone or out of service, so
+// the node must be Ready and not out of service, and the Pod must carry no
+// DisruptionTarget the kubelet did not set.
+func neverCreatedRefusal(pod *corev1.Pod, node *corev1.Node) string {
+	if pod.Status.Phase != corev1.PodFailed && pod.Status.Phase != corev1.PodSucceeded {
+		return fmt.Sprintf("the Pod's phase is %q", pod.Status.Phase)
+	}
+	ready := false
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+			ready = true
+		}
+	}
+	if !ready {
+		return fmt.Sprintf("node %q is not Ready", node.Name)
+	}
+	for _, taint := range node.Spec.Taints {
+		if taint.Key == corev1.TaintNodeOutOfService {
+			return fmt.Sprintf("node %q carries the %s taint", node.Name, corev1.TaintNodeOutOfService)
+		}
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.DisruptionTarget && condition.Reason != corev1.PodReasonTerminationByKubelet {
+			return fmt.Sprintf("the Pod carries %s with reason %q, which the kubelet did not set",
+				corev1.DisruptionTarget, condition.Reason)
+		}
+	}
+
+	return ""
 }
 
 // recordPlacement records on a running Pod the claim it started on, once, and

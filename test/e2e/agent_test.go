@@ -579,6 +579,77 @@ var _ = Describe("Agent workload", Ordered, func() {
 		}, 3*time.Minute, time.Second).Should(Succeed())
 	})
 
+	It("releases a deleted Pod none of whose writers was ever created, once the kubelet marks it Failed", func() {
+		// #311, ADR 0061. A Pod scheduled to a node whose writers were never
+		// created shows no terminated container, so the fence held it for a hand
+		// release. It is released on the kubelet's terminal phase instead.
+		const (
+			stuck       = "e2e-never-created"
+			stuckPod    = stuck + "-0"
+			stuckSecret = stuck + "-credentials"
+		)
+		_, err := kubectlIn("create", "secret", "generic", stuckSecret, "--from-literal=token="+credentialsToken)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { _, _ = kubectlIn("delete", "secret", stuckSecret, "--ignore-not-found") })
+		apply := exec.Command("kubectl", "apply", "-f", "-")
+		apply.Stdin = strings.NewReader(strings.Replace(agentManifestFor(stuck, agentImage),
+			"credentialsSecretName: "+credentialsSecret, "credentialsSecretName: "+stuckSecret, 1))
+		_, err = utils.Run(apply)
+		Expect(err).NotTo(HaveOccurred())
+		// Registered after the Secret's cleanup, so it runs first, while the
+		// manager runs.
+		DeferCleanup(func() { deleteAgent(stuck) })
+		podField := func(path string) (string, error) {
+			return kubectlIn("get", "pod", stuckPod, "-o", "jsonpath="+path)
+		}
+
+		By("the control: the agent's first Pod runs")
+		var first string
+		Eventually(func(g Gomega) {
+			phase, err := podField("{.status.phase}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(phase).To(Equal("Running"))
+			first, err = podField("{.metadata.uid}")
+			g.Expect(err).NotTo(HaveOccurred())
+		}, 3*time.Minute, time.Second).Should(Succeed())
+
+		By("removing the credential, then the Pod, so the next one is scheduled and can create no container")
+		_, err = kubectlIn("delete", "secret", stuckSecret)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = kubectlIn("delete", "pod", stuckPod, "--wait=false")
+		Expect(err).NotTo(HaveOccurred())
+		var stuckUID string
+		Eventually(func(g Gomega) {
+			released, err := kubectlIn("get", "agent", stuck, "-o", "jsonpath={.status.writerStopped.podUID}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(released).To(Equal(first), "the running Pod was not released on its writers' evidence")
+			stuckUID, err = podField("{.metadata.uid}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(stuckUID).NotTo(BeEmpty())
+			g.Expect(stuckUID).NotTo(Equal(first))
+			g.Expect(podField("{.spec.nodeName}")).NotTo(BeEmpty(), "the replacement is not scheduled")
+			g.Expect(podField("{.status.phase}")).To(Equal("Pending"))
+			waiting, err := podField(`{.status.containerStatuses[?(@.name=="agent")].state.waiting.reason}`)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(waiting).NotTo(BeEmpty(), "the agent's container is not reported waiting")
+			g.Expect(podField(`{.status.containerStatuses[*].containerID}`)).To(BeEmpty(),
+				"a writer of the replacement was created")
+		}, 3*time.Minute, time.Second).Should(Succeed())
+
+		By("deleting the Pod no writer was created in, which is released once the kubelet marks it Failed")
+		_, err = kubectlIn("delete", "pod", stuckPod, "--wait=false")
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			uid, err := kubectlIn("get", "agent", stuck, "-o", "jsonpath={.status.writerStopped.podUID}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(uid).To(Equal(stuckUID), "the Pod no writer was created in was not released")
+			g.Expect(kubectlIn("get", "agent", stuck, "-o", "jsonpath={.status.writerStopped.podPhase}")).
+				To(Equal("Failed"))
+			g.Expect(kubectlIn("get", "agent", stuck, "-o", "jsonpath={.status.writerStopped.neverCreated[*]}")).
+				To(ContainSubstring("agent"))
+		}, 3*time.Minute, time.Second).Should(Succeed())
+	})
+
 	It("removes the StatefulSet and its Pod when the Agent is deleted", func() {
 		// Without this the workload might not exist yet, and a spec that asserts
 		// its absence would pass having never seen it.

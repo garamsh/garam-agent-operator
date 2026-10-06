@@ -573,9 +573,24 @@ spec:
                       type: object
                     type: array
                     x-kubernetes-list-type: atomic
+                  neverCreated:
+                    description: |-
+                      neverCreated are the writing containers the kubelet reported with no
+                      container ever created, counted as stopped only on podPhase.
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: atomic
                   observedAt:
                     description: observedAt is when the controller read the evidence.
                     format: date-time
+                    type: string
+                  podPhase:
+                    description: |-
+                      podPhase is the deleting Pod's terminal phase, set where neverCreated is.
+                      The kubelet writes a terminal phase only once it has found no container of
+                      the Pod running, which is what the containers in neverCreated are
+                      released on.
                     type: string
                   podUID:
                     description: podUID is the UID of the Pod the evidence is about.

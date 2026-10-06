@@ -272,6 +272,11 @@ func (in *WriterStoppedEvidence) DeepCopyInto(out *WriterStoppedEvidence) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.NeverCreated != nil {
+		in, out := &in.NeverCreated, &out.NeverCreated
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	in.ObservedAt.DeepCopyInto(&out.ObservedAt)
 }
 
