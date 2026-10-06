@@ -443,6 +443,16 @@ func main() {
 			setupLog.Error(err, "Failed to add the managed-credential issuer", "address", controlAddress)
 			os.Exit(1)
 		}
+		// A managed agent's recovered credential is prepared over a key generated
+		// and persisted here first, and placed only once it verifies against the
+		// issuer kept from its first certificate (#300, ADR 0059).
+		recoverer := desired.NewRecoverer(controlClient,
+			credential.NewSecrets(mgr.GetClient(), mgr.GetAPIReader(), mgr.GetScheme(), namespace))
+		puller.OfferRecoveriesTo(recoverer)
+		if err := mgr.Add(recoverer); err != nil {
+			setupLog.Error(err, "Failed to add the managed-credential recoverer", "address", controlAddress)
+			os.Exit(1)
+		}
 		// Each managed agent's placement is registered with the control service,
 		// and presented again under each renewed leaf (#212, #218).
 		registrar := desired.NewRegistrar(controlClient,

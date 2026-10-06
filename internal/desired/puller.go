@@ -37,6 +37,9 @@ type Puller struct {
 	// The waits, held here so a test can shorten them.
 	longPoll, transientFirst, transientLast, refusedWait time.Duration
 
+	// recoveries is told every answer's open recoveries, where it is set.
+	recoveries interface{ Offer(map[string]OpenRecovery) }
+
 	// rendered is what was last rendered and reported for each GRN, its
 	// revision and whether a stop held it (renderedKey), so an unchanged answer
 	// is not rendered again. It is held in memory only: after a restart every
@@ -98,6 +101,7 @@ func (p *Puller) Start(ctx context.Context) error {
 		feedRefused.Set(0)
 		refusedAs = ""
 		backoff = p.transientFirst
+		p.offerRecoveries(answer)
 		for _, agent := range answer.Agents {
 			p.apply(ctx, agent)
 		}
@@ -105,6 +109,27 @@ func (p *Puller) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// OfferRecoveriesTo has every answer's open recoveries offered to r, which
+// prepares them (ADR 0059).
+func (p *Puller) OfferRecoveriesTo(r interface{ Offer(map[string]OpenRecovery) }) {
+	p.recoveries = r
+}
+
+// offerRecoveries offers the open recoveries of one whole answer: one the
+// answer does not name is no longer open.
+func (p *Puller) offerRecoveries(answer Answer) {
+	if p.recoveries == nil {
+		return
+	}
+	open := map[string]OpenRecovery{}
+	for _, agent := range answer.Agents {
+		if agent.Recovery != nil {
+			open[agent.GRN] = *agent.Recovery
+		}
+	}
+	p.recoveries.Offer(open)
 }
 
 // apply renders one agent's revision and reports it, where it is not the

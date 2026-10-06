@@ -454,6 +454,28 @@ const (
 	ReasonSuspended = "Suspended"
 )
 
+// ConditionRecovery is the condition type reporting whether a recovery of the
+// agent's credential is in progress (ADR 0059). True means this operator holds
+// a recovery request for it: the recovered certificate is not placed yet, or
+// was refused, which its reason says.
+const ConditionRecovery = "Recovery"
+
+// Reasons for the Recovery condition.
+const (
+	// ReasonRecovering is set while a recovery request is persisted and its
+	// recovered certificate is not placed.
+	ReasonRecovering = "Recovering"
+
+	// ReasonRecoveredCertificateUnverified is set when the recovered
+	// certificate does not chain to the issuer kept from the agent's first
+	// certificate, is not signed over the persisted key, or names another
+	// agent. Nothing is placed, and the request is kept.
+	ReasonRecoveredCertificateUnverified = "RecoveredCertificateUnverified"
+
+	// ReasonNotRecovering is set while no recovery request is persisted.
+	ReasonNotRecovering = "NotRecovering"
+)
+
 // ConditionSuspended is the condition type reporting whether the agent is
 // stopped as its spec asks. True means the spec suspends it and its Pod is
 // gone, so its volumes are mounted by nothing: the point at which its state
