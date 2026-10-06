@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +29,7 @@ const (
 var (
 	legacySettings = []string{
 		adapterAgentSetting, adapterMachineURLSetting, adapterGatewayURLSetting, adapterGatewayAgentSetting,
-		adapterCertFileSetting, adapterKeyFileSetting, adapterServerRootSetting,
+		adapterCertFileSetting, adapterKeyFileSetting, adapterServerRootSetting, adapterOutboxDirSetting,
 	}
 	fencedSettings = []string{
 		adapterAgentSetting, adapterMachineURLSetting, adapterGatewayURLSetting,
@@ -89,9 +90,6 @@ var _ = Describe("Adapter control settings", func() {
 		Expect(err).NotTo(HaveOccurred())
 		pod := statefulSetFor(off).Spec.Template.Spec
 		Expect(settingNames(initContainerOf(pod, adapterContainerName))).To(ConsistOf(legacySettings))
-		Expect(initContainerOf(pod, adapterContainerName).VolumeMounts).
-			NotTo(ContainElement(HaveField("Name", stateVolumeName)))
-		Expect(pod.InitContainers).NotTo(ContainElement(HaveField("Name", outboxContainerName)))
 		Expect(pod.Volumes).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
 
 		By("with the switch on, all ten settings, the gateway's agent dropped")
@@ -128,7 +126,36 @@ var _ = Describe("Adapter control settings", func() {
 		Expect(err).NotTo(HaveOccurred())
 		pod = statefulSetFor(claimed).Spec.Template.Spec
 		Expect(settingNames(initContainerOf(pod, adapterContainerName))).To(ConsistOf(legacySettings))
-		Expect(pod.InitContainers).NotTo(ContainElement(HaveField("Name", outboxContainerName)))
+	})
+
+	// #310, ADR 0060: a legacy adapter forwards the outbox when it is given one, and is refused a
+	// control socket without the control settings (garam@59fe68d:internal/cli/delivery.go:98-118).
+	It("gives a Garam-source agent's adapter its outbox, and none of the control settings, with the switch on or off", func() {
+		for _, control := range []bool{false, true} {
+			name := fmt.Sprintf("outbox-garam-source-%t", control)
+			agentFrom(name, agentv1alpha1.DesiredSourceGaram)
+			_, err := reconcileAgentWithAdapterControl(name, control)
+			Expect(err).NotTo(HaveOccurred())
+			pod := statefulSetFor(name).Spec.Template.Spec
+			adapter := initContainerOf(pod, adapterContainerName)
+
+			By("the outbox's maker, before the adapter")
+			outboxAt := slices.IndexFunc(pod.InitContainers, func(c corev1.Container) bool { return c.Name == outboxContainerName })
+			adapterAt := slices.IndexFunc(pod.InitContainers, func(c corev1.Container) bool { return c.Name == adapterContainerName })
+			Expect(outboxAt).To(SatisfyAll(BeNumerically(">=", 0), BeNumerically("<", adapterAt)), "switch %t", control)
+
+			By("the outbox mounted into the adapter at its subPath, and named in its settings")
+			Expect(adapter.VolumeMounts).To(ContainElement(
+				corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: agentTypeSherlock.outboxDir()}))
+			Expect(environmentOf(adapter)).To(HaveKeyWithValue(adapterOutboxDirSetting, outboxMountPath))
+
+			By("none of the control settings, no control socket, and no control root")
+			Expect(settingNames(adapter)).To(ConsistOf(legacySettings), "switch %t", control)
+			Expect(settingNames(adapter)).NotTo(ContainElements(adapterControlURLSetting, adapterControlRootSetting,
+				adapterPlacementTokenSetting, "GARAM_ADAPTER_CONTROL_SOCKET"))
+			Expect(adapter.VolumeMounts).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
+			Expect(pod.Volumes).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
+		}
 	})
 
 	It("mounts the agent's outbox into the adapter alone, and nothing else of the state claim", func() {
