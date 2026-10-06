@@ -246,13 +246,23 @@ verify-pins: ## Report every SHA-pinned action and fail when its version comment
 	[ "$$resolved" -gt 0 ] || { echo "pin check: $$total \`uses:\` lines and not one pin to resolve, so nothing was compared" >&2; exit 1; }; \
 	echo "pin check: $$total action pins across $$files tracked YAML files, $$resolved distinct tags resolved, every version comment names the SHA beside it"
 
+# Both images build from the repository root through the one .dockerignore, which
+# ignores everything and re-includes what the build needs. A file Go source embeds
+# and the ignore file leaves out stops `go build` inside the image build only:
+# make ci and the e2e suites build outside Docker, which is how #301 reached dev.
+# This checks every //go:embed file of every package against the ignore file, read
+# with the matcher BuildKit applies, without building an image.
+.PHONY: verify-build-context
+verify-build-context: ## Fail when .dockerignore leaves out a file Go source embeds, which an image build would then miss.
+	go run ./hack/buildcontext
+
 # The single name for the whole check set. CI invokes this target, not the
 # commands inside it. `lint` runs before `fmt` so unformatted code fails the
 # check instead of being rewritten and passing. `verify-pins` runs last because
 # it is the one step that needs the network, and a contributor who cannot reach
 # github.com cannot push what the rest of the set just cleared either.
 .PHONY: ci
-ci: lint-config lint fmt test build verify-pins ## Run the whole check set — lint, format, test, build.
+ci: lint-config lint fmt test build verify-build-context verify-pins ## Run the whole check set — lint, format, test, build, the image build context.
 
 ##@ Build
 
