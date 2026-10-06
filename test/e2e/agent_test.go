@@ -110,6 +110,24 @@ func waitForAgentPod() {
 	}, 3*time.Minute, time.Second).Should(Succeed())
 }
 
+// deleteAgent deletes the Agent named name and waits until it and its Pod are
+// gone. It runs while the manager runs: only the manager releases the writer
+// fence's finalizers, so an Agent left for undeploy to find keeps its namespace
+// terminating with nothing left to release it (#287).
+func deleteAgent(name string) {
+	GinkgoHelper()
+
+	_, err := kubectlIn("delete", "agent", name, "--ignore-not-found", "--wait=false")
+	Expect(err).NotTo(HaveOccurred())
+	for kind, object := range map[string]string{"agent": name, "pod": name + "-0"} {
+		Eventually(func(g Gomega) {
+			output, err := kubectlIn("get", kind, object, "--ignore-not-found", "-o", "name")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(output).To(BeEmpty(), "%s %s is still there", kind, object)
+		}, 5*time.Minute, 2*time.Second).Should(Succeed())
+	}
+}
+
 // agentCondition reads one field of one condition off an Agent. An absent
 // condition reads as the empty string, which no assertion here accepts.
 func agentCondition(agent, conditionType, field string) (string, error) {
@@ -155,6 +173,11 @@ var _ = Describe("Agent workload", Ordered, func() {
 	})
 
 	AfterAll(func() {
+		// A spec that failed before the one deleting the Agent under test leaves
+		// it, so it is deleted here, while the manager still runs.
+		By("deleting the Agent under test, and waiting until it and its Pod are gone")
+		deleteAgent(agentUnderTest)
+
 		By("removing the namespace and everything the Agent produced in it")
 		_, _ = utils.Run(exec.Command("kubectl", "delete", "ns", agentTestNamespace,
 			"--ignore-not-found", "--timeout=2m"))
@@ -205,9 +228,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 		apply.Stdin = strings.NewReader(agentManifestFor(agentNeverStarts, unstartableImage))
 		_, err := utils.Run(apply)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create the Agent that cannot start")
-		DeferCleanup(func() {
-			_, _ = kubectlIn("delete", "agent", agentNeverStarts, "--ignore-not-found", "--timeout=2m")
-		})
+		DeferCleanup(func() { deleteAgent(agentNeverStarts) })
 
 		// This is the reported defect written as a spec: the operator wrote the
 		// workload it was asked for, so Synced is True and stays True, and
@@ -390,9 +411,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 `)
 		_, err := utils.Run(apply)
 		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() {
-			_, _ = kubectlIn("delete", "agent", migrated, "--ignore-not-found", "--timeout=2m")
-		})
+		DeferCleanup(func() { deleteAgent(migrated) })
 
 		uidOf := func(kind, name string) (string, error) {
 			return kubectlIn("get", kind, name, "-o", "jsonpath={.metadata.uid}")
