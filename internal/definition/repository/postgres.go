@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,9 +16,6 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
-//go:embed schema.sql
-var schema string
-
 // uniqueViolation is PostgreSQL's SQLSTATE for a duplicate key.
 const uniqueViolation = "23505"
 
@@ -33,14 +29,6 @@ var _ definition.Repository = (*Postgres)(nil)
 // NewPostgres returns a Postgres storing through pool.
 func NewPostgres(pool *pgxpool.Pool) *Postgres {
 	return &Postgres{pool: pool}
-}
-
-// ApplySchema creates whatever part of the schema the database does not hold yet.
-func (p *Postgres) ApplySchema(ctx context.Context) error {
-	if _, err := p.pool.Exec(ctx, schema); err != nil {
-		return storeError("apply schema", err)
-	}
-	return nil
 }
 
 // settingsColumn is a profile's settings as stored.

@@ -120,10 +120,9 @@ func run(ctx context.Context, o options, databaseURL string) error {
 	defer pool.Close()
 
 	store := repository.NewPostgres(pool)
-	if err := store.ApplySchema(ctx); err != nil {
+	if err := store.Migrate(ctx, slog.Default()); err != nil {
 		return err
 	}
-	slog.Info("store schema applied")
 
 	garam := garammachine.New(o.garamURL, machine)
 	definitions := definition.NewService(store, registrar.NewGaram(garam), issuer.NewGaram(garam))
