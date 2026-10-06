@@ -6,7 +6,7 @@ import "context"
 type Service interface {
 	PublishProfile(ctx context.Context, org, name string, settings ExecutionSettings) (Profile, error)
 	PublishTemplate(ctx context.Context, org string, t Template) (Template, error)
-	CreateAgent(ctx context.Context, key RequestKey, actor string, template TemplateRef) (Creation, error)
+	CreateAgent(ctx context.Context, in CreateInput) (created Creation, first bool, err error)
 	Configure(ctx context.Context, in ConfigureInput) (Applied, error)
 	GetDefinition(ctx context.Context, agent GRN) (Definition, error)
 	Position(ctx context.Context) (Position, error)

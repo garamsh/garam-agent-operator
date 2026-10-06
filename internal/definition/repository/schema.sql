@@ -47,18 +47,30 @@ CREATE TABLE IF NOT EXISTS definitions (
     CHECK ((assignment_operator IS NULL) = (assignment_epoch IS NULL))
 );
 
+-- One row per create request, keyed as garam keys the operation's request id. The binding
+-- columns are compared on a repeat, not interpreted.
 CREATE TABLE IF NOT EXISTS creations (
-    actor            text   NOT NULL,
-    organization     text   NOT NULL,
-    request_id       text   NOT NULL,
-    template_name    text   NOT NULL,
-    template_version bigint NOT NULL,
-    state            text   NOT NULL CHECK (state IN ('pending', 'registered', 'failed')),
+    organization     text    NOT NULL,
+    request_id       text    NOT NULL,
+    actor            text    NOT NULL,
+    operation        text    NOT NULL,
+    target           text    NOT NULL,
+    body_sha256      text    NOT NULL,
+    operation_ref    text    NOT NULL,
+    controller       text    NOT NULL,
+    template_name    text    NOT NULL,
+    template_version bigint  NOT NULL,
+    profile_name     text    NOT NULL,
+    profile_version  bigint  NOT NULL,
+    state            text    NOT NULL CHECK (state IN ('pending', 'registered', 'failed')),
     agent            text,
+    epoch            text,
     reason           text,
+    conflict         boolean NOT NULL DEFAULT false,
     PRIMARY KEY (organization, request_id),
     FOREIGN KEY (organization, template_name, template_version) REFERENCES templates (organization, name, version),
-    CHECK ((state = 'registered') = (agent IS NOT NULL)),
+    FOREIGN KEY (organization, profile_name, profile_version) REFERENCES profiles (organization, name, version),
+    CHECK ((state = 'registered') = (agent IS NOT NULL AND epoch IS NOT NULL)),
     CHECK ((state = 'failed') = (reason IS NOT NULL))
 );
 

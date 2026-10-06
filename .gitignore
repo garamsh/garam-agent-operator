@@ -45,3 +45,4 @@ Dockerfile.cross
 
 # Kubernetes generated files — skip generated files, except for vendored ones
 !vendor/**/zz_generated.*
+/control

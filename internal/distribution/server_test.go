@@ -93,9 +93,13 @@ func (p *prover) setAgentB(v verdict) {
 // registrar registers each creation under the GRN its request id names.
 type registrar struct{}
 
-func (registrar) Register(_ context.Context, key definition.RequestKey) (definition.GRN, error) {
-	return definition.GRN(key.RequestID), nil
+func (registrar) Register(_ context.Context, r definition.Registration) (definition.Registered, error) {
+	return definition.Registered{Agent: definition.GRN(r.Request.RequestID), Epoch: "1"}, nil
 }
+
+// creator is the controller the fixture's agents are created on, so revision 1 is no controller's
+// under test and each test's revisions come from configure.
+const creator = "grn:root:default:operator:creator"
 
 // env is the controller routes over an in-memory store holding agentA and agentB recorded for
 // controller under epoch, and agentC recorded for another controller.
@@ -138,8 +142,13 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 		profile:     profile,
 	}
 	for _, a := range []string{agentA, agentB, agentC} {
-		_, err := definitions.CreateAgent(ctx, definition.RequestKey{Organization: "acme", RequestID: a}, "actor",
-			definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version})
+		_, _, err := definitions.CreateAgent(ctx, definition.CreateInput{
+			Request:    definition.RequestKey{Organization: "acme", RequestID: a},
+			Binding:    definition.Binding{Actor: "actor", Operation: "agent:create", Target: creator},
+			Controller: creator,
+			Template:   definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
+			Profile:    profile,
+		})
 		require.NoError(t, err)
 	}
 	e.configure(t, agentA, controller, 1)

@@ -376,20 +376,30 @@ func (p *Postgres) GetDefinition(ctx context.Context, agent definition.GRN) (def
 }
 
 func (p *Postgres) BeginCreation(ctx context.Context, c definition.Creation) (definition.Creation, error) {
-	_, err := p.pool.Exec(ctx, beginCreation,
-		c.Key.Organization, c.Key.RequestID, c.Actor, c.Template.Name, int64(c.Template.Version))
+	b := c.Binding
+	_, err := p.pool.Exec(ctx, beginCreation, c.Key.Organization, c.Key.RequestID, b.Actor, b.Operation, b.Target,
+		b.BodySHA256, b.OperationRef, c.Controller, c.Template.Name, int64(c.Template.Version),
+		c.Profile.Name, int64(c.Profile.Version))
 	if err != nil {
 		return definition.Creation{}, storeError("begin creation", err)
 	}
 	return scanCreation(p.pool.QueryRow(ctx, getCreation, c.Key.Organization, c.Key.RequestID), c.Key)
 }
 
-func (p *Postgres) RegisterCreation(ctx context.Context, key definition.RequestKey, d definition.Definition) (definition.Creation, error) {
+func (p *Postgres) RegisterCreation(
+	ctx context.Context, key definition.RequestKey, d definition.Definition,
+) (definition.Creation, bool, error) {
+	if d.Assignment == nil {
+		return definition.Creation{}, false, errors.New("register creation: the first revision records no assignment")
+	}
 	raw, err := encodeConfig(d.Config)
 	if err != nil {
-		return definition.Creation{}, storeError("encode configuration", err)
+		return definition.Creation{}, false, storeError("encode configuration", err)
 	}
-	var c definition.Creation
+	var (
+		c          definition.Creation
+		registered bool
+	)
 	err = p.inTx(ctx, func(tx pgx.Tx) error {
 		c, err = scanCreation(tx.QueryRow(ctx, lockCreation, key.Organization, key.RequestID), key)
 		if err != nil {
@@ -407,20 +417,21 @@ func (p *Postgres) RegisterCreation(ctx context.Context, key definition.RequestK
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, registerCreation, key.Organization, key.RequestID, string(d.Agent)); err != nil {
+		if _, err := tx.Exec(ctx, registerCreation, key.Organization, key.RequestID, string(d.Agent), *epoch); err != nil {
 			return err
 		}
-		c.Outcome = definition.Registered{Agent: d.Agent}
+		c.Outcome = definition.Registered{Agent: d.Agent, Epoch: *epoch}
+		registered = true
 		return nil
 	})
 	if err != nil {
-		return definition.Creation{}, storeError("register creation", err)
+		return definition.Creation{}, false, storeError("register creation", err)
 	}
-	return c, nil
+	return c, registered, nil
 }
 
-func (p *Postgres) FailCreation(ctx context.Context, key definition.RequestKey, reason string) (definition.Creation, error) {
-	if _, err := p.pool.Exec(ctx, failCreation, key.Organization, key.RequestID, reason); err != nil {
+func (p *Postgres) FailCreation(ctx context.Context, key definition.RequestKey, failed definition.Failed) (definition.Creation, error) {
+	if _, err := p.pool.Exec(ctx, failCreation, key.Organization, key.RequestID, failed.Reason, failed.Conflict); err != nil {
 		return definition.Creation{}, storeError("fail creation", err)
 	}
 	return scanCreation(p.pool.QueryRow(ctx, getCreation, key.Organization, key.RequestID), key)
@@ -429,27 +440,26 @@ func (p *Postgres) FailCreation(ctx context.Context, key definition.RequestKey, 
 // scanCreation reads one creation row, the outcome from its state column.
 func scanCreation(row pgx.Row, key definition.RequestKey) (definition.Creation, error) {
 	var (
-		actor           string
-		templateName    string
-		templateVersion int64
-		state           string
-		agent, reason   *string
+		c                               = definition.Creation{Key: key}
+		templateVersion, profileVersion int64
+		state                           string
+		agent, epoch, reason            *string
+		conflict                        bool
 	)
-	if err := row.Scan(&actor, &templateName, &templateVersion, &state, &agent, &reason); err != nil {
+	b := &c.Binding
+	err := row.Scan(&b.Actor, &b.Operation, &b.Target, &b.BodySHA256, &b.OperationRef, &c.Controller,
+		&c.Template.Name, &templateVersion, &c.Profile.Name, &profileVersion, &state, &agent, &epoch, &reason, &conflict)
+	if err != nil {
 		return definition.Creation{}, notFound("get creation", err)
 	}
-	c := definition.Creation{
-		Key:      key,
-		Actor:    actor,
-		Template: definition.TemplateRef{Name: templateName, Version: definition.Version(templateVersion)},
-	}
+	c.Template.Version, c.Profile.Version = definition.Version(templateVersion), definition.Version(profileVersion)
 	switch {
 	case state == "pending":
 		c.Outcome = definition.Pending{}
-	case state == "registered" && agent != nil:
-		c.Outcome = definition.Registered{Agent: definition.GRN(*agent)}
+	case state == "registered" && agent != nil && epoch != nil:
+		c.Outcome = definition.Registered{Agent: definition.GRN(*agent), Epoch: *epoch}
 	case state == "failed" && reason != nil:
-		c.Outcome = definition.Failed{Reason: *reason}
+		c.Outcome = definition.Failed{Reason: *reason, Conflict: conflict}
 	default:
 		return definition.Creation{}, fmt.Errorf("creation in state %q violates the schema's checks", state)
 	}

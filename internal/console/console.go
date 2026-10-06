@@ -8,8 +8,12 @@ import (
 // Authority is the opaque operation authority the console presents. It is never logged.
 type Authority string
 
-// OperationConfigure is the operation an authority binds to change an agent's definition.
-const OperationConfigure = "agent:configure"
+const (
+	// OperationConfigure is the operation an authority binds to change an agent's definition.
+	OperationConfigure = "agent:configure"
+	// OperationCreate is the operation an authority binds to create an agent on a controller.
+	OperationCreate = "agent:create"
+)
 
 // Binding is what an authority binds, as garam's introspection answers it.
 type Binding struct {

@@ -38,7 +38,7 @@ func (f fixture) configure(requestID, ego string, expected definition.Revision) 
 func registered(t *testing.T) fixture {
 	t.Helper()
 	f := newFixture(t, registration{agent: firstAgent})
-	_, err := f.service.CreateAgent(context.Background(), key("create"), actor, f.template)
+	_, _, err := f.service.CreateAgent(context.Background(), f.create("create", f.template))
 	require.NoError(t, err)
 	return f
 }
@@ -94,8 +94,8 @@ func TestConfigure_RequestIDReusedForAnotherBindingRefused(t *testing.T) {
 		{"another actor", func(in *definition.ConfigureInput) { in.Binding.Actor = "grn:acme:default:user:other" }},
 		{"another operation", func(in *definition.ConfigureInput) { in.Binding.Operation = "agent:create" }},
 		{"another target", func(in *definition.ConfigureInput) { in.Binding.Target = string(secondAgent) }},
-		{"another body", func(in *definition.ConfigureInput) { in.Binding.BodySHA256 = "other" }},
-		{"another operation reference", func(in *definition.ConfigureInput) { in.Binding.OperationRef = "other" }},
+		{"another body", func(in *definition.ConfigureInput) { in.Binding.BodySHA256 = other }},
+		{"another operation reference", func(in *definition.ConfigureInput) { in.Binding.OperationRef = other }},
 		{"another assignment", func(in *definition.ConfigureInput) { in.Binding.Assignment.Epoch = "8" }},
 		{"another agent", func(in *definition.ConfigureInput) { in.Agent = secondAgent }},
 	}
@@ -126,7 +126,7 @@ func TestConfigure_UnregisteredAgentRefused(t *testing.T) {
 	require.ErrorIs(t, err, definition.ErrNotFound)
 
 	// Control: once the agent is registered, the same request is accepted.
-	_, err = f.service.CreateAgent(ctx, key("create"), actor, f.template)
+	_, _, err = f.service.CreateAgent(ctx, f.create("create", f.template))
 	require.NoError(t, err)
 	_, err = f.service.Configure(ctx, f.configure("c1", "ego", 1))
 	require.NoError(t, err)

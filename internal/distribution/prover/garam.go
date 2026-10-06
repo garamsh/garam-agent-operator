@@ -48,7 +48,7 @@ func (g *Garam) Prove(ctx context.Context, controller string, leafPEM []byte, ag
 	if agent != "" {
 		in.Agent = &agent
 	}
-	answer, err := g.machine.Post(ctx, "/operators/"+url.PathEscape(controller)+"/introspection", in)
+	answer, err := g.machine.Post(ctx, garammachine.OperationAuthority, "/operators/"+url.PathEscape(controller)+"/introspection", in)
 	if errors.Is(err, garammachine.ErrUndecided) {
 		return distribution.Proof{}, fmt.Errorf("%w: %v", distribution.ErrUndecided, err)
 	}

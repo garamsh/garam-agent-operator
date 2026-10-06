@@ -10,17 +10,16 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
-// k8s is the controller binding() records every configure for.
-const k8s = "grn:acme:default:operator:k8s"
-
 func TestDesired_OffersTheLatestRevisionRecordedForTheController(t *testing.T) {
 	ctx := context.Background()
 	f := registered(t)
 
-	// Revision 1, from the creation, records no assignment and is offered to no controller.
-	none, err := f.service.Desired(ctx, k8s, 10)
+	// Revision 1, from the creation, is recorded for the controller the agent was created on.
+	created, err := f.service.Desired(ctx, k8s, 10)
 	require.NoError(t, err)
-	assert.Empty(t, none.Revisions)
+	require.Len(t, created.Revisions, 1)
+	assert.Equal(t, definition.Revision(1), created.Revisions[0].Definition.Revision)
+	assert.Equal(t, &definition.Assignment{Operator: k8s, Epoch: "1"}, created.Revisions[0].Definition.Assignment)
 
 	_, err = f.service.Configure(ctx, f.configure("c1", "first", 1))
 	require.NoError(t, err)

@@ -140,13 +140,33 @@ type RequestKey struct {
 	RequestID    string
 }
 
-// Creation records one request to create an agent from a template, and how it ended.
-// A repeat of its key by another actor, or naming another template, is another request.
+// CreateInput is a request to create an agent assigned to a controller, from a template version
+// under a profile version.
+type CreateInput struct {
+	Request    RequestKey
+	Binding    Binding
+	Controller string
+	Template   TemplateRef
+	Profile    ProfileRef
+}
+
+// Creation records one request to create an agent, and how it ended. A repeat of its key with
+// another binding, controller, template or profile is another request.
 type Creation struct {
-	Key      RequestKey
-	Actor    string
-	Template TemplateRef
-	Outcome  Outcome
+	Key        RequestKey
+	Binding    Binding
+	Controller string
+	Template   TemplateRef
+	Profile    ProfileRef
+	Outcome    Outcome
+}
+
+// Registration is what garam is asked to create an agent under: the request, the controller the
+// agent is assigned to, and the operation reference the console's authority carried.
+type Registration struct {
+	Request      RequestKey
+	Controller   string
+	OperationRef string
 }
 
 // Binding is what garam's operation authority bound a console request to. It is stored
@@ -209,14 +229,18 @@ type Outcome interface {
 // Pending is a creation garam has not yet answered.
 type Pending struct{}
 
-// Registered is a creation garam registered, under the GRN it minted.
+// Registered is a creation garam registered, under the GRN it minted and the epoch of the
+// agent's first assignment.
 type Registered struct {
 	Agent GRN
+	Epoch string
 }
 
-// Failed is a creation garam refused.
+// Failed is a creation garam refused. Conflict is a refusal that names another request: another
+// reference, controller or request under the same request identifier.
 type Failed struct {
-	Reason string
+	Reason   string
+	Conflict bool
 }
 
 func (Pending) outcome()    {}
@@ -242,6 +266,18 @@ var (
 	// ErrInvalidStatus is returned for a status naming a revision the agent does not have.
 	ErrInvalidStatus = errors.New("status names a revision the agent does not have")
 
-	// ErrRegistrationRefused is wrapped by a Registrar whose registration garam refused.
+	// ErrRegistrationRefused is wrapped by a Registrar whose registration current authority refused.
 	ErrRegistrationRefused = errors.New("registration refused")
+
+	// ErrRegistrationConflict is wrapped by a Registrar whose registration garam refused as another
+	// request, or, for one already registered, because the agent has moved since.
+	ErrRegistrationConflict = errors.New("registration conflicts")
+
+	// ErrRegistrationUndecided is wrapped by a Registrar garam did not answer with a decision: it
+	// answered 500 or 503 on every attempt, or could not be reached. The creation's outcome is unknown.
+	ErrRegistrationUndecided = errors.New("registration undecided")
+
+	// ErrAssignmentMoved is returned for a repeat of a registered creation whose agent garam no
+	// longer holds where the creation assigned it.
+	ErrAssignmentMoved = errors.New("the agent's assignment moved since its creation")
 )

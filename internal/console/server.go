@@ -35,6 +35,7 @@ type server struct {
 
 // NewHandler returns the console's routes:
 //
+//	POST /v1/orgs/{org}/agents                    create an agent on a controller
 //	POST /v1/orgs/{org}/agents/{agent}/revisions  configure an agent's definition
 func NewHandler(c Config) http.Handler {
 	s := &server{
@@ -45,6 +46,7 @@ func NewHandler(c Config) http.Handler {
 		logger:       c.Logger,
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/orgs/{org}/agents", s.create)
 	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/revisions", s.configure)
 	return s.recoverPanics(mux)
 }

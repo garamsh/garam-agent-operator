@@ -13,10 +13,14 @@ import (
 )
 
 const (
-	// contractHeader and contractVersion name the contract garam's operation-authority routes
-	// speak (garam@f2ac780, api/machine.yaml); garam refuses any other version with 400.
-	contractHeader  = "Garam-Contract-Version"
-	contractVersion = "operation-authority.v1"
+	// contractHeader names the version a route of garam's speaks; garam refuses any other
+	// version with 400 (api/machine.yaml).
+	contractHeader = "Garam-Contract-Version"
+
+	// OperationAuthority is the contract of introspection and the controller proof (garam@f2ac780).
+	OperationAuthority = "operation-authority.v1"
+	// ManagedEnrollment is the contract of managed create (garam@7ca51b9).
+	ManagedEnrollment = "managed-enrollment.v1"
 
 	// maxAnswerBytes bounds an answer read from garam.
 	maxAnswerBytes = 1 << 20
@@ -47,18 +51,19 @@ type Answer struct {
 	Body   []byte
 }
 
-// Post sends body as JSON to path and returns garam's decided answer. Every route it is used for
-// decides without writing, so an attempt garam answered 500 or 503, or whose connection failed,
-// is sent again up to Attempts times, as garam's ADR-0050 places a listener's 5xx. A decided
-// answer under another contract version is refused.
-func (c *Client) Post(ctx context.Context, path string, body any) (Answer, error) {
+// Post sends body as JSON to path under contract and returns garam's decided answer. Every route
+// it is used for either decides without writing or answers a repeated request identifier with
+// the first request's outcome, so an attempt garam answered 500 or 503, or whose connection
+// failed, is sent again up to Attempts times, as garam's ADR-0050 places a listener's 5xx. A
+// decided answer under another contract version is refused.
+func (c *Client) Post(ctx context.Context, contract, path string, body any) (Answer, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Answer{}, fmt.Errorf("encode %s: %v", path, err)
 	}
 	wait := c.Backoff
 	for attempt := 1; ; attempt++ {
-		answer, retry, err := c.postOnce(ctx, path, payload)
+		answer, retry, err := c.postOnce(ctx, contract, path, payload)
 		if !retry {
 			return answer, err
 		}
@@ -75,13 +80,13 @@ func (c *Client) Post(ctx context.Context, path string, body any) (Answer, error
 }
 
 // postOnce sends one attempt, and reports whether garam left it undecided.
-func (c *Client) postOnce(ctx context.Context, path string, payload []byte) (Answer, bool, error) {
+func (c *Client) postOnce(ctx context.Context, contract, path string, payload []byte) (Answer, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
 	if err != nil {
 		return Answer{}, false, fmt.Errorf("build %s: %v", path, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(contractHeader, contractVersion)
+	req.Header.Set(contractHeader, contract)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return Answer{}, true, err
@@ -94,8 +99,8 @@ func (c *Client) postOnce(ctx context.Context, path string, payload []byte) (Ans
 	if resp.StatusCode == http.StatusInternalServerError || resp.StatusCode == http.StatusServiceUnavailable {
 		return Answer{}, true, fmt.Errorf("status %d", resp.StatusCode)
 	}
-	if got := resp.Header.Get(contractHeader); got != contractVersion {
-		return Answer{}, false, fmt.Errorf("%s answered %d under contract %q, want %q", path, resp.StatusCode, got, contractVersion)
+	if got := resp.Header.Get(contractHeader); got != contract {
+		return Answer{}, false, fmt.Errorf("%s answered %d under contract %q, want %q", path, resp.StatusCode, got, contract)
 	}
 	return Answer{Status: resp.StatusCode, Body: body}, false, nil
 }

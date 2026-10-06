@@ -49,7 +49,7 @@ type assignmentJSON struct {
 // Introspect reads what authority binds. Introspection consumes nothing, so garam's undecided
 // answers are retried by the machine client within its bound.
 func (g *Garam) Introspect(ctx context.Context, authority console.Authority) (console.Binding, error) {
-	answer, err := g.machine.Post(ctx, introspectionPath, map[string]string{"authority": string(authority)})
+	answer, err := g.machine.Post(ctx, garammachine.OperationAuthority, introspectionPath, map[string]string{"authority": string(authority)})
 	if errors.Is(err, garammachine.ErrUndecided) {
 		return console.Binding{}, fmt.Errorf("%w: %v", console.ErrAuthorityUndecided, err)
 	}

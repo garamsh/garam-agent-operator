@@ -23,6 +23,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/console"
 	"github.com/garamsh/garam-agent-operator/internal/console/introspector"
 	"github.com/garamsh/garam-agent-operator/internal/definition"
+	"github.com/garamsh/garam-agent-operator/internal/definition/registrar"
 	"github.com/garamsh/garam-agent-operator/internal/definition/repository"
 	"github.com/garamsh/garam-agent-operator/internal/distribution"
 	"github.com/garamsh/garam-agent-operator/internal/distribution/prover"
@@ -108,9 +109,8 @@ func run(ctx context.Context, o options, databaseURL string) error {
 	}
 	slog.Info("store schema applied")
 
-	// No route creates an agent yet, so no Registrar is wired (issue #211).
-	definitions := definition.NewService(store, nil)
 	garam := garammachine.New(o.garamURL, machine)
+	definitions := definition.NewService(store, registrar.NewGaram(garam))
 	api := http.NewServeMux()
 	api.Handle("/v1/orgs/", console.NewHandler(console.Config{
 		Definitions:  definitions,
