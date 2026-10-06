@@ -38,6 +38,7 @@ type server struct {
 //	POST /v1/operators/self/agents/{agent}/status  a report of what the controller observed and rendered
 //	POST /v1/operators/self/agents/{agent}/certificate-requests  a request for the agent's first certificate
 //	POST /v1/operators/self/agents/{agent}/placements            a registration of the agent's placement
+//	POST /v1/operators/self/agents/{agent}/recovery-requests     the certificate request of the agent's open recovery
 func NewHandler(c Config) http.Handler {
 	s := &server{
 		definitions: c.Definitions, prover: c.Prover, pollInterval: c.PollInterval, maxAgents: c.MaxAgents, logger: c.Logger,
@@ -47,6 +48,7 @@ func NewHandler(c Config) http.Handler {
 	mux.HandleFunc("POST /v1/operators/self/agents/{agent}/status", s.status)
 	mux.HandleFunc("POST /v1/operators/self/agents/{agent}/certificate-requests", s.requestCertificate)
 	mux.HandleFunc("POST /v1/operators/self/agents/{agent}/placements", s.registerPlacement)
+	mux.HandleFunc("POST /v1/operators/self/agents/{agent}/recovery-requests", s.prepareRecovery)
 	return s.recoverPanics(mux)
 }
 

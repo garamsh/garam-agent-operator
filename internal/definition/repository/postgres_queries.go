@@ -64,8 +64,11 @@ SELECT $1::text, $2::text, 1, $3::text, $4::bigint, $5::jsonb, (SELECT position 
 	// desired is the latest revision of each agent recorded for an operator, at most $2 of them.
 	desired = `
 SELECT d.agent, d.organization, d.revision, d.profile_name, d.profile_version, d.config, d.assignment_epoch,
-    p.settings, EXISTS (SELECT 1 FROM cutover_imports c WHERE c.agent = d.agent AND c.stage = 'switched')
+    p.settings, EXISTS (SELECT 1 FROM cutover_imports c WHERE c.agent = d.agent AND c.stage = 'switched'),
+    EXISTS (SELECT 1 FROM stops s WHERE s.agent = d.agent AND s.started_at IS NULL),
+    r.recovery_request_id, r.epoch
 FROM definitions d
+LEFT JOIN recoveries r ON r.agent = d.agent AND r.stage <> 'finalized'
 JOIN profiles p ON p.organization = d.organization AND p.name = d.profile_name AND p.version = d.profile_version
 WHERE d.assignment_operator = $1
   AND d.revision = (SELECT MAX(revision) FROM definitions latest WHERE latest.agent = d.agent)
@@ -238,4 +241,63 @@ WHERE agent = $1 AND revision = 1 AND assignment_operator IS NULL`
 	deleteCutover = `DELETE FROM cutover_imports WHERE agent = $1`
 
 	deleteImportedRevisions = `DELETE FROM definitions WHERE agent = $1`
+
+	// movePosition moves the position without storing a revision, so a controller waiting on the
+	// feed is answered a change to what it releases.
+	movePosition = `UPDATE positions SET position = position + 1`
+
+	recoveryColumns = `agent, recovery_request_id, organization, request_id, actor, operation, target, body_sha256,
+    operation_ref, assignment_operator, assignment_epoch, epoch, stage, garam_body, lineage, certificate_pem`
+
+	insertRecovery = `
+INSERT INTO recoveries (agent, recovery_request_id, organization, request_id, actor, operation, target,
+    body_sha256, operation_ref, assignment_operator, assignment_epoch, epoch, stage)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'requested')
+ON CONFLICT DO NOTHING`
+
+	getRecoveryByKey = `SELECT ` + recoveryColumns + ` FROM recoveries WHERE organization = $1 AND request_id = $2`
+
+	// latestRecovery is the agent's open recovery, else its most recently opened.
+	latestRecovery = `SELECT ` + recoveryColumns + ` FROM recoveries WHERE agent = $1
+ORDER BY stage <> 'finalized' DESC, opened_at DESC LIMIT 1`
+
+	getRecovery = `SELECT ` + recoveryColumns + ` FROM recoveries WHERE agent = $1 AND recovery_request_id = $2`
+
+	lockRecovery = `SELECT ` + recoveryColumns + ` FROM recoveries WHERE agent = $1 AND recovery_request_id = $2 FOR UPDATE`
+
+	prepareRecovery = `
+UPDATE recoveries SET stage = 'prepared', garam_body = $3, garam_body_sha256 = $4
+WHERE agent = $1 AND recovery_request_id = $2 AND stage = 'requested'`
+
+	finalizeRecovery = `
+UPDATE recoveries SET stage = 'finalized', lineage = $3, certificate_pem = $4
+WHERE agent = $1 AND recovery_request_id = $2 AND stage = 'prepared'`
+
+	stopColumns = `organization, request_id, agent, actor, operation, target, body_sha256, operation_ref,
+    assignment_operator, assignment_epoch, COALESCE(activation_id, ''), deactivated_at IS NOT NULL,
+    start_request_id, start_actor, start_operation, start_target, start_body_sha256, start_operation_ref,
+    start_assignment_operator, start_assignment_epoch`
+
+	insertStop = `
+INSERT INTO stops (organization, request_id, agent, actor, operation, target, body_sha256, operation_ref,
+    assignment_operator, assignment_epoch, activation_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''))
+ON CONFLICT DO NOTHING`
+
+	getStopByKey = `SELECT ` + stopColumns + ` FROM stops WHERE organization = $1 AND request_id = $2`
+
+	getStopByStartKey = `SELECT ` + stopColumns + ` FROM stops WHERE organization = $1 AND start_request_id = $2`
+
+	currentStop = `SELECT ` + stopColumns + ` FROM stops WHERE agent = $1 AND started_at IS NULL`
+
+	lockCurrentStop = currentStop + ` FOR UPDATE`
+
+	recordDeactivation = `
+UPDATE stops SET deactivated_at = COALESCE(deactivated_at, now()) WHERE organization = $1 AND request_id = $2`
+
+	recordStart = `
+UPDATE stops SET started_at = now(), start_request_id = $3, start_actor = $4, start_operation = $5,
+    start_target = $6, start_body_sha256 = $7, start_operation_ref = $8, start_assignment_operator = $9,
+    start_assignment_epoch = $10
+WHERE organization = $1 AND request_id = $2 AND started_at IS NULL`
 )

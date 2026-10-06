@@ -34,10 +34,25 @@ const (
 // error, and the only place one is logged.
 func (s *server) respondError(w http.ResponseWriter, err error) {
 	var (
-		mismatch *MismatchError
-		cutover  *CutoverRefusal
+		mismatch  *MismatchError
+		cutover   *CutoverRefusal
+		lifecycle *LifecycleRefusal
 	)
 	switch {
+	case errors.As(err, &lifecycle):
+		writeJSON(w, lifecycle.Status, errorBody{Kind: lifecycle.Kind, Message: lifecycle.Message})
+	case errors.Is(err, ErrLifecycleUndecided):
+		writeMessage(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, definition.ErrRecoveryOpen):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindRecoveryOpen, Message: err.Error()})
+	case errors.Is(err, definition.ErrRecoveryStage):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindRecoveryStage, Message: err.Error()})
+	case errors.Is(err, definition.ErrRecoveryMismatch):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindRecoveryMismatch, Message: err.Error()})
+	case errors.Is(err, definition.ErrAgentStopped):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindAgentStopped, Message: err.Error()})
+	case errors.Is(err, definition.ErrAgentNotStopped):
+		writeJSON(w, http.StatusConflict, errorBody{Kind: kindAgentNotStopped, Message: err.Error()})
 	case errors.As(err, &cutover):
 		writeJSON(w, cutover.Status, errorBody{Kind: cutover.Kind, Message: cutover.Message})
 	case errors.Is(err, ErrCutoverUndecided):

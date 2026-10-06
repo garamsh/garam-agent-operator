@@ -291,6 +291,16 @@ spec:
                 maxLength: 19
                 pattern: ^[1-9][0-9]*$
                 type: string
+              stopped:
+                description: |-
+                  stopped is the control service's stop of the agent without a
+                  replacement: its workload is scaled to no replica as for suspended, and
+                  its Pod is released only once its writers are seen to stop. It is
+                  written by this operator from the control service's feed on every
+                  render of an agent on the Control source, and cleared when the stop
+                  ends. It is set only where identity.source is Control; suspended stays
+                  a person's.
+                type: boolean
               storageClassName:
                 description: |-
                   storageClassName is the StorageClass the agent's persistent volumes are
@@ -392,6 +402,9 @@ spec:
             - message: revision is set only on an agent whose identity.source is Control
               rule: '!has(self.revision) || (has(self.identity) && has(self.identity.source)
                 && self.identity.source == ''Control'')'
+            - message: stopped is set only on an agent whose identity.source is Control
+              rule: '!has(self.stopped) || !self.stopped || (has(self.identity) &&
+                has(self.identity.source) && self.identity.source == ''Control'')'
           status:
             description: status defines the observed state of Agent
             properties:

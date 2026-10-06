@@ -32,6 +32,13 @@ type Service interface {
 	RecordActivation(ctx context.Context, agent GRN, requestID, activationID string) error
 	ActivationOfGeneration(ctx context.Context, agent GRN, generation string) (string, error)
 	RecordRuntimeStatus(ctx context.Context, agent GRN, report RuntimeReport) error
+	OpenRecovery(ctx context.Context, in OpenRecoveryInput) (r Recovery, first bool, err error)
+	RecoveryOf(ctx context.Context, org string, agent GRN) (Recovery, error)
+	PrepareRecovery(ctx context.Context, in InitialCertificateInput) (Recovery, error)
+	FinalizeRecovery(ctx context.Context, agent GRN, requestID string, c RecoveredCredential) (Recovery, error)
+	Stop(ctx context.Context, in StopInput) (s Stop, first bool, err error)
+	RecordDeactivation(ctx context.Context, key RequestKey) error
+	Start(ctx context.Context, in StopInput) (Stop, error)
 }
 
 type service struct {

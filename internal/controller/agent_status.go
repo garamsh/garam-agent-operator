@@ -81,9 +81,9 @@ func setStateIsolatedFromWorkload(agent *agentv1alpha1.Agent, statefulSet *appsv
 // carries no readiness probe, so a container that started is ready whatever it
 // is running.
 func setAvailableFromWorkload(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet) {
-	if agent.Spec.Suspended {
+	if heldStopped(agent) {
 		setAvailable(agent, metav1.ConditionFalse, agentv1alpha1.ReasonSuspended,
-			fmt.Sprintf("The spec suspends the agent, so StatefulSet %q asks for no replica", statefulSet.Name))
+			fmt.Sprintf("The spec %s the agent, so StatefulSet %q asks for no replica", stoppedBy(agent), statefulSet.Name))
 
 		return
 	}
@@ -102,6 +102,15 @@ func setAvailableFromWorkload(agent *agentv1alpha1.Agent, statefulSet *appsv1.St
 			statefulSet.Name))
 }
 
+// stoppedBy is what keeps the agent stopped, as a status message says it.
+func stoppedBy(agent *agentv1alpha1.Agent) string {
+	if agent.Spec.Suspended {
+		return "suspends"
+	}
+
+	return "stops (spec.stopped, the control service's stop)"
+}
+
 // setSuspendedFromPod records whether the agent is stopped as its spec asks.
 // True needs its Pod gone, not only asked to go: until then the Pod may still
 // hold the state volume, and its writer fence says why it is held.
@@ -114,12 +123,14 @@ func setSuspendedFromPod(agent *agentv1alpha1.Agent, podGone bool) {
 		ObservedGeneration: agent.Generation,
 	}
 	switch {
-	case agent.Spec.Suspended && podGone:
+	case heldStopped(agent) && podGone:
 		condition.Status, condition.Reason = metav1.ConditionTrue, agentv1alpha1.ReasonSuspended
-		condition.Message = fmt.Sprintf("The spec suspends the agent and Pod %q is gone, so nothing mounts its volumes", agentPodName(agent))
-	case agent.Spec.Suspended:
+		condition.Message = fmt.Sprintf("The spec %s the agent and Pod %q is gone, so nothing mounts its volumes",
+			stoppedBy(agent), agentPodName(agent))
+	case heldStopped(agent):
 		condition.Reason = agentv1alpha1.ReasonSuspending
-		condition.Message = fmt.Sprintf("The spec suspends the agent and Pod %q still exists. WriterFence says whether it is held", agentPodName(agent))
+		condition.Message = fmt.Sprintf("The spec %s the agent and Pod %q still exists. WriterFence says whether it is held",
+			stoppedBy(agent), agentPodName(agent))
 	}
 	meta.SetStatusCondition(&agent.Status.Conditions, condition)
 }

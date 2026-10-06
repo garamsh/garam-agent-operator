@@ -219,6 +219,17 @@ type DesiredRevision struct {
 	// Cutover is true for an agent whose revisions began with a cutover import garam recorded as
 	// switched: the controller takes it over from the source it was built from.
 	Cutover bool
+	// Stopped is true while a stop holds the agent: the controller keeps its runtime stopped.
+	Stopped bool
+	// Recovery is the agent's open recovery, nil where none is open: the controller prepares its
+	// certificate request.
+	Recovery *OpenRecovery
+}
+
+// OpenRecovery is what a controller prepares an open recovery's certificate request under.
+type OpenRecovery struct {
+	RequestID string
+	Epoch     string
 }
 
 // DesiredPage is a controller's whole candidate set: the latest revision of each agent recorded
@@ -487,6 +498,27 @@ var (
 	// ErrProfileVersionGap is returned for a profile version that is neither published nor the one
 	// after the latest, so versions stay numbered from 1 without a gap (ADR 0056).
 	ErrProfileVersionGap = errors.New("the profile version is not the next one")
+
+	// ErrRecoveryOpen is returned for a recovery of an agent that holds another open one.
+	ErrRecoveryOpen = errors.New("another recovery is open for the agent")
+
+	// ErrRecoveryStage is returned for a recovery step the stored recovery is not at the stage
+	// for: a finalize before its certificate request was prepared, or a prepare after it ended.
+	ErrRecoveryStage = errors.New("the recovery is not at a stage this step follows")
+
+	// ErrRecoveryMismatch is returned for a finalize whose body is not the prepared request's
+	// bytes, which are the bytes garam's handoff must bind.
+	ErrRecoveryMismatch = errors.New("the body is not the prepared recovery request")
+
+	// ErrRecoveryEpoch is returned for a prepared certificate request under another epoch than
+	// the one the recovery was opened under.
+	ErrRecoveryEpoch = errors.New("the certificate request names another epoch than the recovery")
+
+	// ErrAgentStopped is returned for an activation, or another stop, of an agent a stop holds.
+	ErrAgentStopped = errors.New("the agent is stopped")
+
+	// ErrAgentNotStopped is returned for a start of an agent no stop holds.
+	ErrAgentNotStopped = errors.New("the agent is not stopped")
 )
 
 // CertificateRequest is a controller's request for an agent's first certificate, as it was sent:
@@ -709,4 +741,84 @@ type CutoverImport struct {
 	// ConfigureRef is the durable agent:configure reference the switch carried, which revision 1's
 	// first activation is sent under.
 	ConfigureRef string
+}
+
+// RecoveryStage is how far an agent's credential recovery has gone (ADR 0057).
+type RecoveryStage string
+
+const (
+	// RecoveryRequested is a recovery opened from the console, whose certificate request the
+	// agent's controller has not prepared.
+	RecoveryRequested RecoveryStage = "requested"
+	// RecoveryPrepared is a recovery whose request to garam is stored, as the exact bytes an
+	// administrator's agent:recover handoff is minted over.
+	RecoveryPrepared RecoveryStage = "prepared"
+	// RecoveryFinalized is a recovery garam answered with the recovered credential.
+	RecoveryFinalized RecoveryStage = "finalized"
+)
+
+// Recovery is one credential recovery of an agent: the console request that opened it, the epoch
+// it was opened under, and, once prepared, the request garam is sent, kept as the exact bytes it
+// is sent as. One per agent is open, before it is finalized.
+type Recovery struct {
+	Agent GRN
+	// RequestID is the recovery's request identifier on garam: the one its certificate request
+	// and its finalize are sent under.
+	RequestID string
+	// Key and Binding are the console request that opened it, under an agent:recover authority
+	// of its own request identifier.
+	Key     RequestKey
+	Binding Binding
+	Epoch   string
+	Stage   RecoveryStage
+	// Body is the request garam is sent, nil until prepared: {requestId, epoch,
+	// certificateRequestPem} as RecoveryBody encodes it.
+	Body []byte
+	// Recovered is garam's answer, nil until finalized.
+	Recovered *RecoveredCredential
+}
+
+// RecoveredCredential is what garam answered a recovery with: the new lineage and the certificate
+// signed over the prepared request's key, which never left its holder.
+type RecoveredCredential struct {
+	Lineage        string
+	CertificatePEM string
+}
+
+// OpenRecoveryInput opens a recovery of Agent, recorded under the console request's key and the
+// authority that bound it.
+type OpenRecoveryInput struct {
+	Key       RequestKey
+	Binding   Binding
+	Agent     GRN
+	RequestID string
+}
+
+// Stop is one stop of an agent without a replacement: the console request that made it, the
+// activation that was the agent's latest when it was recorded, and whether garam has answered
+// that activation's deactivation. It is current until a start ends it, and kept after.
+type Stop struct {
+	Agent   GRN
+	Key     RequestKey
+	Binding Binding
+	// ActivationID is the agent's latest activation when the stop was recorded, empty where it
+	// had none and there was nothing to deactivate.
+	ActivationID string
+	Deactivated  bool
+	// Start is the console request that ended the stop, nil while it is current.
+	Start *StopEnd
+}
+
+// StopEnd is the console request that ended a stop.
+type StopEnd struct {
+	Key     RequestKey
+	Binding Binding
+}
+
+// StopInput stops Agent, or ends its stop, under the console request's key and the authority that
+// bound it.
+type StopInput struct {
+	Key     RequestKey
+	Binding Binding
+	Agent   GRN
 }

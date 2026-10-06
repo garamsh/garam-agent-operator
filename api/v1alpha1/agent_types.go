@@ -12,6 +12,7 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || !has(oldSelf.identity.source) || oldSelf.identity.source != 'Control' || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="identity.source cannot leave Control once set"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.model) || !has(oldSelf.model.embedding) || (has(self.model) && has(self.model.embedding) && self.model.embedding.name == oldSelf.model.embedding.name && self.model.embedding.baseURL == oldSelf.model.embedding.baseURL)",message="model.embedding.name and model.embedding.baseURL cannot be changed or removed once set, because the agent's stored memory is embedded under them"
 // +kubebuilder:validation:XValidation:rule="!has(self.revision) || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="revision is set only on an agent whose identity.source is Control"
+// +kubebuilder:validation:XValidation:rule="!has(self.stopped) || !self.stopped || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="stopped is set only on an agent whose identity.source is Control"
 type AgentSpec struct {
 	// type names the agent binary the workload carries. Today three are admitted
 	// — sherlock, claude-code and codex — and each maps to a different
@@ -70,6 +71,16 @@ type AgentSpec struct {
 	// person's to set: this operator never writes it.
 	// +optional
 	Suspended bool `json:"suspended,omitempty"`
+
+	// stopped is the control service's stop of the agent without a
+	// replacement: its workload is scaled to no replica as for suspended, and
+	// its Pod is released only once its writers are seen to stop. It is
+	// written by this operator from the control service's feed on every
+	// render of an agent on the Control source, and cleared when the stop
+	// ends. It is set only where identity.source is Control; suspended stays
+	// a person's.
+	// +optional
+	Stopped bool `json:"stopped,omitempty"`
 
 	// storageClassName is the StorageClass the agent's persistent volumes are
 	// provisioned from, its state's and its workspace's. Unset means the

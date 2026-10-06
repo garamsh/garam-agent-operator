@@ -125,4 +125,34 @@ type Repository interface {
 	// ClearInitialCertificate removes agent's stored request when it is still pending and equal
 	// to r, deciding and removing it in one step. Anything else is left as it is.
 	ClearInitialCertificate(ctx context.Context, agent GRN, r CertificateRequest) error
+
+	// OpenRecovery stores r as requested unless a recovery is stored under its console key, and
+	// returns the one stored under the key either way, and whether this call stored it. A new one
+	// for an agent with another open is ErrRecoveryOpen. Storing one moves the position.
+	OpenRecovery(ctx context.Context, r Recovery) (Recovery, bool, error)
+	// LatestRecovery returns the agent's open recovery, else its most recent one, or ErrNotFound.
+	LatestRecovery(ctx context.Context, agent GRN) (Recovery, error)
+	// PrepareRecovery stores body as the request of the agent's recovery requestID, which must
+	// be requested, or prepared with the same body; it returns the recovery stored. No such
+	// recovery is ErrNotFound, another epoch than its own ErrRecoveryEpoch, another body
+	// ErrRequestReused, and one already finalized with another body ErrRecoveryStage.
+	PrepareRecovery(ctx context.Context, agent GRN, requestID, epoch string, body []byte) (Recovery, error)
+	// FinalizeRecovery records c as the answer to the agent's prepared recovery requestID, and
+	// returns the recovery stored. A finalized one is answered as it is; a requested one is
+	// ErrRecoveryStage. Finalizing one moves the position.
+	FinalizeRecovery(ctx context.Context, agent GRN, requestID string, c RecoveredCredential) (Recovery, error)
+
+	// RecordStop stores s as the agent's current stop unless a stop is stored under its console
+	// key, and returns the one stored under the key either way, and whether this call stored it.
+	// A new one for an agent a stop already holds is ErrAgentStopped. Storing one moves the
+	// position. s.ActivationID is the caller's; the store records it as given.
+	RecordStop(ctx context.Context, s Stop) (Stop, bool, error)
+	// RecordDeactivation records that garam answered the deactivation of the stop stored under key.
+	RecordDeactivation(ctx context.Context, key RequestKey) error
+	// RecordStart ends the agent's current stop under end, unless a stop is already ended under
+	// end's key, which is returned as it is. With no current stop it is ErrAgentNotStopped.
+	// Ending one moves the position.
+	RecordStart(ctx context.Context, agent GRN, end StopEnd) (Stop, error)
+	// CurrentStop returns the stop holding the agent, or ErrNotFound.
+	CurrentStop(ctx context.Context, agent GRN) (Stop, error)
 }

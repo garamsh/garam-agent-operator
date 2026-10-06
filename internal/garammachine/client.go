@@ -89,19 +89,21 @@ func (c *Client) Post(ctx context.Context, contract, path string, body any) (Ans
 }
 
 // Call is one request to garam's machine listener. Body is sent as JSON, and nothing where it is
-// nil; Authorization, where set, is sent as that header.
+// nil; Raw, where set, is sent in its place as exactly these bytes, for a route whose authority
+// binds the digest of the body garam receives. Authorization, where set, is sent as that header.
 type Call struct {
 	Method        string
 	Contract      string
 	Path          string
 	Body          any
+	Raw           []byte
 	Authorization string
 }
 
 // Send sends call and returns garam's decided answer, retried as Post is.
 func (c *Client) Send(ctx context.Context, call Call) (Answer, error) {
-	var payload []byte
-	if call.Body != nil {
+	payload := call.Raw
+	if payload == nil && call.Body != nil {
 		encoded, err := json.Marshal(call.Body)
 		if err != nil {
 			return Answer{}, fmt.Errorf("encode %s: %v", call.Path, err)

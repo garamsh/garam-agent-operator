@@ -19,6 +19,8 @@ type Config struct {
 	Introspector Introspector
 	// Cutover carries a legacy agent's cutover stages to garam.
 	Cutover Cutover
+	// Lifecycle carries an agent's credential recovery and its deactivation to garam.
+	Lifecycle Lifecycle
 	// Audience is this control service's operator GRN, the audience every authority must name.
 	Audience string
 	// Now reads the clock an authority's expiry is checked against.
@@ -34,6 +36,7 @@ type server struct {
 	definitions  definition.Service
 	introspector Introspector
 	cutover      Cutover
+	lifecycle    Lifecycle
 	audience     string
 	now          func() time.Time
 	logger       *slog.Logger
@@ -51,11 +54,17 @@ type server struct {
 //	GET  /v1/orgs/{org}/profiles                      execution-profile:read  every published profile version
 //	GET  /v1/orgs/{org}/profiles/{name}/versions/{v}  execution-profile:read  one profile version
 //	GET  /v1/orgs/{org}/agents/{agent}/execution      agent:execution-read    an agent's execution
+//	POST /v1/orgs/{org}/agents/{agent}/recovery          agent:recover         open a credential recovery
+//	GET  /v1/orgs/{org}/agents/{agent}/recovery          agent:execution-read  the recovery and its prepared request
+//	POST /v1/orgs/{org}/agents/{agent}/recovery/finalize agent:recover         send garam the prepared request
+//	POST /v1/orgs/{org}/agents/{agent}/stop              agent:configure       stop the agent without a replacement
+//	POST /v1/orgs/{org}/agents/{agent}/start             agent:configure       end the agent's stop
 func NewHandler(c Config) http.Handler {
 	s := &server{
 		definitions:  c.Definitions,
 		introspector: c.Introspector,
 		cutover:      c.Cutover,
+		lifecycle:    c.Lifecycle,
 		audience:     c.Audience,
 		now:          c.Now,
 		logger:       c.Logger,
@@ -77,6 +86,11 @@ func NewHandler(c Config) http.Handler {
 	mux.HandleFunc("GET /v1/orgs/{org}/profiles", s.listProfiles)
 	mux.HandleFunc("GET /v1/orgs/{org}/profiles/{name}/versions/{version}", s.getProfile)
 	mux.HandleFunc("GET /v1/orgs/{org}/agents/{agent}/execution", s.execution)
+	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/recovery", s.openRecovery)
+	mux.HandleFunc("GET /v1/orgs/{org}/agents/{agent}/recovery", s.getRecovery)
+	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/recovery/finalize", s.finalizeRecovery)
+	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/stop", s.stop)
+	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/start", s.start)
 	return s.recoverPanics(s.cors(mux))
 }
 

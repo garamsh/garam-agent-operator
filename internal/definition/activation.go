@@ -13,12 +13,16 @@ func (s *service) WithActivationLock(ctx context.Context, agent GRN, fn func(con
 }
 
 // PrepareActivation returns the activation request stored under req's key, storing it first
-// where none is. A stored one with another request is ErrRequestReused. A new one is sent under
+// where none is. Nothing is activated while a stop holds the agent: ErrAgentStopped, a repeat
+// included. A stored one with another request is ErrRequestReused. A new one is sent under
 // the agent's latest activation as its anchor, and under the operation reference of the revision
 // it runs: none where the runtime reported that revision effective under that anchor, and
 // otherwise the reference that produced it, the creation's for revision 1 and the configure
 // request's after.
 func (s *service) PrepareActivation(ctx context.Context, agent GRN, req ActivationRequest) (Activation, error) {
+	if err := s.stopped(ctx, agent); err != nil {
+		return Activation{}, err
+	}
 	stored, err := s.repository.GetActivation(ctx, agent, req.RequestID)
 	if err == nil {
 		if stored.Request != req {

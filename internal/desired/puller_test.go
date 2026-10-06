@@ -99,7 +99,8 @@ func (f *feedDouble) reported() []string {
 	return append([]string(nil), f.statuses...)
 }
 
-// recordingRenderer records every revision rendered, as "<grn>@<revision>".
+// recordingRenderer records every revision rendered, as "<grn>@<revision>", with
+// "+stopped" where a stop held the agent.
 type recordingRenderer struct {
 	mu       sync.Mutex
 	rendered []string
@@ -112,7 +113,11 @@ func (r *recordingRenderer) Render(_ context.Context, agent Agent) error {
 	if err := r.refuse[agent.GRN]; err != nil {
 		return err
 	}
-	r.rendered = append(r.rendered, agent.GRN+"@"+agent.Revision)
+	rendered := agent.GRN + "@" + agent.Revision
+	if agent.Stopped {
+		rendered += "+stopped"
+	}
+	r.rendered = append(r.rendered, rendered)
 
 	return nil
 }
@@ -155,12 +160,13 @@ func startPuller(t *testing.T, renderer Renderer, refused time.Duration, script 
 }
 
 // answer is the desired feed's body for a cursor and agents, each given as
-// "<grn>@<revision>".
+// "<grn>@<revision>", with "+stopped" where a stop holds the agent.
 func answer(cursor string, agents ...string) feedReply {
 	type agent struct {
 		Agent    string `json:"agent"`
 		Revision string `json:"revision"`
 		Epoch    string `json:"epoch"`
+		Stopped  bool   `json:"stopped,omitempty"`
 	}
 	body := struct {
 		Cursor string  `json:"cursor"`
@@ -168,7 +174,8 @@ func answer(cursor string, agents ...string) feedReply {
 	}{Cursor: cursor, Agents: []agent{}}
 	for _, a := range agents {
 		grn, revision, _ := strings.Cut(a, "@")
-		body.Agents = append(body.Agents, agent{Agent: grn, Revision: revision, Epoch: "7"})
+		revision, stopped := strings.CutSuffix(revision, "+stopped")
+		body.Agents = append(body.Agents, agent{Agent: grn, Revision: revision, Epoch: "7", Stopped: stopped})
 	}
 	raw, _ := json.Marshal(body)
 
@@ -201,6 +208,21 @@ func TestPullerRendersEveryNewRevisionOnceAndReportsIt(t *testing.T) {
 	g.Expect(feed.requests[0].URL.Query().Get("waitSeconds")).To(Equal("0"), By)
 	g.Expect(feed.requests[3].URL.Query().Get("after")).To(Equal("3"), By)
 	g.Expect(feed.requests[3].URL.Query().Get("waitSeconds")).To(Equal("30"), By)
+}
+
+func TestPullerRendersAStopAndItsEndUnderTheSameRevision(t *testing.T) {
+	g := NewWithT(t)
+	renderer := &recordingRenderer{}
+
+	// A stop changes no revision, so the same revision is rendered again when a
+	// stop holds the agent and again when it ends; the repeated stopped answer is
+	// the control that an unchanged answer is still not rendered twice.
+	startPuller(t, renderer, time.Hour,
+		answer("1", agentA+"@1"), answer("2", agentA+"@1+stopped"), answer("3", agentA+"@1+stopped"),
+		answer("4", agentA+"@1"))
+
+	g.Eventually(renderer.renders).Should(Equal([]string{agentA + "@1", agentA + "@1+stopped", agentA + "@1"}))
+	g.Consistently(renderer.renders, 100*time.Millisecond).Should(HaveLen(3))
 }
 
 func TestPullerLeavesAWithheldAgentAloneAndRendersTheRest(t *testing.T) {

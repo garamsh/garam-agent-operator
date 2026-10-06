@@ -36,6 +36,11 @@ type Memory struct {
 	cutovers map[definition.GRN]definition.CutoverImport
 	// publications holds every publish request, by its key.
 	publications map[definition.RequestKey]definition.Publication
+	// recoveries holds every recovery of each agent, oldest first; stops holds every stop by its
+	// console key, and stopEnds the key of the stop each start ended.
+	recoveries map[definition.GRN][]definition.Recovery
+	stops      map[definition.RequestKey]definition.Stop
+	stopEnds   map[definition.RequestKey]definition.RequestKey
 }
 
 var _ definition.Repository = (*Memory)(nil)
@@ -65,6 +70,9 @@ func NewMemory() *Memory {
 		applied:      map[definition.GRN]definition.RuntimeApplied{},
 		cutovers:     map[definition.GRN]definition.CutoverImport{},
 		publications: map[definition.RequestKey]definition.Publication{},
+		recoveries:   map[definition.GRN][]definition.Recovery{},
+		stops:        map[definition.RequestKey]definition.Stop{},
+		stopEnds:     map[definition.RequestKey]definition.RequestKey{},
 	}
 }
 
@@ -233,7 +241,9 @@ func (m *Memory) Desired(_ context.Context, operator string, limit int) (definit
 		found = append(found, owed{
 			revision: definition.DesiredRevision{
 				Definition: cloneDefinition(latest), Settings: cloneSettings(profile.Settings),
-				Cutover: m.cutovers[agent].Stage == definition.CutoverSwitched,
+				Cutover:  m.cutovers[agent].Stage == definition.CutoverSwitched,
+				Stopped:  m.currentStopLocked(agent) != nil,
+				Recovery: m.openRecoveryLocked(agent),
 			},
 			position: m.positions[agent][len(revisions)-1],
 		})

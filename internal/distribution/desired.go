@@ -32,6 +32,18 @@ type desiredAgent struct {
 	// absent otherwise: the manager takes such an agent over from the source it was built from
 	// (ADR 0050).
 	Origin string `json:"origin,omitempty"`
+	// Stopped is true while a stop holds the agent, and absent otherwise: the controller keeps its
+	// runtime stopped, with no replacement (ADR 0057).
+	Stopped bool `json:"stopped,omitempty"`
+	// Recovery is the agent's open recovery, absent where none is open: the controller prepares
+	// its certificate request at recovery-requests (ADR 0057).
+	Recovery *recovery `json:"recovery,omitempty"`
+}
+
+// recovery is what an open recovery's certificate request is made under.
+type recovery struct {
+	RequestID string `json:"requestId"`
+	Epoch     string `json:"epoch"`
 }
 
 // originCutover is the origin of an agent whose revisions began with a cutover import.
@@ -183,7 +195,13 @@ func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 	if e := def.Config.Model.Embedding; e != nil {
 		embedded = &embedding{BaseURL: e.BaseURL, Name: e.Name, APIKeyRef: string(e.APIKey)}
 	}
+	var open *recovery
+	if d.Recovery != nil {
+		open = &recovery{RequestID: d.Recovery.RequestID, Epoch: d.Recovery.Epoch}
+	}
 	return desiredAgent{
+		Stopped:  d.Stopped,
+		Recovery: open,
 		Origin:   origin,
 		Agent:    string(def.Agent),
 		Revision: def.Revision.String(),
