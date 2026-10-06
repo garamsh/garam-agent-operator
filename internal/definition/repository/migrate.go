@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
@@ -100,23 +101,47 @@ func (p *Postgres) Migrate(ctx context.Context, logger *slog.Logger) error {
 	}
 	switch {
 	case dirty:
-		return fmt.Errorf("%w: the database is dirty at version %d: a migration failed there and its "+
-			"transaction left nothing, but the version was not recorded as done. Read that run's log, and once "+
-			"the schema is known to be version %d's predecessor, force the recorded version back to %d and start "+
-			"again", errSchemaRefused, from, from, from-1)
+		return dirtyRefusal(from, "on an earlier start, whose log names the cause")
 	case from > latest:
 		return fmt.Errorf("%w: the database is at schema version %d and this binary knows up to %d: a newer "+
 			"control service migrated it. Run that version or a later one; this one changes nothing",
 			errSchemaRefused, from, latest)
 	}
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return fmt.Errorf("migrate the schema from version %d: %v", from, err)
+		// golang-migrate's error carries the whole migration file; its cause is the database's own.
+		cause := err
+		var failed database.Error
+		if errors.As(err, &failed) && failed.OrigErr != nil {
+			cause = failed.OrigErr
+		}
+		if version, dirty, verr := m.Version(); verr == nil && dirty {
+			return dirtyRefusal(version, "with "+cause.Error())
+		}
+		return fmt.Errorf("migrate the schema from version %d: %v", from, cause)
 	}
 	logger.Info("store schema migrated", "from", from, "to", latest)
 	if from < 2 && latest >= 2 {
 		return p.logArchived(ctx, logger)
 	}
 	return nil
+}
+
+// dirtyRefusal is the error for a database dirty at version, stating the operator's step: a failed
+// migration's transaction kept nothing, so the schema is the one before it.
+func dirtyRefusal(version uint, cause string) error {
+	return fmt.Errorf("%w: schema migration %d failed %s, and its transaction kept nothing, so the schema is "+
+		"still the one before it; the database is recorded dirty at version %d. Correct or remove by hand the "+
+		"rows the cause names, then clear the flag with psql \"$CONTROL_DATABASE_URL\" -c '%s' and start "+
+		"again", errSchemaRefused, version, cause, version, clearDirty(version))
+}
+
+// clearDirty is the statement that records a database left dirty at version as the one before it,
+// which is what a failed migration's rolled-back transaction leaves.
+func clearDirty(version uint) string {
+	if version <= 1 {
+		return "DELETE FROM " + migrationsTable
+	}
+	return fmt.Sprintf("UPDATE %s SET version = %d, dirty = false", migrationsTable, version-1)
 }
 
 // adoption is the version a database with no migrations recorded is adopted at: 0 where there is

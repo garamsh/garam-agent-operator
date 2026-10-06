@@ -434,7 +434,7 @@ func TestMigration_RefusesADatabaseANewerBinaryMigrated(t *testing.T) {
 	}{
 		{"newer", `UPDATE schema_migrations SET version = 3`,
 			"the database is at schema version 3 and this binary knows up to 2", 3, false},
-		{"dirty", `UPDATE schema_migrations SET dirty = true`, "the database is dirty at version 2", 2, true},
+		{"dirty", `UPDATE schema_migrations SET dirty = true`, "the database is recorded dirty at version 2", 2, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -458,7 +458,9 @@ func TestMigration_RefusesADatabaseANewerBinaryMigrated(t *testing.T) {
 
 // TestMigration_RefusesADefinitionWhoseAgentNamesNoOrganization stops migration 2 on a definition
 // whose agent's GRN carries no organization, which is never archived, and keeps nothing of it: the
-// earlier tables and rows stand, and the version is left dirty for an operator.
+// earlier tables and rows stand, and the version is left dirty for an operator. The operator's step
+// the refusal states, the row corrected by hand and the flag cleared with the statement it names,
+// then lets the binary migrate.
 func TestMigration_RefusesADefinitionWhoseAgentNamesNoOrganization(t *testing.T) {
 	ctx := context.Background()
 	url, db := newDatabase(t)
@@ -472,6 +474,7 @@ func TestMigration_RefusesADefinitionWhoseAgentNamesNoOrganization(t *testing.T)
 	out := refusedOn(t, url)
 
 	assert.Contains(t, out, "definitions hold an agent whose GRN names no organization: "+agent)
+	assert.NotContains(t, out, "CREATE TABLE", "the refusal carries the migration's text, not its cause")
 	version, dirty := schemaVersion(t, db)
 	assert.Equal(t, latestVersion, version)
 	assert.True(t, dirty)
@@ -483,4 +486,25 @@ func TestMigration_RefusesADefinitionWhoseAgentNamesNoOrganization(t *testing.T)
 	require.NoError(t, db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
 WHERE table_name = 'definitions' AND column_name = 'organization')`).Scan(&organization))
 	assert.False(t, organization, "the failed migration kept part of its work")
+
+	// The operator's step: correct the row, clear the flag with the statement the refusal names, and
+	// start again.
+	const clear = "UPDATE schema_migrations SET version = 1, dirty = false"
+	// The log's text format escapes the command's double quotes; the statement is what must be exact.
+	require.Contains(t, out, `CONTROL_DATABASE_URL\" -c '`+clear+`'`)
+	corrected := "grn:" + real.orgID + ":default:agent:" + agent
+	_, err = db.Exec(ctx, `UPDATE definitions SET agent = $1 WHERE agent = $2`, corrected, agent)
+	require.NoError(t, err)
+	_, err = db.Exec(ctx, clear)
+	require.NoError(t, err)
+
+	startMigrating(t, url)
+
+	version, dirty = schemaVersion(t, db)
+	assert.Equal(t, latestVersion, version)
+	assert.False(t, dirty)
+	var migrated string
+	require.NoError(t, db.QueryRow(ctx, `SELECT organization FROM definitions WHERE agent = $1`, corrected).
+		Scan(&migrated))
+	assert.Equal(t, real.orgID, migrated)
 }
