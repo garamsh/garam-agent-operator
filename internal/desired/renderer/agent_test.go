@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
@@ -240,6 +241,46 @@ var _ = Describe("Renderer", func() {
 		Expect(agentFor(grn).Spec).To(Equal(before.Spec))
 	})
 
+	It("renders the profile's workspace size, clears it where the profile names none, and leaves a malformed one unrendered", func() {
+		rendering := renderer.NewAgent(k8sClient, namespace, image)
+		grn := "grn:acme:default:agent:8a8a8a8a8a8a8a8a"
+		sized := revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, "")
+		sized.Profile.WorkspaceStorageSize = ptr.To("5Gi")
+		Expect(rendering.Render(ctx, sized)).To(Succeed())
+		Expect(agentFor(grn).Spec.WorkspaceStorageSize).To(Equal(ptr.To(resource.MustParse("5Gi"))))
+
+		for _, size := range []string{"five", "0", "-1Gi"} {
+			malformed := revision(grn, "2", "7", map[string]string{requiredTool: firstPin}, "")
+			malformed.Profile.WorkspaceStorageSize = ptr.To(size)
+			Expect(rendering.Render(ctx, malformed)).To(MatchError(desired.ErrMalformed), "size %q", size)
+		}
+		Expect(agentFor(grn).Spec.WorkspaceStorageSize).To(Equal(ptr.To(resource.MustParse("5Gi"))))
+
+		By("a later revision whose profile names none, which leaves the claim to the storage size")
+		Expect(rendering.Render(ctx, revision(grn, "2", "7", map[string]string{requiredTool: firstPin}, ""))).
+			To(Succeed())
+		Expect(agentFor(grn).Spec.WorkspaceStorageSize).To(BeNil())
+	})
+
+	It("takes the workspace size from the feed's profile, beside an agent whose profile names none", func() {
+		sized := "grn:acme:default:agent:8b8b8b8b8b8b8b8b"
+		plain := "grn:acme:default:agent:8c8c8c8c8c8c8c8c"
+		withSize := revision(sized, "1", "7", map[string]string{requiredTool: firstPin}, "")
+		withSize.Profile.WorkspaceStorageSize = ptr.To("3Gi")
+		runPuller(serveFeed(feedAnswer("1", withSize, revision(plain, "1", "7", map[string]string{requiredTool: firstPin}, ""))))
+
+		Eventually(func(g Gomega) {
+			agent := &agentv1alpha1.Agent{}
+			g.Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: agentname.Agent(sized)}, agent)).To(Succeed())
+			g.Expect(agent.Spec.WorkspaceStorageSize).To(Equal(ptr.To(resource.MustParse("3Gi"))))
+		}).Should(Succeed())
+		Eventually(func(g Gomega) {
+			agent := &agentv1alpha1.Agent{}
+			g.Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: agentname.Agent(plain)}, agent)).To(Succeed())
+			g.Expect(agent.Spec.WorkspaceStorageSize).To(BeNil())
+		}).Should(Succeed())
+	})
+
 	It("leaves an agent the feed withholds as it was, deletes nothing, and renders the rest", func() {
 		withheld := "grn:acme:default:agent:6666666666666666"
 		kept := "grn:acme:default:agent:7777777777777777"
@@ -357,6 +398,8 @@ func feedAnswer(cursor string, agents ...desired.Agent) string {
 			Version     int64                       `json:"version"`
 			Resources   corev1.ResourceRequirements `json:"resources"`
 			StorageSize string                      `json:"storageSize"`
+
+			WorkspaceStorageSize *string `json:"workspaceStorageSize,omitempty"`
 		} `json:"profile"`
 		Configuration struct {
 			Model model             `json:"model"`
@@ -374,6 +417,7 @@ func feedAnswer(cursor string, agents ...desired.Agent) string {
 		w.Agent, w.Revision, w.Epoch = agent.GRN, agent.Revision, agent.Epoch
 		w.Profile.Name, w.Profile.Version = agent.Profile.Name, agent.Profile.Version
 		w.Profile.Resources, w.Profile.StorageSize = agent.Profile.Resources, agent.Profile.StorageSize
+		w.Profile.WorkspaceStorageSize = agent.Profile.WorkspaceStorageSize
 		m := agent.Configuration.Model
 		w.Configuration.Model = model{Provider: m.Provider, BaseURL: m.BaseURL, Name: m.Name, APIKeyRef: m.APIKeyRef}
 		if m.Embedding != nil {

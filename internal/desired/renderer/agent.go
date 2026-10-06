@@ -84,6 +84,7 @@ func (a *Agent) Render(ctx context.Context, agent desired.Agent) error {
 	rendered.Spec.Identity.Source = agentv1alpha1.DesiredSourceControl
 	rendered.Spec.Image = spec.Image
 	rendered.Spec.StorageSize = spec.StorageSize
+	rendered.Spec.WorkspaceStorageSize = spec.WorkspaceStorageSize
 	rendered.Spec.StorageClassName = spec.StorageClassName
 	rendered.Spec.Resources = spec.Resources
 	rendered.Spec.Tools = spec.Tools
@@ -116,6 +117,10 @@ func (a *Agent) specOf(agent desired.Agent) (agentv1alpha1.AgentSpec, error) {
 	if err != nil {
 		return agentv1alpha1.AgentSpec{}, fmt.Errorf("%w: storage size %q: %v", desired.ErrMalformed, agent.Profile.StorageSize, err)
 	}
+	workspaceSize, err := workspaceStorageSizeOf(agent.Profile.WorkspaceStorageSize)
+	if err != nil {
+		return agentv1alpha1.AgentSpec{}, err
+	}
 	model, err := modelOf(agent.Configuration.Model)
 	if err != nil {
 		return agentv1alpha1.AgentSpec{}, err
@@ -125,6 +130,7 @@ func (a *Agent) specOf(agent desired.Agent) (agentv1alpha1.AgentSpec, error) {
 		Image:                 a.image,
 		CredentialsSecretName: agentname.CredentialsSecret(agent.GRN),
 		StorageSize:           storageSize,
+		WorkspaceStorageSize:  workspaceSize,
 		StorageClassName:      agent.Profile.StorageClassName,
 		Resources:             agent.Profile.Resources,
 		Model:                 model,
@@ -192,4 +198,22 @@ func secretKeyOf(ref string) (*agentv1alpha1.SecretKeyReference, error) {
 	}
 
 	return &agentv1alpha1.SecretKeyReference{Name: secret, Key: key}, nil
+}
+
+// workspaceStorageSizeOf is the workspace claim's size a profile names, nil where it names none,
+// so the Agent's workspace claim follows its storage size (ADR 0044). A size that does not parse,
+// or is not above zero, leaves the revision unrendered.
+func workspaceStorageSizeOf(size *string) (*resource.Quantity, error) {
+	if size == nil {
+		return nil, nil
+	}
+	quantity, err := resource.ParseQuantity(*size)
+	if err != nil {
+		return nil, fmt.Errorf("%w: workspace storage size %q: %v", desired.ErrMalformed, *size, err)
+	}
+	if quantity.Sign() <= 0 {
+		return nil, fmt.Errorf("%w: workspace storage size %q is not above zero", desired.ErrMalformed, *size)
+	}
+
+	return &quantity, nil
 }

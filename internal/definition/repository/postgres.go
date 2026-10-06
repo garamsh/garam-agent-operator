@@ -45,9 +45,10 @@ func (p *Postgres) ApplySchema(ctx context.Context) error {
 
 // settingsColumn is a profile's settings as stored.
 type settingsColumn struct {
-	Resources        corev1.ResourceRequirements `json:"resources"`
-	StorageSize      resource.Quantity           `json:"storageSize"`
-	StorageClassName *string                     `json:"storageClassName,omitempty"`
+	Resources            corev1.ResourceRequirements `json:"resources"`
+	StorageSize          resource.Quantity           `json:"storageSize"`
+	StorageClassName     *string                     `json:"storageClassName,omitempty"`
+	WorkspaceStorageSize *resource.Quantity          `json:"workspaceStorageSize,omitempty"`
 }
 
 // configColumn is a configuration as stored.

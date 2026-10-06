@@ -601,6 +601,10 @@ func cloneSettings(s definition.ExecutionSettings) definition.ExecutionSettings 
 		name := *s.StorageClassName
 		c.StorageClassName = &name
 	}
+	if s.WorkspaceStorageSize != nil {
+		size := s.WorkspaceStorageSize.DeepCopy()
+		c.WorkspaceStorageSize = &size
+	}
 	return c
 }
 

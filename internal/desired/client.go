@@ -66,6 +66,8 @@ type (
 		Resources        corev1.ResourceRequirements `json:"resources"`
 		StorageSize      string                      `json:"storageSize"`
 		StorageClassName *string                     `json:"storageClassName"`
+
+		WorkspaceStorageSize *string `json:"workspaceStorageSize"`
 	}
 	wireConfiguration struct {
 		Model wireModel         `json:"model"`
@@ -152,6 +154,7 @@ func (c *Client) Desired(ctx context.Context, after string, wait time.Duration) 
 			Profile: Profile{
 				Name: agent.Profile.Name, Version: agent.Profile.Version, Resources: agent.Profile.Resources,
 				StorageSize: agent.Profile.StorageSize, StorageClassName: agent.Profile.StorageClassName,
+				WorkspaceStorageSize: agent.Profile.WorkspaceStorageSize,
 			},
 			Configuration: Configuration{
 				Model: Model{

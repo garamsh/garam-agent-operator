@@ -49,6 +49,9 @@ type Profile struct {
 	Resources        corev1.ResourceRequirements
 	StorageSize      string
 	StorageClassName *string
+	// WorkspaceStorageSize sizes the workspace claim, nil where the profile leaves it to
+	// StorageSize (ADR 0053).
+	WorkspaceStorageSize *string
 }
 
 // Configuration is the configuration a revision delivers to the agent.

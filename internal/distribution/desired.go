@@ -43,6 +43,9 @@ type profile struct {
 	Resources        corev1.ResourceRequirements `json:"resources"`
 	StorageSize      string                      `json:"storageSize"`
 	StorageClassName *string                     `json:"storageClassName"`
+	// WorkspaceStorageSize is absent where the profile leaves the workspace claim to StorageSize
+	// (ADR 0053).
+	WorkspaceStorageSize *string `json:"workspaceStorageSize,omitempty"`
 }
 
 type configuration struct {
@@ -163,6 +166,11 @@ func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 	if d.Cutover {
 		origin = originCutover
 	}
+	var workspaceSize *string
+	if settings.WorkspaceStorageSize != nil {
+		size := settings.WorkspaceStorageSize.String()
+		workspaceSize = &size
+	}
 	return desiredAgent{
 		Origin:   origin,
 		Agent:    string(def.Agent),
@@ -174,6 +182,8 @@ func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 			Resources:        settings.Resources,
 			StorageSize:      settings.StorageSize.String(),
 			StorageClassName: settings.StorageClassName,
+
+			WorkspaceStorageSize: workspaceSize,
 		},
 		Configuration: configuration{
 			Model: model{

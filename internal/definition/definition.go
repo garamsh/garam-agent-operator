@@ -142,6 +142,9 @@ type ExecutionSettings struct {
 	Resources        corev1.ResourceRequirements
 	StorageSize      resource.Quantity
 	StorageClassName *string
+	// WorkspaceStorageSize sizes the agent's workspace claim, nil where the profile leaves it to
+	// StorageSize (ADR 0044).
+	WorkspaceStorageSize *resource.Quantity
 }
 
 // Profile is a published, immutable version of a named set of execution settings. Its name and
