@@ -13,8 +13,8 @@ import (
 // Memory is a definition.Repository held in process, for tests and development.
 type Memory struct {
 	mu          sync.Mutex
-	profiles    map[string][]definition.Profile
-	templates   map[string][]definition.Template
+	profiles    map[named][]definition.Profile
+	templates   map[named][]definition.Template
 	definitions map[definition.GRN][]definition.Definition
 	// positions holds, beside each agent's revisions, the position each was stored at.
 	positions map[definition.GRN][]definition.Position
@@ -26,11 +26,17 @@ type Memory struct {
 
 var _ definition.Repository = (*Memory)(nil)
 
+// named is a profile's or a template's name within the organization that published it.
+type named struct {
+	org  string
+	name string
+}
+
 // NewMemory returns an empty Memory.
 func NewMemory() *Memory {
 	return &Memory{
-		profiles:    map[string][]definition.Profile{},
-		templates:   map[string][]definition.Template{},
+		profiles:    map[named][]definition.Profile{},
+		templates:   map[named][]definition.Template{},
 		definitions: map[definition.GRN][]definition.Definition{},
 		positions:   map[definition.GRN][]definition.Position{},
 		statuses:    map[definition.GRN]definition.Status{},
@@ -39,41 +45,43 @@ func NewMemory() *Memory {
 	}
 }
 
-func (m *Memory) PublishProfile(_ context.Context, name string, settings definition.ExecutionSettings) (definition.Profile, error) {
+func (m *Memory) PublishProfile(_ context.Context, org, name string, settings definition.ExecutionSettings) (definition.Profile, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	key := named{org: org, name: name}
 	p := definition.Profile{
 		Name:     name,
-		Version:  definition.Version(len(m.profiles[name]) + 1),
+		Version:  definition.Version(len(m.profiles[key]) + 1),
 		Settings: cloneSettings(settings),
 	}
-	m.profiles[name] = append(m.profiles[name], p)
+	m.profiles[key] = append(m.profiles[key], p)
 	return cloneProfile(p), nil
 }
 
-func (m *Memory) GetProfile(_ context.Context, ref definition.ProfileRef) (definition.Profile, error) {
+func (m *Memory) GetProfile(_ context.Context, org string, ref definition.ProfileRef) (definition.Profile, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	versions := m.profiles[ref.Name]
+	versions := m.profiles[named{org: org, name: ref.Name}]
 	if ref.Version < 1 || int(ref.Version) > len(versions) {
 		return definition.Profile{}, definition.ErrNotFound
 	}
 	return cloneProfile(versions[ref.Version-1]), nil
 }
 
-func (m *Memory) PublishTemplate(_ context.Context, t definition.Template) (definition.Template, error) {
+func (m *Memory) PublishTemplate(_ context.Context, org string, t definition.Template) (definition.Template, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	key := named{org: org, name: t.Name}
 	t = cloneTemplate(t)
-	t.Version = definition.Version(len(m.templates[t.Name]) + 1)
-	m.templates[t.Name] = append(m.templates[t.Name], t)
+	t.Version = definition.Version(len(m.templates[key]) + 1)
+	m.templates[key] = append(m.templates[key], t)
 	return cloneTemplate(t), nil
 }
 
-func (m *Memory) GetTemplate(_ context.Context, ref definition.TemplateRef) (definition.Template, error) {
+func (m *Memory) GetTemplate(_ context.Context, org string, ref definition.TemplateRef) (definition.Template, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	versions := m.templates[ref.Name]
+	versions := m.templates[named{org: org, name: ref.Name}]
 	if ref.Version < 1 || int(ref.Version) > len(versions) {
 		return definition.Template{}, definition.ErrNotFound
 	}
@@ -86,7 +94,7 @@ func (m *Memory) Configure(_ context.Context, r definition.Request, d definition
 	if stored, ok := m.requests[r.Key]; ok {
 		return stored, nil
 	}
-	if len(m.definitions[d.Agent]) == 0 {
+	if revisions := m.definitions[d.Agent]; len(revisions) == 0 || revisions[0].Organization != d.Organization {
 		return definition.Request{}, definition.ErrNotFound
 	}
 	r.Outcome = definition.Stale{}
@@ -126,7 +134,7 @@ func (m *Memory) Desired(_ context.Context, operator string, limit int) (definit
 		if latest.Assignment == nil || latest.Assignment.Operator != operator {
 			continue
 		}
-		profile := m.profiles[latest.Profile.Name][latest.Profile.Version-1]
+		profile := m.profiles[named{org: latest.Organization, name: latest.Profile.Name}][latest.Profile.Version-1]
 		found = append(found, owed{
 			revision: definition.DesiredRevision{Definition: cloneDefinition(latest), Settings: cloneSettings(profile.Settings)},
 			position: m.positions[agent][len(revisions)-1],

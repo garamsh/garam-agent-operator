@@ -122,14 +122,14 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 	ctx := context.Background()
 	definitions := definition.NewService(repository.NewMemory(), registrar{})
 	class := "standard"
-	p, err := definitions.PublishProfile(ctx, "small", definition.ExecutionSettings{
+	p, err := definitions.PublishProfile(ctx, "acme", "small", definition.ExecutionSettings{
 		Resources:        corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")}},
 		StorageSize:      resource.MustParse("1Gi"),
 		StorageClassName: &class,
 	})
 	require.NoError(t, err)
 	profile := definition.ProfileRef{Name: p.Name, Version: p.Version}
-	tmpl, err := definitions.PublishTemplate(ctx, definition.Template{Name: "researcher", Profile: profile})
+	tmpl, err := definitions.PublishTemplate(ctx, "acme", definition.Template{Name: "researcher", Profile: profile})
 	require.NoError(t, err)
 
 	e := &env{

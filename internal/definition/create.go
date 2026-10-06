@@ -7,11 +7,11 @@ import (
 )
 
 // CreateAgent registers an agent with garam and gives it a first revision copied from
-// the template. A repeated key returns the first request's outcome, and resumes it
+// the template, which is resolved in the key's organization only. A repeated key returns the first request's outcome, and resumes it
 // while garam has not yet answered; one from another actor or naming another template
 // is refused with ErrRequestReused.
 func (s *service) CreateAgent(ctx context.Context, key RequestKey, actor string, ref TemplateRef) (Creation, error) {
-	t, err := s.repository.GetTemplate(ctx, ref)
+	t, err := s.repository.GetTemplate(ctx, key.Organization, ref)
 	if err != nil {
 		return Creation{}, fmt.Errorf("template %s version %d: %w", ref.Name, ref.Version, err)
 	}
@@ -34,9 +34,10 @@ func (s *service) CreateAgent(ctx context.Context, key RequestKey, actor string,
 		return Creation{}, fmt.Errorf("register agent: %w", err)
 	}
 	return s.repository.RegisterCreation(ctx, key, Definition{
-		Agent:    agent,
-		Revision: 1,
-		Profile:  t.Profile,
-		Config:   t.Config,
+		Agent:        agent,
+		Organization: key.Organization,
+		Revision:     1,
+		Profile:      t.Profile,
+		Config:       t.Config,
 	})
 }

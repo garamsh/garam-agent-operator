@@ -1,20 +1,24 @@
 -- The control service's desired state. Every statement is idempotent: the binary applies this at every start.
 
+-- A profile's and a template's names and versions are their organization's own. Every key naming
+-- one carries the organization, so nothing refers to another organization's.
 CREATE TABLE IF NOT EXISTS profiles (
-    name     text   NOT NULL,
-    version  bigint NOT NULL CHECK (version >= 1),
-    settings jsonb  NOT NULL,
-    PRIMARY KEY (name, version)
+    organization text   NOT NULL,
+    name         text   NOT NULL,
+    version      bigint NOT NULL CHECK (version >= 1),
+    settings     jsonb  NOT NULL,
+    PRIMARY KEY (organization, name, version)
 );
 
 CREATE TABLE IF NOT EXISTS templates (
+    organization    text   NOT NULL,
     name            text   NOT NULL,
     version         bigint NOT NULL CHECK (version >= 1),
     profile_name    text   NOT NULL,
     profile_version bigint NOT NULL,
     config          jsonb  NOT NULL,
-    PRIMARY KEY (name, version),
-    FOREIGN KEY (profile_name, profile_version) REFERENCES profiles (name, version)
+    PRIMARY KEY (organization, name, version),
+    FOREIGN KEY (organization, profile_name, profile_version) REFERENCES profiles (organization, name, version)
 );
 
 -- The one row holding the position the latest stored revision took. Every writer of a revision
@@ -30,6 +34,7 @@ INSERT INTO positions (singleton, position) VALUES (true, 0) ON CONFLICT DO NOTH
 -- updates based on one revision cannot both be stored.
 CREATE TABLE IF NOT EXISTS definitions (
     agent               text   NOT NULL,
+    organization        text   NOT NULL,
     revision            bigint NOT NULL CHECK (revision >= 1),
     profile_name        text   NOT NULL,
     profile_version     bigint NOT NULL,
@@ -38,7 +43,7 @@ CREATE TABLE IF NOT EXISTS definitions (
     assignment_operator text,
     assignment_epoch    text,
     PRIMARY KEY (agent, revision),
-    FOREIGN KEY (profile_name, profile_version) REFERENCES profiles (name, version),
+    FOREIGN KEY (organization, profile_name, profile_version) REFERENCES profiles (organization, name, version),
     CHECK ((assignment_operator IS NULL) = (assignment_epoch IS NULL))
 );
 
@@ -52,7 +57,7 @@ CREATE TABLE IF NOT EXISTS creations (
     agent            text,
     reason           text,
     PRIMARY KEY (organization, request_id),
-    FOREIGN KEY (template_name, template_version) REFERENCES templates (name, version),
+    FOREIGN KEY (organization, template_name, template_version) REFERENCES templates (organization, name, version),
     CHECK ((state = 'registered') = (agent IS NOT NULL)),
     CHECK ((state = 'failed') = (reason IS NOT NULL))
 );

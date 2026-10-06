@@ -145,3 +145,43 @@ func TestConfigure_UnpublishedProfileRefused(t *testing.T) {
 	_, err = f.service.Configure(ctx, f.configure("c1", "ego", 1))
 	require.NoError(t, err)
 }
+
+func TestConfigure_AnotherOrganizationsProfileRefused(t *testing.T) {
+	ctx := context.Background()
+	f := registered(t)
+	gpu, err := f.service.PublishProfile(ctx, globex, "gpu", settings("8", "100Gi"))
+	require.NoError(t, err)
+
+	in := f.configure("c1", "ego", 1)
+	in.Profile = definition.ProfileRef{Name: gpu.Name, Version: gpu.Version}
+	_, err = f.service.Configure(ctx, in)
+	require.ErrorIs(t, err, definition.ErrNotFound)
+
+	// Control: once org publishes a profile under that name and version, the same request is accepted.
+	_, err = f.service.PublishProfile(ctx, org, "gpu", settings("1", "2Gi"))
+	require.NoError(t, err)
+	applied, err := f.service.Configure(ctx, in)
+	require.NoError(t, err)
+	assert.Equal(t, definition.Applied{Revision: 2}, applied)
+}
+
+func TestConfigure_AnotherOrganizationsAgentRefused(t *testing.T) {
+	ctx := context.Background()
+	f := registered(t)
+	_, err := f.service.PublishProfile(ctx, globex, f.profile.Name, settings("1", "2Gi"))
+	require.NoError(t, err)
+
+	// firstAgent was created in org; globex has a profile under the name the request names.
+	in := f.configure("c1", "ego", 1)
+	in.Request.Organization = globex
+	_, err = f.service.Configure(ctx, in)
+	require.ErrorIs(t, err, definition.ErrNotFound)
+	d, err := f.service.GetDefinition(ctx, firstAgent)
+	require.NoError(t, err)
+	assert.Equal(t, definition.Revision(1), d.Revision)
+
+	// Control: the same request in the agent's own organization is accepted.
+	applied, err := f.service.Configure(ctx, f.configure("c1", "ego", 1))
+	require.NoError(t, err)
+	assert.Equal(t, definition.Applied{Revision: 2}, applied)
+}

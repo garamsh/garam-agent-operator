@@ -55,14 +55,12 @@ func requireGaram(t *testing.T) garam {
 	return garam{stack: real, agentGRN: agent, assignment: epoch}
 }
 
-// seedRevision stores revision 1 of g's agent in the binary's database, as a creation would;
-// no route creates an agent yet.
+// seedRevision stores revision 1 of g's agent in the binary's database, as a creation in g's
+// organization would; no route creates an agent yet.
 func seedRevision(t *testing.T, g garam) string {
 	t.Helper()
-	profile := publishProfile(t)
-	require.NoError(t, execute(t, `WITH next AS (UPDATE positions SET position = position + 1 RETURNING position)
-INSERT INTO definitions (agent, revision, profile_name, profile_version, config, position)
-SELECT $1::text, 1, $2::text, 1, '{}', (SELECT position FROM next)`, g.agent(), profile))
+	profile := publishProfile(t, g.org())
+	require.NoError(t, insertDefinition(t, g.agent(), g.org(), 1, profile))
 	return profile
 }
 
@@ -232,6 +230,13 @@ func TestDesired_ReleasesAConfiguredAgentToItsController(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 
 	// The controller garam assigned the agent to is released the revision just stored.
+	assert.Equal(t, []string{"2"}, releasedRevisions(t, g),
+		"the agent's configured revision is not in its controller's feed")
+}
+
+// releasedRevisions is every revision of g's agent its controller's feed releases, in the order released.
+func releasedRevisions(t *testing.T, g garam) []string {
+	t.Helper()
 	resp, err := g.controllerClient().Get(attachedURL + "/v1/operators/self/desired")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -243,9 +248,33 @@ func TestDesired_ReleasesAConfiguredAgentToItsController(t *testing.T) {
 	}
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&feed))
-	released := map[string]string{}
+	var released []string
 	for _, a := range feed.Agents {
-		released[a.Agent] = a.Revision
+		if a.Agent == g.agent() {
+			released = append(released, a.Revision)
+		}
 	}
-	assert.Equal(t, "2", released[g.agent()], "the agent's configured revision is not in its controller's feed")
+	return released
+}
+
+func TestConfigure_AnotherOrganizationsProfileAnswersNotFound(t *testing.T) {
+	g := requireGaram(t)
+	seedRevision(t, g)
+	// Another organization publishes a profile name g's organization has not.
+	profile := publishProfile(t, name(t, "organization"))
+	requestID := name(t, "request")
+	body := configureBody(requestID, profile, "edited", 1)
+
+	status, err := sendConfigure(g, g.mint(t, requestID, body), body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Equal(t, 1, revisionCount(t, g.agent()))
+
+	// Control: once g's organization publishes the name, the same request is accepted, and its
+	// controller is released the one revision it stored, beside the other organization's profile.
+	require.NoError(t, insertProfile(t, g.org(), profile))
+	status, err = sendConfigure(g, g.mint(t, requestID, body), body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, []string{"2"}, releasedRevisions(t, g))
 }

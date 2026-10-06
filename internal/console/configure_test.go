@@ -1,12 +1,15 @@
 package console_test
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/garamsh/garam-agent-operator/internal/console"
+	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
 func TestConfigure_StaleRevisionRefused(t *testing.T) {
@@ -170,4 +173,29 @@ func TestConfigure_RefusesARevisionThatIsNotACanonicalString(t *testing.T) {
 			assert.Equal(t, 200, accepted.status, accepted.message)
 		})
 	}
+}
+
+func TestConfigure_AnotherOrganizationsProfileAnswersNotFound(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	gpu, err := e.definitions.PublishProfile(ctx, "globex", "gpu", definition.ExecutionSettings{})
+	require.NoError(t, err)
+	e.profile = definition.ProfileRef{Name: gpu.Name, Version: gpu.Version}
+
+	body := e.body("c1", "ego", 1)
+	refused := e.configure(t, e.authorize("c1", body, nil), body)
+	assert.Equal(t, 404, refused.status, refused.message)
+
+	// The refusal is the one a name no organization published gets, so it discloses nothing.
+	e.profile.Name = "unpublished"
+	unpublished := e.body("c2", "ego", 1)
+	never := e.configure(t, e.authorize("c2", unpublished, nil), unpublished)
+	assert.Equal(t, 404, never.status, never.message)
+	assert.Equal(t, strings.Replace(never.message, "unpublished", "gpu", 1), refused.message)
+
+	// Control: once the agent's own organization publishes the name, the same request is accepted.
+	_, err = e.definitions.PublishProfile(ctx, org, "gpu", definition.ExecutionSettings{})
+	require.NoError(t, err)
+	accepted := e.configure(t, e.authorize("c1", body, nil), body)
+	assert.Equal(t, 200, accepted.status, accepted.message)
 }
