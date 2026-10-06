@@ -110,6 +110,25 @@ func waitForAgentPod() {
 	}, 3*time.Minute, time.Second).Should(Succeed())
 }
 
+// deleteAgent deletes the Agent named name and waits until it and its Pod are
+// gone. It runs while the manager runs: only the manager releases the writer
+// fence's finalizers, so an Agent left for undeploy to find keeps its namespace
+// terminating with nothing left to release it (#287).
+func deleteAgent(name string) {
+	GinkgoHelper()
+
+	agent := "agent/" + name
+	_, err := kubectlIn("delete", agent, "--ignore-not-found", "--wait=false")
+	Expect(err).NotTo(HaveOccurred())
+	for _, object := range []string{agent, "pod/" + name + "-0"} {
+		Eventually(func(g Gomega) {
+			output, err := kubectlIn("get", object, "--ignore-not-found", "-o", "name")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(output).To(BeEmpty(), "%s is still there", object)
+		}, 5*time.Minute, 2*time.Second).Should(Succeed())
+	}
+}
+
 // agentCondition reads one field of one condition off an Agent. An absent
 // condition reads as the empty string, which no assertion here accepts.
 func agentCondition(agent, conditionType, field string) (string, error) {
@@ -155,6 +174,11 @@ var _ = Describe("Agent workload", Ordered, func() {
 	})
 
 	AfterAll(func() {
+		// A spec that failed before the one deleting the Agent under test leaves
+		// it, so it is deleted here, while the manager still runs.
+		By("deleting the Agent under test, and waiting until it and its Pod are gone")
+		deleteAgent(agentUnderTest)
+
 		By("removing the namespace and everything the Agent produced in it")
 		_, _ = utils.Run(exec.Command("kubectl", "delete", "ns", agentTestNamespace,
 			"--ignore-not-found", "--timeout=2m"))
@@ -205,9 +229,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 		apply.Stdin = strings.NewReader(agentManifestFor(agentNeverStarts, unstartableImage))
 		_, err := utils.Run(apply)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create the Agent that cannot start")
-		DeferCleanup(func() {
-			_, _ = kubectlIn("delete", "agent", agentNeverStarts, "--ignore-not-found", "--timeout=2m")
-		})
+		DeferCleanup(func() { deleteAgent(agentNeverStarts) })
 
 		// This is the reported defect written as a spec: the operator wrote the
 		// workload it was asked for, so Synced is True and stays True, and
@@ -365,6 +387,90 @@ var _ = Describe("Agent workload", Ordered, func() {
 		// evidence's second but never precede it.
 		Expect(createdAt.Before(observedAt.Truncate(time.Second))).To(BeFalse(),
 			"the replacement was created at %s, before the evidence was read at %s", createdAt, observedAt)
+	})
+
+	It("keeps a claimed agent's workload, claim and Secret across its move to Control, with an edited pin", func() {
+		// #217 AC1. A claimed agent is one the poller built from garam, on the
+		// Garam source. The move is what the renderer patches when the feed marks
+		// it cut over: spec.identity.source, and the revision's spec. Kind runs no
+		// control service, so the spec makes that patch; the renderer's own patch
+		// is asserted in internal/desired/renderer.
+		const (
+			migrated    = "e2e-migrated"
+			migratedPod = migrated + "-0"
+			stateClaim  = "state-" + migratedPod
+			configEnv   = `{.initContainers[*].env[?(@.name=="AGENT_CONFIG_CONTENT")].value}`
+		)
+		apply := exec.Command("kubectl", "apply", "-f", "-")
+		apply.Stdin = strings.NewReader(agentManifestFor(migrated, agentImage) + `  identity:
+    grn: grn:acme:default:agent:e2e0migrated0001
+    assignmentEpoch: "1"
+    source: Garam
+  tools:
+    pins:
+      message_send: sha256:before
+`)
+		_, err := utils.Run(apply)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { deleteAgent(migrated) })
+
+		uidOf := func(kind, name string) (string, error) {
+			return kubectlIn("get", kind, name, "-o", "jsonpath={.metadata.uid}")
+		}
+		ownedStatefulSets := func() (string, error) {
+			return kubectlIn("get", "statefulsets", "-o", `jsonpath={range .items[?(@.metadata.ownerReferences[0].name=="`+
+				migrated+`")]}{.metadata.name}{" "}{end}`)
+		}
+		var statefulSet, claim, secret, pod string
+		By("reading the workload the Garam-source agent was built with, its pin in its Pod")
+		Eventually(func(g Gomega) {
+			var err error
+			statefulSet, err = uidOf("statefulset", migrated)
+			g.Expect(err).NotTo(HaveOccurred())
+			claim, err = uidOf("pvc", stateClaim)
+			g.Expect(err).NotTo(HaveOccurred())
+			pod, err = uidOf("pod", migratedPod)
+			g.Expect(err).NotTo(HaveOccurred())
+			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec}"+configEnv)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(config).To(ContainSubstring("sha256:before"))
+		}, 3*time.Minute, time.Second).Should(Succeed())
+		secret, err = uidOf("secret", credentialsSecret)
+		Expect(err).NotTo(HaveOccurred())
+		Expect([]string{statefulSet, claim, secret, pod}).NotTo(ContainElement(""))
+
+		By("moving the agent to the Control source with an edited pin, as the renderer's cutover patch does")
+		_, err = kubectlIn("patch", "agent", migrated, "--type", "merge", "-p",
+			`{"spec":{"identity":{"source":"Control"},"tools":{"pins":{"message_send":"sha256:after"}}}}`)
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			config, err := kubectlIn("get", "statefulset", migrated, "-o", "jsonpath={.spec.template.spec}"+configEnv)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(config).To(ContainSubstring("sha256:after"))
+		}, 2*time.Minute, time.Second).Should(Succeed())
+
+		// The StatefulSet replaces the Pod from the template it now holds; deleting
+		// it does not wait on a rollout, and the writer fence still gates the
+		// replacement on the old Pod's evidence.
+		By("replacing the Pod, which the StatefulSet recreates from its template")
+		_, err = kubectlIn("delete", "pod", migratedPod, "--wait=false")
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			uid, err := uidOf("pod", migratedPod)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(uid).NotTo(Equal(pod))
+			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec}"+configEnv)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(config).To(ContainSubstring("sha256:after"), "the edited pin did not reach the Pod")
+		}, 3*time.Minute, time.Second).Should(Succeed())
+
+		By("finding the same StatefulSet, the only one, on the same claim, beside the same Secret")
+		Expect(uidOf("statefulset", migrated)).To(Equal(statefulSet))
+		Expect(ownedStatefulSets()).To(Equal(migrated + " "))
+		Expect(uidOf("pvc", stateClaim)).To(Equal(claim))
+		Expect(uidOf("secret", credentialsSecret)).To(Equal(secret))
+		Expect(kubectlIn("get", "agent", migrated, "-o", "jsonpath={.spec.credentialsSecretName}")).
+			To(Equal(credentialsSecret))
 	})
 
 	It("removes the StatefulSet and its Pod when the Agent is deleted", func() {

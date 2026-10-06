@@ -57,6 +57,9 @@ var (
 	binaryPath  string
 	controlArgs []string
 	databaseURL string
+	// attached is the running attached binary, and attachedStart what restartAttached starts again.
+	attached      *process
+	attachedStart func() (*process, error)
 )
 
 func TestMain(m *testing.M) {
@@ -139,11 +142,12 @@ func run(m *testing.M) (int, error) {
 		return 0, err
 	}
 	defer real.stop()
-	attached, err := startAttached(binary, dir, id, real)
+	attachedStart = func() (*process, error) { return startAttached(binary, dir, id, real) }
+	attached, err = attachedStart()
 	if err != nil {
 		return 0, err
 	}
-	defer attached.stop()
+	defer func() { attached.stop() }()
 
 	pool, err = pgxpool.New(ctx, databaseURL)
 	if err != nil {

@@ -68,9 +68,11 @@ type routeDouble struct {
 	mu       sync.Mutex
 	received []wireBody
 	current  map[string]wireBody
-	refuse   int
-	kind     string
-	server   *httptest.Server
+	// created counts the bodies the route took as a new placement.
+	created int
+	refuse  int
+	kind    string
+	server  *httptest.Server
 }
 
 func (r *routeDouble) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -96,6 +98,7 @@ func (r *routeDouble) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		write(http.StatusOK, map[string]string{})
 	default:
 		r.current[body.Agent] = body
+		r.created++
 		write(http.StatusCreated, map[string]string{})
 	}
 }
@@ -106,6 +109,13 @@ func samePrevious(a, b *wirePrevious) bool {
 	}
 
 	return *a == *b
+}
+
+func (r *routeDouble) creations() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.created
 }
 
 func (r *routeDouble) requests() []wireBody {
@@ -146,6 +156,13 @@ func (l *leaf) renew(value string) {
 // run runs a registrar against route, reading placements in the spec's
 // namespace, until the spec ends.
 func run(route *routeDouble, presented *leaf) {
+	DeferCleanup(start(route, presented))
+}
+
+// start starts a registrar against route, reading placements in the spec's
+// namespace, and returns what stops it, as a manager's exit would: nothing it
+// held in memory survives.
+func start(route *routeDouble, presented *leaf) (stop func()) {
 	roots := x509.NewCertPool()
 	roots.AddCert(route.server.Certificate())
 	registrar := desired.NewRegistrar(
@@ -158,10 +175,10 @@ func run(route *routeDouble, presented *leaf) {
 		_ = registrar.Start(runCtx)
 		close(stopped)
 	}()
-	DeferCleanup(func() {
+	return func() {
 		cancel()
 		<-stopped
-	})
+	}
 }
 
 // placed creates what the manager builds for grn: an Agent on source at epoch
@@ -214,6 +231,9 @@ func placed(grn string, source agentv1alpha1.DesiredSource, adapter bool, token 
 // firstLeaf is the leaf each spec starts presenting.
 const firstLeaf = "leaf-a"
 
+// podBefore is the Pod a replacement's placement replaced, as the writer fence recorded it.
+const podBefore = "pod-before"
+
 func sha256Hex(text string) string {
 	sum := sha256.Sum256([]byte(text))
 
@@ -240,7 +260,7 @@ var _ = Describe("Placement registrar", func() {
 		managed := "grn:acme:default:agent:4444444444444444"
 		digest := sha256Hex("evidence")
 		pod := placed(managed, agentv1alpha1.DesiredSourceControl, true, "token-next", map[string]string{
-			agentname.PreviousPodUIDAnnotation:        "pod-before",
+			agentname.PreviousPodUIDAnnotation:        podBefore,
 			agentname.PreviousWriterStoppedAnnotation: digest,
 		})
 		route := serveRoute()
@@ -249,8 +269,49 @@ var _ = Describe("Placement registrar", func() {
 		Eventually(route.requests, 10*time.Second).Should(HaveLen(1))
 		sent := route.requests()[0]
 		Expect(sent.PodUID).To(Equal(string(pod.UID)))
-		Expect(sent.Previous).To(Equal(&wirePrevious{PodUID: "pod-before", WriterStoppedSHA256: digest}))
+		Expect(sent.Previous).To(Equal(&wirePrevious{PodUID: podBefore, WriterStoppedSHA256: digest}))
 		Expect(sent.TokenSHA256).To(Equal(sha256Hex("token-next")))
+	})
+
+	It("registers a replacement once, with the evidence the fence recorded, across a restart after the fence", func() {
+		// The window #212 names: the writer fence has recorded the evidence on the
+		// placement Secret and removed its finalizer, and the replacing Pod runs.
+		managed := "grn:acme:default:agent:4545454545454545"
+		digest := sha256Hex("evidence")
+		pod := placed(managed, agentv1alpha1.DesiredSourceControl, true, "token-next", map[string]string{
+			agentname.PreviousPodUIDAnnotation:        podBefore,
+			agentname.PreviousWriterStoppedAnnotation: digest,
+		})
+		route := serveRoute()
+
+		By("a first manager registering the replacement, then exiting")
+		stop := start(route, &leaf{value: firstLeaf})
+		Eventually(route.creations, 10*time.Second).Should(Equal(1))
+		stop()
+		before := len(route.requests())
+
+		By("a restarted manager, which holds nothing of the first and reads the placement off its objects")
+		run(route, &leaf{value: firstLeaf})
+		Eventually(func() int { return len(route.requests()) }, 10*time.Second).Should(BeNumerically(">", before))
+		Consistently(route.creations, 3*time.Second).Should(Equal(1), "the restart registered the placement twice")
+		want := wireBody{
+			Agent: managed, Epoch: "7", PodUID: string(pod.UID), PVCUID: "pvc-of-" + agentname.Agent(managed),
+			TokenSHA256: sha256Hex("token-next"), Previous: &wirePrevious{PodUID: podBefore, WriterStoppedSHA256: digest},
+		}
+		for _, sent := range route.requests() {
+			Expect(sent).To(Equal(want))
+		}
+
+		By("the control: a Pod the replacement then gives way to is registered as a new placement")
+		releaseAndDelete(pod)
+		next := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: namespace, Annotations: pod.Annotations},
+			Spec:       pod.Spec,
+		}
+		Expect(k8sClient.Create(ctx, next)).To(Succeed())
+		next.Status.Phase = corev1.PodRunning
+		Expect(k8sClient.Status().Update(ctx, next)).To(Succeed())
+		Eventually(route.creations, 10*time.Second).Should(Equal(2))
 	})
 
 	It("presents a placement again, unchanged, only once the leaf it was accepted under is renewed", func() {
