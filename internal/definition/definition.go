@@ -2,11 +2,13 @@ package definition
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // GRN is the agent's garam resource name, which garam mints at registration.
@@ -37,7 +39,29 @@ func ParseRevision(s string) (Revision, error) {
 type Version int64
 
 // SecretRef names where a secret is held. It is never the secret itself.
+//
+// Its form is "<secret-name>/<key>": a Secret, and one of its data keys, in the namespace the
+// manager renders the agent into (ADR 0043). The name is a DNS subdomain, as Kubernetes requires
+// of a Secret's name (k8s.io/apimachinery@v0.36.0 pkg/util/validation IsDNS1123Subdomain), and the
+// key matches [-._a-zA-Z0-9]+ and is neither "." nor "..", as Kubernetes requires of a Secret's
+// data key (IsConfigMapKey). Neither can hold a "/", so the split is unambiguous. This is the
+// one statement of the form; control.md cites it.
 type SecretRef string
+
+// Parts returns the Secret's name and key, or ErrInvalidSecretRef where the reference is not
+// "<secret-name>/<key>" with each part one Kubernetes accepts.
+func (r SecretRef) Parts() (name, key string, err error) {
+	// A reference with no "/" leaves the key empty, which IsConfigMapKey refuses.
+	name, key, _ = strings.Cut(string(r), "/")
+	if problems := validation.IsDNS1123Subdomain(name); len(problems) > 0 {
+		return "", "", fmt.Errorf("%w: secret name %q: %s", ErrInvalidSecretRef, name, strings.Join(problems, "; "))
+	}
+	if problems := validation.IsConfigMapKey(key); len(problems) > 0 {
+		return "", "", fmt.Errorf("%w: key %q: %s", ErrInvalidSecretRef, key, strings.Join(problems, "; "))
+	}
+
+	return name, key, nil
+}
 
 // ToolPins maps each tool an agent may load to that tool's pin, which is opaque here.
 type ToolPins map[string]string
@@ -55,6 +79,17 @@ type Configuration struct {
 	Model Model
 	Ego   string
 	Tools ToolPins
+}
+
+// check refuses a configuration the manager could not render: a model whose key reference is
+// not what SecretRef states. A configuration naming no model at all names no key.
+func (c Configuration) check() error {
+	if c.Model == (Model{}) {
+		return nil
+	}
+	_, _, err := c.Model.APIKey.Parts()
+
+	return err
 }
 
 // ProfileRef names one published version of a profile, within an organization the caller states
@@ -280,4 +315,8 @@ var (
 	// ErrAssignmentMoved is returned for a repeat of a registered creation whose agent garam no
 	// longer holds where the creation assigned it.
 	ErrAssignmentMoved = errors.New("the agent's assignment moved since its creation")
+
+	// ErrInvalidSecretRef is returned for a model key reference that is not "<secret-name>/<key>"
+	// as SecretRef states it, which the manager could not render.
+	ErrInvalidSecretRef = errors.New("model key reference is not <secret-name>/<key>")
 )

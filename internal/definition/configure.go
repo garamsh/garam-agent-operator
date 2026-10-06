@@ -10,6 +10,9 @@ import (
 // request's organization only. A repeated request key returns the first
 // request's outcome; one carrying another binding or agent is refused with ErrRequestReused.
 func (s *service) Configure(ctx context.Context, in ConfigureInput) (Applied, error) {
+	if err := in.Config.check(); err != nil {
+		return Applied{}, err
+	}
 	if _, err := s.repository.GetProfile(ctx, in.Request.Organization, in.Profile); err != nil {
 		return Applied{}, fmt.Errorf("profile %s version %d: %w", in.Profile.Name, in.Profile.Version, err)
 	}

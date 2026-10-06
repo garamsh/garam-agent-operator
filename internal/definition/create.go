@@ -20,6 +20,11 @@ func (s *service) CreateAgent(ctx context.Context, in CreateInput) (Creation, bo
 	if err != nil {
 		return Creation{}, false, fmt.Errorf("template %s version %d: %w", in.Template.Name, in.Template.Version, err)
 	}
+	// Before the creation is stored or garam is asked: a configuration the manager could not
+	// render is refused rather than copied into revision 1.
+	if err := t.Config.check(); err != nil {
+		return Creation{}, false, fmt.Errorf("template %s version %d: %w", in.Template.Name, in.Template.Version, err)
+	}
 	if _, err := s.repository.GetProfile(ctx, in.Request.Organization, in.Profile); err != nil {
 		return Creation{}, false, fmt.Errorf("profile %s version %d: %w", in.Profile.Name, in.Profile.Version, err)
 	}

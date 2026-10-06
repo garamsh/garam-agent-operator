@@ -88,13 +88,18 @@ type configureRequest struct {
 }
 
 func configureBody(requestID, profile, ego string, expected int) []byte {
+	return configureBodyWithKey(requestID, profile, ego, expected, "model-api-key/api-key")
+}
+
+// configureBodyWithKey is configureBody with the model's key named by keyRef.
+func configureBodyWithKey(requestID, profile, ego string, expected int, keyRef string) []byte {
 	var in configureRequest
 	in.RequestID, in.ExpectedRevision = requestID, strconv.Itoa(expected)
 	in.Profile.Name, in.Profile.Version = profile, 1
 	in.Configuration.Model.Provider = "anthropic"
 	in.Configuration.Model.BaseURL = "https://api.anthropic.com"
 	in.Configuration.Model.Name = "claude-opus-5-5"
-	in.Configuration.Model.APIKeyRef = "model-api-key"
+	in.Configuration.Model.APIKeyRef = keyRef
 	in.Configuration.Ego = ego
 	in.Configuration.Tools = map[string]string{"web_fetch": "sha256:aa"}
 	b, err := json.Marshal(in)
@@ -198,6 +203,38 @@ func TestConfigure_RepeatedRequestReturnsFirstOutcome(t *testing.T) {
 	status, err = sendConfigure(g, g.mint(t, other, otherBody), otherBody)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusConflict, status)
+}
+
+func TestConfigure_RefusesAMalformedKeyReferenceThroughGaram(t *testing.T) {
+	g := requireGaram(t)
+	profile := seedRevision(t, g)
+	requestID := name(t, "request")
+	body := configureBodyWithKey(requestID, profile, "malformed", 1, "model-api-key")
+
+	// garam authorizes the request; the binary refuses its configuration before storing it.
+	url := fmt.Sprintf("%s/v1/orgs/%s/agents/%s/revisions", attachedURL, g.org(), g.agent())
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Garam-Operation "+g.mint(t, requestID, body))
+	resp, err := apiClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	var refusal struct {
+		Kind string `json:"kind"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&refusal))
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, "invalid_api_key_ref", refusal.Kind)
+	assert.Equal(t, 1, revisionCount(t, g.agent()))
+	assert.Equal(t, 0, requestCount(t, g.org(), requestID))
+
+	// Control: the same change with a well-formed reference, under its own request id, is stored.
+	other := name(t, "request")
+	sound := configureBodyWithKey(other, profile, "well formed", 1, "model-api-key/api-key")
+	status, err := sendConfigure(g, g.mint(t, other, sound), sound)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, 2, revisionCount(t, g.agent()))
 }
 
 func requestCount(t *testing.T, org, requestID string) int {

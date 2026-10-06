@@ -118,3 +118,21 @@ func TestPublishTemplate_AnotherOrganizationsProfileRefused(t *testing.T) {
 	_, err = f.service.PublishTemplate(ctx, globex, editor)
 	require.NoError(t, err)
 }
+
+func TestPublishTemplate_RefusesAMalformedKeyReference(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+
+	malformed := config("ego", nil)
+	malformed.Model.APIKey = unseparatedKeyRef
+	_, err := f.service.PublishTemplate(ctx, org, definition.Template{Name: brokenTemplate, Profile: f.profile, Config: malformed})
+	assert.ErrorIs(t, err, definition.ErrInvalidSecretRef)
+	_, err = f.repository.GetTemplate(ctx, org, definition.TemplateRef{Name: brokenTemplate, Version: 1})
+	assert.ErrorIs(t, err, definition.ErrNotFound, "nothing is published")
+
+	// Control: the same template with a well-formed reference, and one naming no model, publish.
+	_, err = f.service.PublishTemplate(ctx, org, definition.Template{Name: brokenTemplate, Profile: f.profile, Config: config("ego", nil)})
+	require.NoError(t, err)
+	_, err = f.service.PublishTemplate(ctx, org, definition.Template{Name: "modelless", Profile: f.profile})
+	require.NoError(t, err)
+}

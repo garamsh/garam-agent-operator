@@ -185,3 +185,25 @@ func TestConfigure_AnotherOrganizationsAgentRefused(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, definition.Applied{Revision: 2}, applied)
 }
+
+func TestConfigure_RefusesAMalformedKeyReferenceAndStoresNothing(t *testing.T) {
+	ctx := context.Background()
+	f := registered(t)
+
+	in := f.configure("malformed", "ego", 1)
+	in.Config.Model.APIKey = unseparatedKeyRef
+	_, err := f.service.Configure(ctx, in)
+	assert.ErrorIs(t, err, definition.ErrInvalidSecretRef)
+	d, err := f.service.GetDefinition(ctx, firstAgent)
+	require.NoError(t, err)
+	assert.Equal(t, definition.Revision(1), d.Revision)
+
+	// Control: the request again under the same id, with a well-formed reference, is stored. Had
+	// the refused one been recorded, this would be refused as a reused request id.
+	applied, err := f.service.Configure(ctx, f.configure("malformed", "ego", 1))
+	require.NoError(t, err)
+	assert.Equal(t, definition.Revision(2), applied.Revision)
+	d, err = f.service.GetDefinition(ctx, firstAgent)
+	require.NoError(t, err)
+	assert.Equal(t, definition.SecretRef("model-api-key/api-key"), d.Config.Model.APIKey)
+}
