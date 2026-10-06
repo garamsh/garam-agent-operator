@@ -503,6 +503,81 @@ var _ = Describe("Agent workload", Ordered, func() {
 		}, 3*time.Minute, time.Second).Should(Succeed())
 	})
 
+	It("keeps a Control-source agent the control service stopped at no replica, its Pod released on evidence, across a manager restart", func() {
+		// #280 (D). The renderer writes spec.stopped from the control service's
+		// feed; Kind runs no control service, so the spec makes that patch, as
+		// the move to Control above does. The renderer's own write is asserted in
+		// internal/desired/renderer, and the refused activation of a later
+		// placement against a real garam in tests/control.
+		const (
+			stopped    = "e2e-stopped"
+			stoppedPod = stopped + "-0"
+		)
+		apply := exec.Command("kubectl", "apply", "-f", "-")
+		apply.Stdin = strings.NewReader(agentManifestFor(stopped, agentImage) + `  identity:
+    grn: grn:acme:default:agent:e2e0stopped00001
+    assignmentEpoch: "1"
+    source: Control
+  revision: "1"
+`)
+		_, err := utils.Run(apply)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { deleteAgent(stopped) })
+		replicas := func() (string, error) {
+			return kubectlIn("get", "statefulset", stopped, "-o", "jsonpath={.spec.replicas}")
+		}
+
+		By("the control: the agent the control service does not stop runs its Pod")
+		var running string
+		Eventually(func(g Gomega) {
+			g.Expect(replicas()).To(Equal("1"))
+			phase, err := kubectlIn("get", "pod", stoppedPod, "-o", "jsonpath={.status.phase}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(phase).To(Equal("Running"))
+			running, err = kubectlIn("get", "pod", stoppedPod, "-o", "jsonpath={.metadata.uid}")
+			g.Expect(err).NotTo(HaveOccurred())
+		}, 3*time.Minute, time.Second).Should(Succeed())
+
+		By("stopping it, as the renderer does from the feed, which takes its Pod down through the writer fence")
+		_, err = kubectlIn("patch", "agent", stopped, "--type", "merge", "-p", `{"spec":{"stopped":true}}`)
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			g.Expect(replicas()).To(Equal("0"))
+			uid, err := kubectlIn("get", "agent", stopped, "-o", "jsonpath={.status.writerStopped.podUID}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(uid).To(Equal(running), "the Pod was not released on its writers' evidence")
+			pod, err := kubectlIn("get", "pod", stoppedPod, "--ignore-not-found", "-o", "name")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(pod).To(BeEmpty())
+			suspended, err := agentCondition(stopped, "Suspended", "status")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(suspended).To(Equal("True"))
+		}, 3*time.Minute, time.Second).Should(Succeed())
+
+		By("restarting the manager, after which the agent stays at no replica and no Pod is made")
+		_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "restart", "deployment/"+deploymentName))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = utils.Run(exec.Command("kubectl", "-n", namespace, "rollout", "status", "deployment/"+deploymentName,
+			"--timeout=3m"))
+		Expect(err).NotTo(HaveOccurred())
+		Consistently(func(g Gomega) {
+			g.Expect(replicas()).To(Equal("0"))
+			pod, err := kubectlIn("get", "pod", stoppedPod, "--ignore-not-found", "-o", "name")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(pod).To(BeEmpty(), "a replacement was made while the agent is stopped")
+		}, 30*time.Second, 2*time.Second).Should(Succeed())
+
+		By("ending the stop, which starts the agent again on the same claim")
+		_, err = kubectlIn("patch", "agent", stopped, "--type", "merge", "-p", `{"spec":{"stopped":null}}`)
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			g.Expect(replicas()).To(Equal("1"))
+			phase, err := kubectlIn("get", "pod", stoppedPod, "-o", "jsonpath={.status.phase}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(phase).To(Equal("Running"))
+		}, 3*time.Minute, time.Second).Should(Succeed())
+	})
+
 	It("removes the StatefulSet and its Pod when the Agent is deleted", func() {
 		// Without this the workload might not exist yet, and a spec that asserts
 		// its absence would pass having never seen it.
