@@ -992,6 +992,11 @@ var _ = Describe("Agent workload", func() {
 			Model:     agent.Spec.Model.Name,
 			APIKeyEnv: agentTypeSherlock.modelKeyVariable,
 		}))
+		Expect(written.Embedding).To(Equal(&sherlockConfigEmbedding{
+			BaseURL:   testEmbeddingBaseURL,
+			Model:     testEmbeddingModel,
+			APIKeyEnv: agentTypeSherlock.embeddingKeyVariable,
+		}))
 		Expect(written.Tools).To(BeNil())
 
 		By("giving the agent's container, and no other, the key from the Secret the spec names")
@@ -1003,6 +1008,14 @@ var _ = Describe("Agent workload", func() {
 			}},
 		}))
 		Expect(environmentOf(config)).NotTo(HaveKey(agentTypeSherlock.modelKeyVariable))
+		Expect(agentContainer.Env).To(ContainElement(corev1.EnvVar{
+			Name: agentTypeSherlock.embeddingKeyVariable,
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: modelKeySecretName(name)},
+				Key:                  agent.Spec.Model.Embedding.APIKeySecretRef.Key,
+			}},
+		}))
+		Expect(environmentOf(config)).NotTo(HaveKey(agentTypeSherlock.embeddingKeyVariable))
 
 		By("writing the ego into a file beside the config file, and pointing the agent at it")
 		egoFile := agentTypeSherlock.egoFileIn(agentTypeSherlock.configMountPath)
@@ -1044,11 +1057,34 @@ var _ = Describe("Agent workload", func() {
 		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: newModel("renders-a-model")})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(file).To(Equal("model:\n" +
+		Expect(file).To(Equal("embedding:\n" +
+			"  api-key-env: " + agentTypeSherlock.embeddingKeyVariable + "\n" +
+			"  base-url: " + testEmbeddingBaseURL + "\n" +
+			"  model: " + testEmbeddingModel + "\n" +
+			"model:\n" +
 			"  api-key-env: " + agentTypeSherlock.modelKeyVariable + "\n" +
 			"  base-url: https://api.minimax.io/v1\n" +
 			"  model: MiniMax-M2\n" +
 			"  provider: openai-compatible\n"))
+	})
+
+	It("renders an embeddings endpoint naming no key with no key variable, and the mock with no embedding section", func() {
+		keyless := newModel("renders-a-keyless-embedding")
+		keyless.Embedding.APIKeySecretRef = nil
+		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: keyless})
+		Expect(err).NotTo(HaveOccurred())
+		written := sherlockConfig{}
+		Expect(yaml.Unmarshal([]byte(file), &written)).To(Succeed())
+		Expect(written.Embedding).To(Equal(&sherlockConfigEmbedding{
+			BaseURL: testEmbeddingBaseURL, Model: testEmbeddingModel}))
+		Expect(file).NotTo(ContainSubstring(agentTypeSherlock.embeddingKeyVariable))
+
+		mock := newModel("renders-the-mock")
+		mock.Provider, mock.Embedding = testMockProvider, nil
+		file, err = agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: mock})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(file).To(HavePrefix("model:\n"))
+		Expect(file).NotTo(ContainSubstring("embedding"))
 	})
 
 	It("takes the model's key and the ego back out when an Agent stops declaring them", func() {
@@ -1061,8 +1097,11 @@ var _ = Describe("Agent workload", func() {
 		Expect(err).NotTo(HaveOccurred())
 		declaredNothing := statefulSetFor(name).Spec.Template.Spec
 
+		// A mock model, because a model carrying an embedding cannot be removed
+		// once set (ADR 0052), and the mock carries none.
 		edited := readAgent(name)
 		edited.Spec.Model = newModel(name)
+		edited.Spec.Model.Provider, edited.Spec.Model.Embedding = testMockProvider, nil
 		edited.Spec.Ego = testEgo
 		Expect(k8sClient.Update(ctx, edited)).To(Succeed())
 		_, err = reconcileAgent(name)

@@ -53,6 +53,10 @@ type agentTypeDescriptor struct {
 	// model's API key in, and the one its config file names for the key.
 	modelKeyVariable string
 
+	// embeddingKeyVariable is the variable the agent's container is given the
+	// embeddings endpoint's API key in, and the one its config file names.
+	embeddingKeyVariable string
+
 	// egoFile is the ego file's path relative to configMountPath.
 	egoFile string
 
@@ -127,7 +131,8 @@ var agentTypeSherlock = agentTypeDescriptor{
 	configFile:   "sherlock/config.yaml",
 	renderConfig: renderSherlockConfig,
 
-	modelKeyVariable: sherlockModelKeyVariable,
+	modelKeyVariable:     sherlockModelKeyVariable,
+	embeddingKeyVariable: sherlockEmbeddingKeyVariable,
 
 	// Beside the config file, under the directory this operator names. No
 	// layout of sherlock's names an ego file; only the flag does.
@@ -239,6 +244,21 @@ func renderSherlockArgs(args agentArguments) []string {
 // SHERLOCK_ prefix, so it binds to no setting of sherlock's.
 const sherlockModelKeyVariable = "MODEL_API_KEY"
 
+// sherlockEmbeddingKeyVariable is the variable sherlock's container is given the
+// embeddings endpoint's key in, which its config file names under
+// embedding.api-key-env (sherlock@b3c05c24:internal/config/config.go:150-157).
+const sherlockEmbeddingKeyVariable = "EMBEDDING_API_KEY"
+
+// embeddingKeyOf is the Secret key an Agent's embeddings endpoint is
+// authenticated with, nil where it names none.
+func embeddingKeyOf(agent *agentv1alpha1.Agent) *agentv1alpha1.SecretKeyReference {
+	if agent.Spec.Model == nil || agent.Spec.Model.Embedding == nil {
+		return nil
+	}
+
+	return agent.Spec.Model.Embedding.APIKeySecretRef
+}
+
 // sherlockConfig is sherlock's config file, holding what this operator has been
 // taught to declare and nothing else. The field names are sherlock's setting
 // names. Each key family is a field of its own and is left out of the file
@@ -246,8 +266,9 @@ const sherlockModelKeyVariable = "MODEL_API_KEY"
 // names no tool, and a model section missing a setting would fall back to
 // sherlock's default for it.
 type sherlockConfig struct {
-	Tools *sherlockConfigTools `json:"tools,omitempty"`
-	Model *sherlockConfigModel `json:"model,omitempty"`
+	Tools     *sherlockConfigTools     `json:"tools,omitempty"`
+	Model     *sherlockConfigModel     `json:"model,omitempty"`
+	Embedding *sherlockConfigEmbedding `json:"embedding,omitempty"`
 }
 
 type sherlockConfigTools struct {
@@ -262,6 +283,16 @@ type sherlockConfigModel struct {
 	BaseURL   string `json:"base-url"`
 	Model     string `json:"model"`
 	APIKeyEnv string `json:"api-key-env"`
+}
+
+// sherlockConfigEmbedding is sherlock's embedding section, which it requires
+// with every model provider but mock
+// (sherlock@b3c05c24:cmd/sherlock/model_provider.go:73-88). An empty
+// api-key-env sends no key.
+type sherlockConfigEmbedding struct {
+	BaseURL   string `json:"base-url"`
+	Model     string `json:"model"`
+	APIKeyEnv string `json:"api-key-env,omitempty"`
 }
 
 // renderSherlockConfig is the text of the config file an Agent's declaration
@@ -283,6 +314,12 @@ func renderSherlockConfig(spec agentv1alpha1.AgentSpec) (string, error) {
 			BaseURL:   spec.Model.BaseURL,
 			Model:     spec.Model.Name,
 			APIKeyEnv: sherlockModelKeyVariable,
+		}
+		if embedding := spec.Model.Embedding; embedding != nil {
+			config.Embedding = &sherlockConfigEmbedding{BaseURL: embedding.BaseURL, Model: embedding.Name}
+			if embedding.APIKeySecretRef != nil {
+				config.Embedding.APIKeyEnv = sherlockEmbeddingKeyVariable
+			}
 		}
 	}
 

@@ -77,6 +77,13 @@ type (
 		BaseURL   string `json:"baseUrl"`
 		Name      string `json:"name"`
 		APIKeyRef string `json:"apiKeyRef"`
+
+		Embedding *wireEmbedding `json:"embedding"`
+	}
+	wireEmbedding struct {
+		BaseURL   string `json:"baseUrl"`
+		Name      string `json:"name"`
+		APIKeyRef string `json:"apiKeyRef"`
 	}
 	wireStatus struct {
 		ObservedRevision string `json:"observedRevision"`
@@ -150,6 +157,7 @@ func (c *Client) Desired(ctx context.Context, after string, wait time.Duration) 
 				Model: Model{
 					Provider: agent.Configuration.Model.Provider, BaseURL: agent.Configuration.Model.BaseURL,
 					Name: agent.Configuration.Model.Name, APIKeyRef: agent.Configuration.Model.APIKeyRef,
+					Embedding: embeddingOf(agent.Configuration.Model.Embedding),
 				},
 				Ego: agent.Configuration.Ego, Tools: agent.Configuration.Tools,
 			},
@@ -292,4 +300,13 @@ func asRefusal(err error) (*RefusalError, bool) {
 	ok := errors.As(err, &refusal)
 
 	return refusal, ok
+}
+
+// embeddingOf is the embeddings endpoint the wire names, nil where it names none.
+func embeddingOf(wire *wireEmbedding) *Embedding {
+	if wire == nil {
+		return nil
+	}
+
+	return &Embedding{BaseURL: wire.BaseURL, Name: wire.Name, APIKeyRef: wire.APIKeyRef}
 }

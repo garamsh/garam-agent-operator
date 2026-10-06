@@ -52,8 +52,19 @@ func newModel(agent string) *agentv1alpha1.ModelSpec {
 		BaseURL:         "https://api.minimax.io/v1",
 		Name:            "MiniMax-M2",
 		APIKeySecretRef: agentv1alpha1.SecretKeyReference{Name: modelKeySecretName(agent), Key: "api-key"},
+		Embedding: &agentv1alpha1.EmbeddingSpec{
+			BaseURL:         testEmbeddingBaseURL,
+			Name:            testEmbeddingModel,
+			APIKeySecretRef: &agentv1alpha1.SecretKeyReference{Name: modelKeySecretName(agent), Key: "embedding-key"},
+		},
 	}
 }
+
+const (
+	testEmbeddingBaseURL = "https://embeddings.example/v1"
+	testEmbeddingModel   = "bge-base-en-v1.5"
+	testMockProvider     = "mock"
+)
 
 // newAgent returns an Agent the API server accepts, so that a spec differing
 // from it in one field isolates that field.
@@ -301,6 +312,79 @@ var _ = Describe("Agent", func() {
 		Expect(k8sClient.Create(ctx, rejected)).To(MatchError(ContainSubstring("spec.model.baseURL")))
 	})
 
+	It("refuses a model other than mock that names no embeddings endpoint, and admits the mock with none", func() {
+		By("the control: the same model naming one")
+		accepted := newAgent("names-an-embedding")
+		accepted.Spec.Model = newModel(accepted.Name)
+		Expect(k8sClient.Create(ctx, accepted)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(k8sClient.Delete(ctx, accepted)).To(Succeed())
+		})
+
+		rejected := newAgent("names-no-embedding")
+		rejected.Spec.Model = newModel(rejected.Name)
+		rejected.Spec.Model.Embedding = nil
+		Expect(k8sClient.Create(ctx, rejected)).To(MatchError(ContainSubstring("embedding is required")))
+
+		By("the mock, which sherlock runs with no embeddings endpoint")
+		mock := newAgent("mock-names-no-embedding")
+		mock.Spec.Model = newModel(mock.Name)
+		mock.Spec.Model.Provider, mock.Spec.Model.Embedding = testMockProvider, nil
+		Expect(k8sClient.Create(ctx, mock)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(k8sClient.Delete(ctx, mock)).To(Succeed())
+		})
+	})
+
+	It("refuses changing the embedding model or endpoint once set, and accepts changing its key", func() {
+		agent := newAgent("keeps-its-embedding")
+		agent.Spec.Model = newModel(agent.Name)
+		createAgent(agent)
+
+		By("the control: moving the key to another Secret")
+		rekeyed := readAgent(agent.Name)
+		rekeyed.Spec.Model.Embedding.APIKeySecretRef = &agentv1alpha1.SecretKeyReference{Name: "embeddings", Key: "key"}
+		Expect(k8sClient.Update(ctx, rekeyed)).To(Succeed())
+
+		for field, change := range map[string]func(*agentv1alpha1.EmbeddingSpec){
+			"name":    func(e *agentv1alpha1.EmbeddingSpec) { e.Name = "text-embedding-3-small" },
+			"baseURL": func(e *agentv1alpha1.EmbeddingSpec) { e.BaseURL = "https://other.example/v1" },
+		} {
+			changed := readAgent(agent.Name)
+			change(changed.Spec.Model.Embedding)
+			Expect(k8sClient.Update(ctx, changed)).To(MatchError(ContainSubstring("cannot be changed or removed once set")),
+				"changing %s", field)
+		}
+		Expect(readAgent(agent.Name).Spec.Model.Embedding).To(Equal(rekeyed.Spec.Model.Embedding))
+
+		By("removing the embedding, or the model carrying it, which would let the next update change it")
+		withoutEmbedding := readAgent(agent.Name)
+		withoutEmbedding.Spec.Model.Provider, withoutEmbedding.Spec.Model.Embedding = testMockProvider, nil
+		Expect(k8sClient.Update(ctx, withoutEmbedding)).To(MatchError(ContainSubstring("cannot be changed or removed once set")))
+		withoutModel := readAgent(agent.Name)
+		withoutModel.Spec.Model = nil
+		Expect(k8sClient.Update(ctx, withoutModel)).To(MatchError(ContainSubstring("cannot be changed or removed once set")))
+		Expect(readAgent(agent.Name).Spec.Model).NotTo(BeNil())
+	})
+
+	It("lets a mock model with no embedding gain one and be removed while it has none", func() {
+		agent := newAgent("gains-an-embedding")
+		agent.Spec.Model = newModel(agent.Name)
+		agent.Spec.Model.Provider, agent.Spec.Model.Embedding = testMockProvider, nil
+		createAgent(agent)
+
+		By("removing the mock model, which no stored vector depends on")
+		removed := readAgent(agent.Name)
+		removed.Spec.Model = nil
+		Expect(k8sClient.Update(ctx, removed)).To(Succeed())
+
+		By("declaring a model with its embedding, which sets it for the first time")
+		gained := readAgent(agent.Name)
+		gained.Spec.Model = newModel(agent.Name)
+		Expect(k8sClient.Update(ctx, gained)).To(Succeed())
+		Expect(readAgent(agent.Name).Spec.Model.Embedding).NotTo(BeNil())
+	})
+
 	It("refuses changing or removing an identity's GRN, and accepts setting one and moving its epoch", func() {
 		agent := newAgent("keeps-its-grn")
 		createAgent(agent)
@@ -427,6 +511,32 @@ var _ = Describe("Agent", func() {
 
 		By("reconciling once it exists")
 		createSecret(modelKeySecretName(name))
+		_, err = reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(statefulSetFor(name).Spec.Template.Spec.Containers).To(HaveLen(1))
+	})
+
+	It("builds nothing until the Secret holding the embeddings endpoint's key exists", func() {
+		name := "waits-for-embedding-key"
+		// The control: the credentials and the model's key exist, so what holds
+		// the workload back is the embeddings endpoint's key alone.
+		createSecret(credentialsSecretName(name))
+		createSecret(modelKeySecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Model = newModel(name)
+		agent.Spec.Model.Embedding.APIKeySecretRef = &agentv1alpha1.SecretKeyReference{Name: name + "-embedding", Key: "key"}
+		createAgent(agent)
+
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		key := types.NamespacedName{Name: name, Namespace: agentNamespace}
+		Expect(k8sClient.Get(ctx, key, &appsv1.StatefulSet{})).
+			To(MatchError(apierrors.IsNotFound, "a not-found error"))
+		synced := meta.FindStatusCondition(readAgent(name).Status.Conditions, agentv1alpha1.ConditionSynced)
+		Expect(synced).NotTo(BeNil())
+		Expect(synced.Reason).To(Equal(agentv1alpha1.ReasonEmbeddingKeySecretMissing))
+
+		createSecret(name + "-embedding")
 		_, err = reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(statefulSetFor(name).Spec.Template.Spec.Containers).To(HaveLen(1))

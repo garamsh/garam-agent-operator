@@ -37,6 +37,13 @@ const (
 	secondPin    = "sha256:bb"
 )
 
+const (
+	embeddingBaseURL = "https://embeddings.example/v1"
+	embeddingModel   = "bge-base-en-v1.5"
+	modelKey         = "api-key"
+	modelKeySecret   = "minimax"
+)
+
 // revision is a revision of grn as the feed releases it, at epoch, with pins
 // and an ego that differ from revision to revision.
 func revision(grn, number, epoch string, pins map[string]string, ego string) desired.Agent {
@@ -52,6 +59,9 @@ func revision(grn, number, epoch string, pins map[string]string, ego string) des
 			Model: desired.Model{
 				Provider: "openai-compatible", BaseURL: "https://api.minimax.io/v1", Name: "MiniMax-M2",
 				APIKeyRef: "minimax/api-key",
+				Embedding: &desired.Embedding{
+					BaseURL: embeddingBaseURL, Name: embeddingModel, APIKeyRef: "minimax/api-key",
+				},
 			},
 			Ego:   ego,
 			Tools: pins,
@@ -104,7 +114,11 @@ var _ = Describe("Renderer", func() {
 		Expect(first.Spec.StorageSize).To(Equal(resource.MustParse("1Gi")))
 		Expect(first.Spec.Model).To(Equal(&agentv1alpha1.ModelSpec{
 			Provider: "openai-compatible", BaseURL: "https://api.minimax.io/v1", Name: "MiniMax-M2",
-			APIKeySecretRef: agentv1alpha1.SecretKeyReference{Name: "minimax", Key: "api-key"}}))
+			APIKeySecretRef: agentv1alpha1.SecretKeyReference{Name: modelKeySecret, Key: modelKey},
+			Embedding: &agentv1alpha1.EmbeddingSpec{
+				BaseURL: embeddingBaseURL, Name: embeddingModel,
+				APIKeySecretRef: &agentv1alpha1.SecretKeyReference{Name: modelKeySecret, Key: modelKey},
+			}}))
 		Expect(first.Spec.Tools.Pins).To(Equal(map[string]string{requiredTool: firstPin}))
 		Expect(first.Spec.Ego).To(Equal("first"))
 
@@ -164,6 +178,68 @@ var _ = Describe("Renderer", func() {
 		Expect(agentFor(grn).Spec).To(Equal(before.Spec))
 	})
 
+	It("leaves a model with no embedding unrendered unless it is the mock, beside one carrying it", func() {
+		rendering := renderer.NewAgent(k8sClient, namespace, image)
+		grn := "grn:acme:default:agent:5656565656565656"
+		Expect(rendering.Render(ctx, revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, "kept"))).
+			To(Succeed())
+		before := agentFor(grn)
+		Expect(before.Spec.Model.Embedding).NotTo(BeNil())
+
+		missing := revision(grn, "2", "7", map[string]string{requiredTool: secondPin}, "dropped")
+		missing.Configuration.Model.Embedding = nil
+		Expect(rendering.Render(ctx, missing)).To(MatchError(desired.ErrMalformed))
+		for _, embedding := range []desired.Embedding{
+			{Name: embeddingModel}, {BaseURL: embeddingBaseURL},
+			{BaseURL: embeddingBaseURL, Name: embeddingModel, APIKeyRef: "minimax"},
+		} {
+			malformed := revision(grn, "2", "7", map[string]string{requiredTool: secondPin}, "dropped")
+			malformed.Configuration.Model.Embedding = &embedding
+			Expect(rendering.Render(ctx, malformed)).To(MatchError(desired.ErrMalformed), "embedding %+v", embedding)
+		}
+		Expect(agentFor(grn).Spec).To(Equal(before.Spec))
+
+		By("the mock, which runs with no embeddings endpoint")
+		mock := "grn:acme:default:agent:5757575757575757"
+		offline := revision(mock, "1", "7", map[string]string{requiredTool: firstPin}, "")
+		offline.Configuration.Model.Provider, offline.Configuration.Model.Embedding = "mock", nil
+		Expect(rendering.Render(ctx, offline)).To(Succeed())
+		Expect(agentFor(mock).Spec.Model.Embedding).To(BeNil())
+		Expect(agentFor(mock).Spec.Model.Provider).To(Equal("mock"))
+	})
+
+	It("refuses a later revision changing or dropping the embedding, beside one changing only its key", func() {
+		rendering := renderer.NewAgent(k8sClient, namespace, image)
+		grn := "grn:acme:default:agent:5858585858585858"
+		Expect(rendering.Render(ctx, revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, ""))).
+			To(Succeed())
+
+		rekeyed := revision(grn, "2", "7", map[string]string{requiredTool: firstPin}, "")
+		rekeyed.Configuration.Model.Embedding.APIKeyRef = "embeddings/key"
+		Expect(rendering.Render(ctx, rekeyed)).To(Succeed())
+		Expect(agentFor(grn).Spec.Model.Embedding.APIKeySecretRef).
+			To(Equal(&agentv1alpha1.SecretKeyReference{Name: "embeddings", Key: "key"}))
+		before := agentFor(grn)
+
+		for _, change := range []func(*desired.Embedding){
+			func(e *desired.Embedding) { e.Name = "text-embedding-3-small" },
+			func(e *desired.Embedding) { e.BaseURL = "https://other.example/v1" },
+			nil, // the model moved to the mock, dropping its embedding
+		} {
+			changed := revision(grn, "3", "7", map[string]string{requiredTool: firstPin}, "")
+			changed.Configuration.Model.Embedding.APIKeyRef = "embeddings/key"
+			if change == nil {
+				changed.Configuration.Model.Provider, changed.Configuration.Model.Embedding = "mock", nil
+			} else {
+				change(changed.Configuration.Model.Embedding)
+			}
+			err := rendering.Render(ctx, changed)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cannot be changed or removed once set"))
+		}
+		Expect(agentFor(grn).Spec).To(Equal(before.Spec))
+	})
+
 	It("leaves an agent the feed withholds as it was, deletes nothing, and renders the rest", func() {
 		withheld := "grn:acme:default:agent:6666666666666666"
 		kept := "grn:acme:default:agent:7777777777777777"
@@ -184,6 +260,11 @@ var _ = Describe("Renderer", func() {
 		Expect(left.DeletionTimestamp).To(BeNil())
 		Expect(left.Spec.Tools.Pins).To(HaveKeyWithValue(requiredTool, firstPin))
 		Expect(left.Spec.Ego).To(Equal("withheld"))
+		// The embedding arrived over the wire as configuration.model.embedding.
+		Expect(left.Spec.Model.Embedding).To(Equal(&agentv1alpha1.EmbeddingSpec{
+			BaseURL: embeddingBaseURL, Name: embeddingModel,
+			APIKeySecretRef: &agentv1alpha1.SecretKeyReference{Name: modelKeySecret, Key: modelKey},
+		}))
 	})
 })
 
@@ -255,11 +336,17 @@ func runPuller(feed *feedServer) {
 
 // feedAnswer is the C2 wire's answer for a cursor and agents (ADR 0040).
 func feedAnswer(cursor string, agents ...desired.Agent) string {
-	type model struct {
-		Provider  string `json:"provider"`
+	type embedding struct {
 		BaseURL   string `json:"baseUrl"`
 		Name      string `json:"name"`
 		APIKeyRef string `json:"apiKeyRef"`
+	}
+	type model struct {
+		Provider  string     `json:"provider"`
+		BaseURL   string     `json:"baseUrl"`
+		Name      string     `json:"name"`
+		APIKeyRef string     `json:"apiKeyRef"`
+		Embedding *embedding `json:"embedding,omitempty"`
 	}
 	type wire struct {
 		Agent    string `json:"agent"`
@@ -287,7 +374,11 @@ func feedAnswer(cursor string, agents ...desired.Agent) string {
 		w.Agent, w.Revision, w.Epoch = agent.GRN, agent.Revision, agent.Epoch
 		w.Profile.Name, w.Profile.Version = agent.Profile.Name, agent.Profile.Version
 		w.Profile.Resources, w.Profile.StorageSize = agent.Profile.Resources, agent.Profile.StorageSize
-		w.Configuration.Model = model(agent.Configuration.Model)
+		m := agent.Configuration.Model
+		w.Configuration.Model = model{Provider: m.Provider, BaseURL: m.BaseURL, Name: m.Name, APIKeyRef: m.APIKeyRef}
+		if m.Embedding != nil {
+			w.Configuration.Model.Embedding = (*embedding)(m.Embedding)
+		}
 		w.Configuration.Ego, w.Configuration.Tools = agent.Configuration.Ego, agent.Configuration.Tools
 		w.Origin = agent.Origin
 		out.Agents = append(out.Agents, w)

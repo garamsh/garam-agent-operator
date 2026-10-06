@@ -157,14 +157,45 @@ func modelOf(model desired.Model) (*agentv1alpha1.ModelSpec, error) {
 	if model.Provider == "" || model.BaseURL == "" || model.Name == "" {
 		return nil, fmt.Errorf("%w: a model missing its provider, base URL or name", desired.ErrMalformed)
 	}
-	// A reference with no "/" leaves the key empty, which IsConfigMapKey refuses.
-	secret, key, _ := strings.Cut(model.APIKeyRef, "/")
-	if len(validation.IsDNS1123Subdomain(secret)) > 0 || len(validation.IsConfigMapKey(key)) > 0 {
-		return nil, fmt.Errorf("%w: API key reference %q is not <secret-name>/<key>", desired.ErrMalformed, model.APIKeyRef)
+	keyRef, err := secretKeyOf(model.APIKeyRef)
+	if err != nil {
+		return nil, err
+	}
+	spec := &agentv1alpha1.ModelSpec{
+		Provider: model.Provider, BaseURL: model.BaseURL, Name: model.Name, APIKeySecretRef: *keyRef,
+	}
+	// sherlock starts with no embeddings endpoint on the mock alone (ADR 0052).
+	if model.Embedding == nil {
+		if model.Provider != mockProvider {
+			return nil, fmt.Errorf("%w: a model other than mock with no embedding", desired.ErrMalformed)
+		}
+
+		return spec, nil
+	}
+	if model.Embedding.BaseURL == "" || model.Embedding.Name == "" {
+		return nil, fmt.Errorf("%w: an embedding missing its base URL or name", desired.ErrMalformed)
+	}
+	spec.Embedding = &agentv1alpha1.EmbeddingSpec{BaseURL: model.Embedding.BaseURL, Name: model.Embedding.Name}
+	if model.Embedding.APIKeyRef != "" {
+		if spec.Embedding.APIKeySecretRef, err = secretKeyOf(model.Embedding.APIKeyRef); err != nil {
+			return nil, err
+		}
 	}
 
-	return &agentv1alpha1.ModelSpec{
-		Provider: model.Provider, BaseURL: model.BaseURL, Name: model.Name,
-		APIKeySecretRef: agentv1alpha1.SecretKeyReference{Name: secret, Key: key},
-	}, nil
+	return spec, nil
+}
+
+// mockProvider is the model provider sherlock runs offline, with no embeddings
+// endpoint.
+const mockProvider = "mock"
+
+// secretKeyOf reads a "<secret-name>/<key>" reference as modelOf states the rule.
+func secretKeyOf(ref string) (*agentv1alpha1.SecretKeyReference, error) {
+	// A reference with no "/" leaves the key empty, which IsConfigMapKey refuses.
+	secret, key, _ := strings.Cut(ref, "/")
+	if len(validation.IsDNS1123Subdomain(secret)) > 0 || len(validation.IsConfigMapKey(key)) > 0 {
+		return nil, fmt.Errorf("%w: API key reference %q is not <secret-name>/<key>", desired.ErrMalformed, ref)
+	}
+
+	return &agentv1alpha1.SecretKeyReference{Name: secret, Key: key}, nil
 }
