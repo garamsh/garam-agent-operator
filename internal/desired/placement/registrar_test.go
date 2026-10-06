@@ -231,6 +231,9 @@ func placed(grn string, source agentv1alpha1.DesiredSource, adapter bool, token 
 // firstLeaf is the leaf each spec starts presenting.
 const firstLeaf = "leaf-a"
 
+// podBefore is the Pod a replacement's placement replaced, as the writer fence recorded it.
+const podBefore = "pod-before"
+
 func sha256Hex(text string) string {
 	sum := sha256.Sum256([]byte(text))
 
@@ -257,7 +260,7 @@ var _ = Describe("Placement registrar", func() {
 		managed := "grn:acme:default:agent:4444444444444444"
 		digest := sha256Hex("evidence")
 		pod := placed(managed, agentv1alpha1.DesiredSourceControl, true, "token-next", map[string]string{
-			agentname.PreviousPodUIDAnnotation:        "pod-before",
+			agentname.PreviousPodUIDAnnotation:        podBefore,
 			agentname.PreviousWriterStoppedAnnotation: digest,
 		})
 		route := serveRoute()
@@ -266,7 +269,7 @@ var _ = Describe("Placement registrar", func() {
 		Eventually(route.requests, 10*time.Second).Should(HaveLen(1))
 		sent := route.requests()[0]
 		Expect(sent.PodUID).To(Equal(string(pod.UID)))
-		Expect(sent.Previous).To(Equal(&wirePrevious{PodUID: "pod-before", WriterStoppedSHA256: digest}))
+		Expect(sent.Previous).To(Equal(&wirePrevious{PodUID: podBefore, WriterStoppedSHA256: digest}))
 		Expect(sent.TokenSHA256).To(Equal(sha256Hex("token-next")))
 	})
 
@@ -276,7 +279,7 @@ var _ = Describe("Placement registrar", func() {
 		managed := "grn:acme:default:agent:4545454545454545"
 		digest := sha256Hex("evidence")
 		pod := placed(managed, agentv1alpha1.DesiredSourceControl, true, "token-next", map[string]string{
-			agentname.PreviousPodUIDAnnotation:        "pod-before",
+			agentname.PreviousPodUIDAnnotation:        podBefore,
 			agentname.PreviousWriterStoppedAnnotation: digest,
 		})
 		route := serveRoute()
@@ -293,7 +296,7 @@ var _ = Describe("Placement registrar", func() {
 		Consistently(route.creations, 3*time.Second).Should(Equal(1), "the restart registered the placement twice")
 		want := wireBody{
 			Agent: managed, Epoch: "7", PodUID: string(pod.UID), PVCUID: "pvc-of-" + agentname.Agent(managed),
-			TokenSHA256: sha256Hex("token-next"), Previous: &wirePrevious{PodUID: "pod-before", WriterStoppedSHA256: digest},
+			TokenSHA256: sha256Hex("token-next"), Previous: &wirePrevious{PodUID: podBefore, WriterStoppedSHA256: digest},
 		}
 		for _, sent := range route.requests() {
 			Expect(sent).To(Equal(want))
