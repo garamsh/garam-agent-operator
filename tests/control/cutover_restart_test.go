@@ -37,6 +37,17 @@ func rows(t *testing.T, table, agent string) []string {
 	return out
 }
 
+// putBack stores rows into table as they were read, standing in for a stage garam answered whose
+// store the control service did not reach before it stopped.
+func putBack(t *testing.T, table string, saved []string) {
+	t.Helper()
+	for _, row := range saved {
+		_, err := pool.Exec(t.Context(),
+			"INSERT INTO "+table+" SELECT * FROM json_populate_record(NULL::"+table+", $1::json)", row)
+		require.NoError(t, err)
+	}
+}
+
 // stage runs agent's stage under a fresh request and answers its status and body.
 func stage(t *testing.T, agent, which string) (int, map[string]any) {
 	t.Helper()
@@ -107,28 +118,60 @@ func TestCutover_ARestartBetweenStagesResumesAtTheStoredStage(t *testing.T) {
 	assert.Equal(t, "cutover_stage", refused["kind"])
 }
 
-// TestCutover_ARestartBeforeTheRollbackResumesAtTheStoredStage is #217's AC2 for the rollback: a
-// restart between the freeze and the rollback ends with the import discarded. A restart between
-// garam rolling back and the control service discarding the import does not resume today; that
-// window is #286's.
-func TestCutover_ARestartBeforeTheRollbackResumesAtTheStoredStage(t *testing.T) {
+// TestCutover_ARestartAroundTheRollbackResumesAtTheStoredStage is #217's AC2 for the rollback: a
+// restart before it, and one between garam rolling back and the control service discarding the
+// import, each end with the import discarded.
+func TestCutover_ARestartAroundTheRollbackResumesAtTheStoredStage(t *testing.T) {
 	agent := legacyAgent(t)
 	status, imported := importLegacy(t, agent, publishProfile(t, real.orgID))
 	require.Equal(t, http.StatusCreated, status, imported)
 	status, frozen := stage(t, agent, "freeze")
 	require.Equal(t, http.StatusOK, status, frozen)
-	require.Len(t, rows(t, "cutover_imports", agent), 1)
-	require.Len(t, rows(t, "definitions", agent), 1)
+	frozenImport, frozenRevision := rows(t, "cutover_imports", agent), rows(t, "definitions", agent)
+	require.Len(t, frozenImport, 1)
+	require.Len(t, frozenRevision, 1)
 
 	restartAttached(t)
 	status, rolledBack := stage(t, agent, "rollback")
 	require.Equal(t, http.StatusOK, status, rolledBack)
 	assert.Equal(t, "rolled_back", rolledBack["stage"])
-	assert.Empty(t, rows(t, "cutover_imports", agent), "the import outlived the rollback")
-	assert.Empty(t, rows(t, "definitions", agent), "the import's revision 1 outlived the rollback")
+	assert.Empty(t, rows(t, "cutover_imports", agent))
 
-	// Control: the rollback is a stage, so the import it discarded cannot be frozen again.
+	// garam rolled back, and the control service stopped before it discarded the import.
+	putBack(t, "definitions", frozenRevision)
+	putBack(t, "cutover_imports", frozenImport)
 	restartAttached(t)
-	status, refused := stage(t, agent, "freeze")
-	assert.Equal(t, http.StatusNotFound, status, refused)
+	status, resumed := stage(t, agent, "rollback")
+	assert.Equal(t, http.StatusOK, status, resumed)
+	assert.Equal(t, "rolled_back", resumed["stage"])
+	assert.Empty(t, rows(t, "cutover_imports", agent), "the import outlived garam's rollback")
+	assert.Empty(t, rows(t, "definitions", agent), "the import's revision 1 outlived garam's rollback")
+}
+
+// TestCutover_ARestartAroundTheSwitchStillRefusesTheRollback is #286's control: garam switched the
+// attempt and the control service stopped before it stored the switch. Its import still reads
+// frozen, and the rollback is refused as garam refuses it, keeping the import.
+func TestCutover_ARestartAroundTheSwitchStillRefusesTheRollback(t *testing.T) {
+	agent := legacyAgent(t)
+	status, imported := importLegacy(t, agent, publishProfile(t, real.orgID))
+	require.Equal(t, http.StatusCreated, status, imported)
+	status, frozen := stage(t, agent, "freeze")
+	require.Equal(t, http.StatusOK, status, frozen)
+	status, switched := stage(t, agent, "switch")
+	require.Equal(t, http.StatusOK, status, switched)
+
+	// garam switched, and the control service stopped before it stored the switch.
+	_, err := pool.Exec(t.Context(),
+		"UPDATE cutover_imports SET stage = 'frozen', configure_ref = '' WHERE agent = $1", agent)
+	require.NoError(t, err)
+	_, err = pool.Exec(t.Context(),
+		"UPDATE definitions SET assignment_operator = NULL, assignment_epoch = NULL WHERE agent = $1", agent)
+	require.NoError(t, err)
+	restartAttached(t)
+
+	status, refused := stage(t, agent, "rollback")
+	assert.Equal(t, http.StatusConflict, status, refused)
+	assert.Equal(t, "reverse_migration_required", refused["kind"])
+	assert.Len(t, rows(t, "cutover_imports", agent), 1, "a refused rollback discarded the import")
+	assert.Len(t, rows(t, "definitions", agent), 1, "a refused rollback discarded revision 1")
 }
