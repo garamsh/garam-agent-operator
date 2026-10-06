@@ -49,10 +49,14 @@ func TestPost_SendsAndRequiresTheContract(t *testing.T) {
 	assert.Equal(t, 200, answer.Status)
 	assert.Equal(t, contract, g.sent.Load())
 
-	other := &garam{statuses: []int{200}, contract: "operation-authority.v2"}
-	_, err = post(t, other)
-	require.Error(t, err)
-	assert.NotErrorIs(t, err, garammachine.ErrUndecided)
+	for _, answered := range []string{"operation-authority.v2", ""} {
+		other := &garam{statuses: []int{200}, contract: answered}
+		_, err = post(t, other)
+		var foreign *garammachine.ContractError
+		require.ErrorAs(t, err, &foreign, "answered under %q", answered)
+		assert.Equal(t, garammachine.ContractError{Path: "/route", Status: 200, Got: answered, Want: contract}, *foreign)
+		assert.NotErrorIs(t, err, garammachine.ErrUndecided)
+	}
 }
 
 func TestPost_RetriesUndecidedAnswersWithinTheBound(t *testing.T) {

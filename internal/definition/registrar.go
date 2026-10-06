@@ -7,7 +7,8 @@ import "context"
 // first registration's answer, after garam rechecks current authority.
 // A refusal by current authority wraps ErrRegistrationRefused, and one naming another request or a
 // moved agent wraps ErrRegistrationConflict, and an answer garam left undecided wraps
-// ErrRegistrationUndecided. Any error leaves a creation garam had not yet answered unknown.
+// ErrRegistrationUndecided, and one under a contract this service does not take wraps
+// ErrGaramContractUnsupported. Any error leaves a creation garam had not yet answered unknown.
 type Registrar interface {
 	Register(ctx context.Context, r Registration) (Registered, error)
 }

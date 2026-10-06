@@ -383,6 +383,11 @@ var (
 	// answered 500 or 503 on every attempt, or could not be reached. The creation's outcome is unknown.
 	ErrRegistrationUndecided = errors.New("registration undecided")
 
+	// ErrGaramContractUnsupported is wrapped by a Registrar or an Issuer that garam answered under
+	// a contract version this service does not take, or under none. Nothing in the answer is read,
+	// so the outcome is unknown, as an undecided one is.
+	ErrGaramContractUnsupported = errors.New("garam answered under a contract this service does not take")
+
 	// ErrAssignmentMoved is returned for a repeat of a registered creation whose agent garam no
 	// longer holds where the creation assigned it.
 	ErrAssignmentMoved = errors.New("the agent's assignment moved since its creation")

@@ -3,6 +3,7 @@ package execution
 import (
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
@@ -21,6 +22,9 @@ type server struct {
 	definitions definition.Service
 	garam       Garam
 	logger      *slog.Logger
+	// foreignContracts holds each contract value garam answered under that these routes do not
+	// take, so each is logged once.
+	foreignContracts sync.Map
 }
 
 // NewHandler returns the agent routes of agent-execution.v1. Each needs the agent's leaf

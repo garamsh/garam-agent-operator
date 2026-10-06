@@ -34,8 +34,12 @@ func (g *Garam) Register(ctx context.Context, r definition.Registration) (defini
 			RequestID    string `json:"requestId"`
 			OperationRef string `json:"operationRef"`
 		}{r.Request.RequestID, r.OperationRef})
-	if errors.Is(err, garammachine.ErrUndecided) {
+	var foreign *garammachine.ContractError
+	switch {
+	case errors.Is(err, garammachine.ErrUndecided):
 		return definition.Registered{}, fmt.Errorf("%w: %v", definition.ErrRegistrationUndecided, err)
+	case errors.As(err, &foreign):
+		return definition.Registered{}, fmt.Errorf("%w: %v", definition.ErrGaramContractUnsupported, err)
 	}
 	if err != nil {
 		return definition.Registered{}, fmt.Errorf("create managed agent: %v", err)

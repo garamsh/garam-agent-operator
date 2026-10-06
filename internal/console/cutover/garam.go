@@ -112,8 +112,12 @@ func (g *Garam) send(ctx context.Context, method, agent string, stage console.St
 		Method: method, Contract: garammachine.AgentCutover, Path: path(agent, stage), Body: body,
 		Authorization: "Garam-Operation " + ref,
 	})
-	if errors.Is(err, garammachine.ErrUndecided) {
+	var foreign *garammachine.ContractError
+	switch {
+	case errors.Is(err, garammachine.ErrUndecided):
 		return fmt.Errorf("%w: %v", console.ErrCutoverUndecided, err)
+	case errors.As(err, &foreign):
+		return fmt.Errorf("%w: %v", console.ErrGaramContractUnsupported, err)
 	}
 	if err != nil {
 		return fmt.Errorf("cutover %s: %v", stage, err)

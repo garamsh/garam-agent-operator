@@ -45,8 +45,12 @@ func (g *Garam) Issue(ctx context.Context, i definition.Issuance) (definition.Is
 			CertificateRequestPEM string `json:"certificateRequestPem"`
 			OperationRef          string `json:"operationRef"`
 		}{i.Request.RequestID, i.Request.Epoch, i.Request.CSRPEM, i.OperationRef})
-	if errors.Is(err, garammachine.ErrUndecided) {
+	var foreign *garammachine.ContractError
+	switch {
+	case errors.Is(err, garammachine.ErrUndecided):
 		return definition.IssuedCertificate{}, fmt.Errorf("%w: %v", definition.ErrIssuanceUndecided, err)
+	case errors.As(err, &foreign):
+		return definition.IssuedCertificate{}, fmt.Errorf("%w: %v", definition.ErrGaramContractUnsupported, err)
 	}
 	if err != nil {
 		return definition.IssuedCertificate{}, fmt.Errorf("issue initial certificate: %v", err)

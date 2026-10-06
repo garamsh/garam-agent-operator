@@ -111,3 +111,29 @@ func TestGaram_RefusalsCarryGaramsReason(t *testing.T) {
 	_, err = g.Switch(context.Background(), agent, "ref", "i1")
 	require.ErrorIs(t, err, console.ErrCutoverUndecided)
 }
+
+func TestGaram_AnAnswerUnderAnotherContractOrNoneDecidesNothing(t *testing.T) {
+	answer := `{"importId":"i1","stage":"frozen","frozenDigest":"aa"}`
+	for name, header := range map[string]*string{
+		"the contract asked": ptrTo(garammachine.AgentCutover), "another contract": ptrTo("agent-cutover.v2"), "no contract": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if header != nil {
+					w.Header().Set("Garam-Contract-Version", *header)
+				}
+				_, _ = w.Write([]byte(answer))
+			}))
+			t.Cleanup(server.Close)
+			_, err := cutover.NewGaram(garammachine.New(server.URL, server.Client())).
+				Freeze(context.Background(), agent, "ref", "i1", "aa", "3")
+			if header != nil && *header == garammachine.AgentCutover {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorIs(t, err, console.ErrGaramContractUnsupported)
+		})
+	}
+}
+
+func ptrTo(s string) *string { return &s }

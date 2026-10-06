@@ -59,8 +59,20 @@ type errorBody struct {
 // respondError translates err to its answer. It is the only place these routes choose a status
 // for an error, and the only place one is logged.
 func (s *server) respondError(w http.ResponseWriter, err error) {
-	var named *refusal
+	var (
+		named   *refusal
+		foreign *GaramContractError
+	)
 	switch {
+	case errors.As(err, &foreign):
+		// agent-execution.v1 lists no kind for it, and its only 503 is undecided (garam@59fe68d
+		// ADR-0084). The adapter retries that without end, so the cause is logged here, once per
+		// contract value.
+		if _, seen := s.foreignContracts.LoadOrStore(foreign.Contract, struct{}{}); !seen {
+			s.logger.Error("garam answered under a contract the agent routes do not take",
+				"port", "execution", "call", foreign.Call, "contract", foreign.Contract)
+		}
+		writeRefusal(w, errUndecided.status, errUndecided.kind, foreign.Error())
 	case errors.As(err, &named):
 		writeRefusal(w, named.status, named.kind, named.message)
 	case errors.Is(err, definition.ErrRequestReused):

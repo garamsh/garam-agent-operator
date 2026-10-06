@@ -107,7 +107,7 @@ The console's reads and template publication (#220; garam's actions at `garam@33
   - A preflight from a registered origin is `204` with `Access-Control-Allow-Origin` that origin, `Access-Control-Allow-Methods: GET, POST, PUT`, `Access-Control-Allow-Headers: Authorization, Content-Type, Garam-Contract-Version` and `Access-Control-Max-Age: 600`, and never `Access-Control-Allow-Credentials`: the console sends no cookie.
   - A request from a registered origin carries `Access-Control-Allow-Origin` that origin. Any other origin gets no CORS header: its preflight is 403, and its request is served without one, so the browser withholds the answer.
   - CORS covers the console's routes only, not the controllers'. The authority is read only from `Authorization`, never a query string, and never logged.
-- **garam's 500 and 503 are handled at the client** (`internal/garammachine`), shared by both API domains, as garam's ADR-0050 places a listener's 5xx. Introspection and the controller proof decide without writing, so an attempt answered 500 or 503, or whose connection failed, is sent again: three attempts at most, waiting 200 ms and then 400 ms. After the third it is answered as undecided. An answer under another contract version is refused, not read.
+- **garam's 500 and 503 are handled at the client** (`internal/garammachine`), shared by both API domains, as garam's ADR-0050 places a listener's 5xx. Introspection and the controller proof decide without writing, so an attempt answered 500 or 503, or whose connection failed, is sent again: three attempts at most, waiting 200 ms and then 400 ms. After the third it is answered as undecided. A decided answer under another contract version than the one asked, or under none, is refused, not read: it authorizes, proves and issues nothing, and is not retried (#293). Every port over the client answers it 503, which is how garam's own contract answers a dependency it cannot use (`garam@59fe68d` `api/machine.yaml:26-31`; garam answers no 502).
 - **Each refusal has one status**, chosen in `internal/console/respond.go` and nowhere else:
 
 | Refusal | Status |
@@ -116,6 +116,7 @@ The console's reads and template publication (#220; garam's actions at `garam@33
 | garam answers 404 (unknown, expired, another audience's), or the binding's expiry has passed | 401 |
 | garam answers 403, a bound field differs from the request, or the body's digest differs | 403 |
 | garam stays undecided (500 or 503 on every attempt, or unreachable) | 503 |
+| garam answers the introspection, the managed create or a cutover stage under another contract than the one asked, or under none | 503, `{"kind": "garam_contract_unsupported"}`; a creation stays `Pending` |
 | garam's managed create refuses the creation (403 or 404), now or as stored | 403 |
 | garam's managed create stays undecided | 503, with the creation still `Pending` |
 | The body is not one create, configure or publish request, or a configure's `expectedRevision` is not a canonical decimal string | 400 |
@@ -184,6 +185,7 @@ The console's reads and template publication (#220; garam's actions at `garam@33
     3. B, `introspectAgentExecution`, on this request's leaf, with no generation. A fenced credential, or a leaf garam refuses, is 403 `credential_fenced`. An agent not assigned to the placement's controller is 403 `placement_not_current`. Another epoch is 409 `epoch_superseded`.
     4. The agent-bound controller proof, over the leaf stored with the placement. Refused is 403 `not_authorized`; another epoch is 409 `epoch_superseded`.
     5. A, `activateAgent`, then runs with `{requestId, epoch, generation, replacesActivationId, operationRef, certificatePem}`, where `certificatePem` is this request's leaf. `replacesActivationId` is the agent's latest activation, and `operationRef` follows the rule below. Both are fixed when the request is first recorded, so every retry sends garam the same A. garam's 409 is 409 `activation_superseded`, its 403 or 404 is 403 `not_authorized`, its 422 is 403 `credential_fenced`, and undecided is 503 `undecided`.
+    - **An answer under another contract.** garam's answer to B, the proof or A under another contract than the one asked, or under none, is 503 `undecided` on both agent routes, with a message naming the contract received. It is the one port that names no `garam_contract_unsupported`: agent-execution.v1 is garam's, its refusal kinds are a closed list, and its only 503 is `undecided` (`garam@59fe68d` ADR-0084, the activation's and runtime status's refusals). The adapter retries a 503 without end, so the routes log the case at ERROR, once per contract value received, naming the port and the contract.
     - **Answer.** `201` the first time and `200` for a replay, as garam answers: `{activationId, tokenVersion, token, grn, epoch, generation, configRevision}`. garam's binding is verified first, and an activation of another binding is not passed on. The answered `activationId` is recorded on the request and as the agent's latest activation, kept after it ends as the next anchor.
     - **Tokens.** Neither the token nor an answer is stored. Every attempt asks garam, so a retry after a lost answer or a restart is the same activation at a higher `tokenVersion`, and never a new one.
     - **Serialized.** One attempt at a time per agent, under a PostgreSQL advisory lock held from the record to the end of A.
@@ -199,6 +201,7 @@ The console's reads and template publication (#220; garam's actions at `garam@33
 | garam refuses the session proof (403, 404, 422), or it names another operator than the certificate | 403 |
 | A status report for an agent whose latest revision is recorded for another controller, or whose proof fails or names another epoch | 403 |
 | garam stays undecided on any proof the answer needs | 503, with the cursor unmoved |
+| garam answers a proof or the issuance under another contract than the one asked, or under none | 503, `{"kind": "garam_contract_unsupported"}`; a certificate request stays pending |
 | A malformed or future cursor, `waitSeconds` outside 0–30, a report that is not one, a revision that is not a canonical decimal string, or a revision the agent does not have | 400 |
 | A certificate request garam refuses as not current authority (403, 404) | 403, with garam's kind |
 | A certificate request whose proof names another epoch than the request's or the revision's | 409, `{"kind": "epoch_superseded"}` |

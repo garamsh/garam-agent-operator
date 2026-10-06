@@ -26,6 +26,9 @@ const (
 	kindRequestReused = "request_reused"
 	// kindInvalidRequest names the refusal of a placement registration that is not one.
 	kindInvalidRequest = "invalid_request"
+	// kindGaramContractUnsupported names garam's answer under a contract this service does not
+	// take, or under none, apart from an undecided garam.
+	kindGaramContractUnsupported = "garam_contract_unsupported"
 )
 
 // placementRefusals is the kind each refusal of a placement registration is answered 409 under.
@@ -71,6 +74,10 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeMessage(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrUndecided), errors.Is(err, definition.ErrIssuanceUndecided):
 		writeMessage(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, ErrGaramContractUnsupported), errors.Is(err, definition.ErrGaramContractUnsupported):
+		// garam's own contract answers a dependency it cannot use with 503 (garam@59fe68d
+		// api/machine.yaml:26-31).
+		writeJSON(w, http.StatusServiceUnavailable, errorBody{Kind: kindGaramContractUnsupported, Message: err.Error()})
 	case errors.Is(err, errInvalidQuery), errors.Is(err, errInvalidStatusBody), errors.Is(err, definition.ErrInvalidStatus),
 		errors.Is(err, errInvalidCertificateBody):
 		writeMessage(w, http.StatusBadRequest, err.Error())
