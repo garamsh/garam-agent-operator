@@ -60,6 +60,9 @@ var (
 	// attached is the running attached binary, and attachedStart what restartAttached starts again.
 	attached      *process
 	attachedStart func() (*process, error)
+	// startOn starts another binary as the attached one is started, on the database at url, and
+	// returns it and the base URL of its console routes.
+	startOn func(name, url string) (*process, string, error)
 )
 
 func TestMain(m *testing.M) {
@@ -143,6 +146,9 @@ func run(m *testing.M) (int, error) {
 	}
 	defer real.stop()
 	attachedStart = func() (*process, error) { return startAttached(binary, dir, id, real) }
+	startOn = func(name, url string) (*process, string, error) {
+		return startControlOn(binary, dir, id, real, name, url)
+	}
 	attached, err = attachedStart()
 	if err != nil {
 		return 0, err
@@ -246,15 +252,25 @@ func freeAddress() (string, error) {
 // startAttached starts a second control binary on the same database, calling the real garam as
 // the hosted operator garam enrolled, and serving under the suite's serving certificate.
 func startAttached(binary, dir string, id identity, g *garamStack) (*process, error) {
-	probeAddr, err := freeAddress()
+	attached, url, err := startControlOn(binary, dir, id, g, "attached control", databaseURL)
 	if err != nil {
 		return nil, err
+	}
+	attachedURL = url
+	return attached, nil
+}
+
+// startControlOn starts a control binary under name on the database at url as startAttached
+// does, and returns it once ready, with the base URL of its console routes.
+func startControlOn(binary, dir string, id identity, g *garamStack, name, url string) (*process, string, error) {
+	probeAddr, err := freeAddress()
+	if err != nil {
+		return nil, "", err
 	}
 	apiAddr, err := freeAddress()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	attachedURL = "https://" + apiAddr
 	control := exec.Command(binary,
 		"--health-probe-bind-address", probeAddr,
 		"--api-bind-address", apiAddr,
@@ -265,14 +281,14 @@ func startAttached(binary, dir string, id identity, g *garamStack) (*process, er
 		"--operator-certificate-file", g.hostedFiles.certificate,
 		"--operator-key-file", g.hostedFiles.key,
 	)
-	control.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+databaseURL)
-	attached, err := startProcess("attached control", dir, control)
+	control.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+url)
+	started, err := startProcess(name, dir, control)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if err := attached.waitReady("http://" + probeAddr + "/readyz"); err != nil {
-		attached.stop()
-		return nil, step("attached control ready", err, g.processes...)
+	if err := started.waitReady("http://" + probeAddr + "/readyz"); err != nil {
+		started.stop()
+		return nil, "", step(name+" ready", err, g.processes...)
 	}
-	return attached, nil
+	return started, "https://" + apiAddr, nil
 }

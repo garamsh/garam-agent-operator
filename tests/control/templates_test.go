@@ -21,10 +21,17 @@ import (
 func sendTargeted(t *testing.T, method, path, operation, target, requestID string, body []byte,
 	boundPath string) (int, map[string]any) {
 	t.Helper()
+	return sendTargetedTo(t, attachedURL, method, path, operation, target, requestID, body, boundPath)
+}
+
+// sendTargetedTo is sendTargeted to the binary whose console routes are at base.
+func sendTargetedTo(t *testing.T, base, method, path, operation, target, requestID string, body []byte,
+	boundPath string) (int, map[string]any) {
+	t.Helper()
 	digest := sha256.Sum256(body)
 	authority, _, err := real.mintTargeted(operation, target, requestID, hex.EncodeToString(digest[:]), boundPath)
 	require.NoError(t, err)
-	req, err := http.NewRequest(method, attachedURL+path, bytes.NewReader(body))
+	req, err := http.NewRequest(method, base+path, bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Garam-Operation "+authority)
 	resp, err := apiClient.Do(req)
