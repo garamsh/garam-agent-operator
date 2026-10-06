@@ -33,10 +33,12 @@ const (
 	controller = "grn:root:default:operator:k8s"
 	elsewhere  = "grn:root:default:operator:other"
 	org        = "grn:root:default:org:acme"
-	agentA     = "grn:acme:default:agent:a"
-	agentB     = "grn:acme:default:agent:b"
-	agentC     = "grn:acme:default:agent:c"
-	epoch      = "7"
+	// orgID is org's identifier, the organization every test's definitions belong to.
+	orgID  = "acme"
+	agentA = "grn:acme:default:agent:a"
+	agentB = "grn:acme:default:agent:b"
+	agentC = "grn:acme:default:agent:c"
+	epoch  = "7"
 )
 
 // verdict is what the test double answers for one proof.
@@ -93,15 +95,57 @@ func (p *prover) setAgentB(v verdict) {
 // registrar registers each creation under the GRN its request id names.
 type registrar struct{}
 
-func (registrar) Register(_ context.Context, key definition.RequestKey) (definition.GRN, error) {
-	return definition.GRN(key.RequestID), nil
+func (registrar) Register(_ context.Context, r definition.Registration) (definition.Registered, error) {
+	return definition.Registered{Agent: definition.GRN(r.Request.RequestID), Epoch: "1"}, nil
 }
+
+// issuer is the test double for garam's initial-certificate issuance. It issues a certificate
+// named for each request id, unless the test set the error its calls answer, and records every
+// issuance it was sent.
+type issuer struct {
+	mu        sync.Mutex
+	err       error
+	issuances []definition.Issuance
+}
+
+func (i *issuer) Issue(_ context.Context, is definition.Issuance) (definition.IssuedCertificate, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.issuances = append(i.issuances, is)
+	if i.err != nil {
+		return definition.IssuedCertificate{}, i.err
+	}
+	return definition.IssuedCertificate{
+		CertificatePEM: "certificate for " + is.Request.RequestID,
+		IssuerPEM:      "issuer",
+		ServerRootPEM:  "server root",
+		NotAfter:       time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC),
+	}, nil
+}
+
+// answer sets the error every later issuance answers; nil issues again.
+func (i *issuer) answer(err error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.err = err
+}
+
+func (i *issuer) calls() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return len(i.issuances)
+}
+
+// creator is the controller the fixture's agents are created on, so revision 1 is no controller's
+// under test and each test's revisions come from configure.
+const creator = "grn:root:default:operator:creator"
 
 // env is the controller routes over an in-memory store holding agentA and agentB recorded for
 // controller under epoch, and agentC recorded for another controller.
 type env struct {
 	server      *httptest.Server
 	prover      *prover
+	issuer      *issuer
 	definitions definition.Service
 	profile     definition.ProfileRef
 	withCert    *http.Client
@@ -120,26 +164,33 @@ func newEnv(t *testing.T) *env {
 func newEnvCarrying(t *testing.T, maxAgents int) *env {
 	t.Helper()
 	ctx := context.Background()
-	definitions := definition.NewService(repository.NewMemory(), registrar{})
+	iss := &issuer{}
+	definitions := definition.NewService(repository.NewMemory(), registrar{}, iss)
 	class := "standard"
-	p, err := definitions.PublishProfile(ctx, "small", definition.ExecutionSettings{
+	p, err := definitions.PublishProfile(ctx, orgID, "small", definition.ExecutionSettings{
 		Resources:        corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")}},
 		StorageSize:      resource.MustParse("1Gi"),
 		StorageClassName: &class,
 	})
 	require.NoError(t, err)
 	profile := definition.ProfileRef{Name: p.Name, Version: p.Version}
-	tmpl, err := definitions.PublishTemplate(ctx, definition.Template{Name: "researcher", Profile: profile})
+	tmpl, err := definitions.PublishTemplate(ctx, orgID, definition.Template{Name: "researcher", Profile: profile})
 	require.NoError(t, err)
 
 	e := &env{
 		prover:      &prover{agents: map[string]verdict{}, epochs: map[string]string{agentA: epoch, agentB: epoch}},
+		issuer:      iss,
 		definitions: definitions,
 		profile:     profile,
 	}
 	for _, a := range []string{agentA, agentB, agentC} {
-		_, err := definitions.CreateAgent(ctx, definition.RequestKey{Organization: "acme", RequestID: a}, "actor",
-			definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version})
+		_, _, err := definitions.CreateAgent(ctx, definition.CreateInput{
+			Request:    definition.RequestKey{Organization: orgID, RequestID: a},
+			Binding:    definition.Binding{Actor: "actor", Operation: "agent:create", Target: creator, OperationRef: "create-ref-" + a},
+			Controller: creator,
+			Template:   definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
+			Profile:    profile,
+		})
 		require.NoError(t, err)
 	}
 	e.configure(t, agentA, controller, 1)
@@ -166,7 +217,7 @@ func (e *env) configure(t *testing.T, agent, operator string, expected definitio
 	t.Helper()
 	e.configures++
 	_, err := e.definitions.Configure(context.Background(), definition.ConfigureInput{
-		Request: definition.RequestKey{Organization: "acme", RequestID: fmt.Sprintf("configure-%d", e.configures)},
+		Request: definition.RequestKey{Organization: orgID, RequestID: fmt.Sprintf("configure-%d", e.configures)},
 		Binding: definition.Binding{
 			Actor: "actor", Operation: "agent:configure", Target: agent,
 			Assignment: definition.Assignment{Operator: operator, Epoch: epoch},
@@ -203,6 +254,8 @@ func clientWithLeaf(t *testing.T, server *httptest.Server, grn string) (*http.Cl
 
 // feed is one answer of the desired feed.
 type feed struct {
+	// origins is each released agent's origin, empty where the answer names none.
+	origins map[string]string
 	status  int
 	cursor  string
 	agents  map[string]string
@@ -220,14 +273,17 @@ func (e *env) desired(t *testing.T, client *http.Client, query string) feed {
 		Agents []struct {
 			Agent    string `json:"agent"`
 			Revision string `json:"revision"`
+			Origin   string `json:"origin"`
 		} `json:"agents"`
 		Kind    string `json:"kind"`
 		Message string `json:"message"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	f := feed{status: resp.StatusCode, cursor: out.Cursor, agents: map[string]string{}, kind: out.Kind, message: out.Message}
+	f := feed{status: resp.StatusCode, cursor: out.Cursor, agents: map[string]string{}, origins: map[string]string{},
+		kind: out.Kind, message: out.Message}
 	for _, a := range out.Agents {
 		f.agents[a.Agent] = a.Revision
+		f.origins[a.Agent] = a.Origin
 	}
 	return f
 }

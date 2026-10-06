@@ -274,7 +274,7 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	}{
 		RequestID:   "e2e-delegation",
 		Controllers: []string{s.controllerGRN},
-		Operations:  []string{"agent:create", "agent:configure", "agent:activate"},
+		Operations:  []string{"agent:create", "agent:configure", "agent:activate", "agent:recover", "agent:cutover"},
 		ExpiresAt:   time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 	}
 	return step("write the hosted operator's delegation",
@@ -324,7 +324,7 @@ func (s *garamStack) enroll(identifier string) (enrolled, error) {
 		"token":                 registered.Enrollment.Token,
 		"certificateRequestPem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})),
 	}
-	if err := s.machineCall(s.machine, http.MethodPost, "/enrollment", "", body, http.StatusCreated, &issued); err != nil {
+	if err := s.machineCall(s.machine, "/enrollment", "", body, http.StatusCreated, &issued); err != nil {
 		return enrolled{}, err
 	}
 	keyDER, err := x509.MarshalECPrivateKey(key)
@@ -371,7 +371,7 @@ func (s *garamStack) createAgent(requestID string) (agent, epoch string, err err
 		GRN   string `json:"grn"`
 		Epoch string `json:"epoch"`
 	}
-	err = s.machineCall(s.hostedTLS, http.MethodPost, "/operators/"+url.PathEscape(s.controllerGRN)+"/managed-agents",
+	err = s.machineCall(s.hostedTLS, "/operators/"+url.PathEscape(s.controllerGRN)+"/managed-agents",
 		enrollmentContract, struct {
 			RequestID    string `json:"requestId"`
 			OperationRef string `json:"operationRef"`
@@ -384,8 +384,8 @@ func (s *garamStack) create(method, path, contract string, in any, out any) erro
 	return call(http.DefaultClient, method, s.apiURL+path, contract, s.session, in, http.StatusCreated, out)
 }
 
-func (s *garamStack) machineCall(client *http.Client, method, path, contract string, in any, want int, out any) error {
-	return call(client, method, s.machineURL+path, contract, nil, in, want, out)
+func (s *garamStack) machineCall(client *http.Client, path, contract string, in any, want int, out any) error {
+	return call(client, http.MethodPost, s.machineURL+path, contract, nil, in, want, out)
 }
 
 // call sends in as JSON and decodes the answer into out, refusing any status but want.

@@ -8,8 +8,15 @@ import (
 // Authority is the opaque operation authority the console presents. It is never logged.
 type Authority string
 
-// OperationConfigure is the operation an authority binds to change an agent's definition.
-const OperationConfigure = "agent:configure"
+const (
+	// OperationConfigure is the operation an authority binds to change an agent's definition.
+	OperationConfigure = "agent:configure"
+	// OperationCreate is the operation an authority binds to create an agent on a controller.
+	OperationCreate = "agent:create"
+	// OperationCutover is the operation an authority binds to carry one stage of a legacy
+	// agent's cutover to garam's route for that stage (garam@1a5273d, ADR-0086).
+	OperationCutover = "agent:cutover"
+)
 
 // Binding is what an authority binds, as garam's introspection answers it.
 type Binding struct {
@@ -23,7 +30,10 @@ type Binding struct {
 	Assignment   *Assignment
 	RequestID    string
 	BodySHA256   string
-	ExpiresAt    time.Time
+	// RequestTarget is the exact route the authority may be carried to, where the operation names
+	// one: for agent:cutover, garam's own cutover route for one stage.
+	RequestTarget string
+	ExpiresAt     time.Time
 }
 
 // Assignment is where the target agent ran when garam authorized a configuration change.

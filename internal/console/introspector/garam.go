@@ -38,7 +38,9 @@ type bindingJSON struct {
 	Assignment   *assignmentJSON `json:"assignment"`
 	RequestID    string          `json:"requestId"`
 	BodySHA256   string          `json:"bodySha256"`
-	ExpiresAt    *time.Time      `json:"expiresAt"`
+	// RequestTarget is present for agent:cutover (garam@1a5273d), absent where the operation binds none.
+	RequestTarget string     `json:"requestTarget"`
+	ExpiresAt     *time.Time `json:"expiresAt"`
 }
 
 type assignmentJSON struct {
@@ -49,7 +51,7 @@ type assignmentJSON struct {
 // Introspect reads what authority binds. Introspection consumes nothing, so garam's undecided
 // answers are retried by the machine client within its bound.
 func (g *Garam) Introspect(ctx context.Context, authority console.Authority) (console.Binding, error) {
-	answer, err := g.machine.Post(ctx, introspectionPath, map[string]string{"authority": string(authority)})
+	answer, err := g.machine.Post(ctx, garammachine.OperationAuthority, introspectionPath, map[string]string{"authority": string(authority)})
 	if errors.Is(err, garammachine.ErrUndecided) {
 		return console.Binding{}, fmt.Errorf("%w: %v", console.ErrAuthorityUndecided, err)
 	}
@@ -70,15 +72,16 @@ func (g *Garam) Introspect(ctx context.Context, authority console.Authority) (co
 		return console.Binding{}, fmt.Errorf("decode introspection: %v", err)
 	}
 	out := console.Binding{
-		OperationRef: b.OperationRef,
-		GrantID:      b.GrantID,
-		Org:          b.OrgGRN,
-		Actor:        b.ActorGRN,
-		Audience:     b.AudienceGRN,
-		Operation:    b.Operation,
-		Target:       b.TargetGRN,
-		RequestID:    b.RequestID,
-		BodySHA256:   b.BodySHA256,
+		OperationRef:  b.OperationRef,
+		GrantID:       b.GrantID,
+		Org:           b.OrgGRN,
+		Actor:         b.ActorGRN,
+		Audience:      b.AudienceGRN,
+		Operation:     b.Operation,
+		Target:        b.TargetGRN,
+		RequestID:     b.RequestID,
+		RequestTarget: b.RequestTarget,
+		BodySHA256:    b.BodySHA256,
 	}
 	if b.ExpiresAt != nil {
 		out.ExpiresAt = *b.ExpiresAt

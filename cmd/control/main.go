@@ -21,11 +21,16 @@ import (
 
 	"github.com/garamsh/garam-agent-operator/internal/certificate"
 	"github.com/garamsh/garam-agent-operator/internal/console"
+	"github.com/garamsh/garam-agent-operator/internal/console/cutover"
 	"github.com/garamsh/garam-agent-operator/internal/console/introspector"
 	"github.com/garamsh/garam-agent-operator/internal/definition"
+	"github.com/garamsh/garam-agent-operator/internal/definition/issuer"
+	"github.com/garamsh/garam-agent-operator/internal/definition/registrar"
 	"github.com/garamsh/garam-agent-operator/internal/definition/repository"
 	"github.com/garamsh/garam-agent-operator/internal/distribution"
 	"github.com/garamsh/garam-agent-operator/internal/distribution/prover"
+	"github.com/garamsh/garam-agent-operator/internal/execution"
+	executiongaram "github.com/garamsh/garam-agent-operator/internal/execution/garam"
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
@@ -108,13 +113,13 @@ func run(ctx context.Context, o options, databaseURL string) error {
 	}
 	slog.Info("store schema applied")
 
-	// No route creates an agent yet, so no Registrar is wired (issue #211).
-	definitions := definition.NewService(store, nil)
 	garam := garammachine.New(o.garamURL, machine)
+	definitions := definition.NewService(store, registrar.NewGaram(garam), issuer.NewGaram(garam))
 	api := http.NewServeMux()
 	api.Handle("/v1/orgs/", console.NewHandler(console.Config{
 		Definitions:  definitions,
 		Introspector: introspector.NewGaram(garam),
+		Cutover:      cutover.NewGaram(garam),
 		Audience:     audience,
 		Now:          time.Now,
 		Logger:       slog.Default(),
@@ -125,6 +130,11 @@ func run(ctx context.Context, o options, databaseURL string) error {
 		PollInterval: feedPollInterval,
 		MaxAgents:    feedMaxAgents,
 		Logger:       slog.Default(),
+	}))
+	api.Handle("/v1/agents/", execution.NewHandler(execution.Config{
+		Definitions: definitions,
+		Garam:       executiongaram.NewGaram(garam),
+		Logger:      slog.Default(),
 	}))
 
 	health := http.NewServeMux()

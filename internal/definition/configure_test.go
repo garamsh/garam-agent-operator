@@ -38,7 +38,7 @@ func (f fixture) configure(requestID, ego string, expected definition.Revision) 
 func registered(t *testing.T) fixture {
 	t.Helper()
 	f := newFixture(t, registration{agent: firstAgent})
-	_, err := f.service.CreateAgent(context.Background(), key("create"), actor, f.template)
+	_, _, err := f.service.CreateAgent(context.Background(), f.create("create", f.template))
 	require.NoError(t, err)
 	return f
 }
@@ -94,8 +94,8 @@ func TestConfigure_RequestIDReusedForAnotherBindingRefused(t *testing.T) {
 		{"another actor", func(in *definition.ConfigureInput) { in.Binding.Actor = "grn:acme:default:user:other" }},
 		{"another operation", func(in *definition.ConfigureInput) { in.Binding.Operation = "agent:create" }},
 		{"another target", func(in *definition.ConfigureInput) { in.Binding.Target = string(secondAgent) }},
-		{"another body", func(in *definition.ConfigureInput) { in.Binding.BodySHA256 = "other" }},
-		{"another operation reference", func(in *definition.ConfigureInput) { in.Binding.OperationRef = "other" }},
+		{"another body", func(in *definition.ConfigureInput) { in.Binding.BodySHA256 = other }},
+		{"another operation reference", func(in *definition.ConfigureInput) { in.Binding.OperationRef = other }},
 		{"another assignment", func(in *definition.ConfigureInput) { in.Binding.Assignment.Epoch = "8" }},
 		{"another agent", func(in *definition.ConfigureInput) { in.Agent = secondAgent }},
 	}
@@ -126,7 +126,7 @@ func TestConfigure_UnregisteredAgentRefused(t *testing.T) {
 	require.ErrorIs(t, err, definition.ErrNotFound)
 
 	// Control: once the agent is registered, the same request is accepted.
-	_, err = f.service.CreateAgent(ctx, key("create"), actor, f.template)
+	_, _, err = f.service.CreateAgent(ctx, f.create("create", f.template))
 	require.NoError(t, err)
 	_, err = f.service.Configure(ctx, f.configure("c1", "ego", 1))
 	require.NoError(t, err)
@@ -144,4 +144,66 @@ func TestConfigure_UnpublishedProfileRefused(t *testing.T) {
 	// Control: the same request naming a published profile version is accepted.
 	_, err = f.service.Configure(ctx, f.configure("c1", "ego", 1))
 	require.NoError(t, err)
+}
+
+func TestConfigure_AnotherOrganizationsProfileRefused(t *testing.T) {
+	ctx := context.Background()
+	f := registered(t)
+	gpu, err := f.service.PublishProfile(ctx, globex, "gpu", settings("8", "100Gi"))
+	require.NoError(t, err)
+
+	in := f.configure("c1", "ego", 1)
+	in.Profile = definition.ProfileRef{Name: gpu.Name, Version: gpu.Version}
+	_, err = f.service.Configure(ctx, in)
+	require.ErrorIs(t, err, definition.ErrNotFound)
+
+	// Control: once org publishes a profile under that name and version, the same request is accepted.
+	_, err = f.service.PublishProfile(ctx, org, "gpu", settings("1", "2Gi"))
+	require.NoError(t, err)
+	applied, err := f.service.Configure(ctx, in)
+	require.NoError(t, err)
+	assert.Equal(t, definition.Applied{Revision: 2}, applied)
+}
+
+func TestConfigure_AnotherOrganizationsAgentRefused(t *testing.T) {
+	ctx := context.Background()
+	f := registered(t)
+	_, err := f.service.PublishProfile(ctx, globex, f.profile.Name, settings("1", "2Gi"))
+	require.NoError(t, err)
+
+	// firstAgent was created in org; globex has a profile under the name the request names.
+	in := f.configure("c1", "ego", 1)
+	in.Request.Organization = globex
+	_, err = f.service.Configure(ctx, in)
+	require.ErrorIs(t, err, definition.ErrNotFound)
+	d, err := f.service.GetDefinition(ctx, firstAgent)
+	require.NoError(t, err)
+	assert.Equal(t, definition.Revision(1), d.Revision)
+
+	// Control: the same request in the agent's own organization is accepted.
+	applied, err := f.service.Configure(ctx, f.configure("c1", "ego", 1))
+	require.NoError(t, err)
+	assert.Equal(t, definition.Applied{Revision: 2}, applied)
+}
+
+func TestConfigure_RefusesAMalformedKeyReferenceAndStoresNothing(t *testing.T) {
+	ctx := context.Background()
+	f := registered(t)
+
+	in := f.configure("malformed", "ego", 1)
+	in.Config.Model.APIKey = unseparatedKeyRef
+	_, err := f.service.Configure(ctx, in)
+	assert.ErrorIs(t, err, definition.ErrInvalidSecretRef)
+	d, err := f.service.GetDefinition(ctx, firstAgent)
+	require.NoError(t, err)
+	assert.Equal(t, definition.Revision(1), d.Revision)
+
+	// Control: the request again under the same id, with a well-formed reference, is stored. Had
+	// the refused one been recorded, this would be refused as a reused request id.
+	applied, err := f.service.Configure(ctx, f.configure("malformed", "ego", 1))
+	require.NoError(t, err)
+	assert.Equal(t, definition.Revision(2), applied.Revision)
+	d, err = f.service.GetDefinition(ctx, firstAgent)
+	require.NoError(t, err)
+	assert.Equal(t, definition.SecretRef("model-api-key/api-key"), d.Config.Model.APIKey)
 }

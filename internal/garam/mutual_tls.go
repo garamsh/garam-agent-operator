@@ -49,6 +49,17 @@ func EnrollingMutualTLS(certificateFile, keyFile, trustFile string) (*tls.Config
 	return mutualTLS(roots, certificateFile, keyFile), nil
 }
 
+// OperatorTLS answers [EnrollingMutualTLS] where this operator is enrolling,
+// and [MutualTLS] otherwise. Every connection presenting the operator's own
+// certificate is configured through it, so none of them fails startup on the
+// pair its enrollment has yet to obtain (#267).
+func OperatorTLS(enrolling bool, certificateFile, keyFile, trustFile string) (*tls.Config, error) {
+	if enrolling {
+		return EnrollingMutualTLS(certificateFile, keyFile, trustFile)
+	}
+	return MutualTLS(certificateFile, keyFile, trustFile)
+}
+
 // mutualTLS is the configuration both constructors answer with.
 func mutualTLS(roots *x509.CertPool, certificateFile, keyFile string) *tls.Config {
 	return &tls.Config{
