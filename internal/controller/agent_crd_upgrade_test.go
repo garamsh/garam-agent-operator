@@ -88,7 +88,7 @@ var _ = Describe("Agent CRD upgrade", func() {
 				StorageSize: resource.MustParse("1Gi"),
 				Model: &agentv1alpha1.ModelSpec{
 					Provider: "openai-compatible", BaseURL: "https://api.minimax.io/v1", Name: "MiniMax-M2",
-					APIKeySecretRef: agentv1alpha1.SecretKeyReference{Name: "minimax", Key: "key"},
+					APIKeySecretRef: agentv1alpha1.SecretKeyReference{Name: "minimax", Key: "api-key"},
 				},
 			},
 		})).To(Succeed())
