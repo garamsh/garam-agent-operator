@@ -319,17 +319,14 @@ func main() {
 	}
 	// +kubebuilder:scaffold:builder
 
+	// A deployment that has been given a token to spend and a Secret to write
+	// what it buys. An operator that is enrolling has no certificate for the
+	// startup read to find: its own enrollment writes one where the handshake
+	// reads it, and until then the handshake is what says so. That holds for the
+	// control service's connection as well, which presents the same pair (#267).
+	enrolling := garamAddress != "" && garamEnrollmentTokenFile != "" && garamCredentialSecret != ""
 	if garamAddress != "" {
-		// A deployment that has been given a token to spend and a Secret to
-		// write what it buys. An operator that is enrolling has no certificate
-		// for the startup read to find: its own enrollment writes one where the
-		// handshake reads it, and until then the handshake is what says so.
-		enrolling := garamEnrollmentTokenFile != "" && garamCredentialSecret != ""
-		mutualTLS := garam.MutualTLS
-		if enrolling {
-			mutualTLS = garam.EnrollingMutualTLS
-		}
-		tlsConfig, err := mutualTLS(garamCertificateFile, garamKeyFile, garamTrustFile)
+		tlsConfig, err := garam.OperatorTLS(enrolling, garamCertificateFile, garamKeyFile, garamTrustFile)
 		if err != nil {
 			setupLog.Error(err, "Failed to configure the connection to garam")
 			os.Exit(1)
@@ -416,7 +413,7 @@ func main() {
 		// This operator is the controller its own certificate names, the same
 		// pair it presents to garam and reads at each handshake; only the root
 		// its peer is verified against differs (ADR 0043).
-		tlsConfig, err := garam.MutualTLS(garamCertificateFile, garamKeyFile, controlTrustFile)
+		tlsConfig, err := garam.OperatorTLS(enrolling, garamCertificateFile, garamKeyFile, controlTrustFile)
 		if err != nil {
 			setupLog.Error(err, "Failed to configure the connection to the control service")
 			os.Exit(1)
