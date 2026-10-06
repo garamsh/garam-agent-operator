@@ -10,6 +10,9 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
+// recoveredPEM is the certificate every test's recovery is answered with.
+const recoveredPEM = "recovered certificate"
+
 // recoverBinding is what an agent:recover authority for a console request to firstAgent binds.
 func recoverBinding(digest string) definition.Binding {
 	b := binding(digest)
@@ -43,7 +46,7 @@ func TestRecovery_StagesFollowInOrderAndTheBodyIsTheOnePrepared(t *testing.T) {
 	assert.Equal(t, "1", opened.Epoch, "the recovery is not opened under the latest revision's epoch")
 
 	_, err = f.service.FinalizeRecovery(ctx, firstAgent, "rec-1",
-		definition.RecoveredCredential{Lineage: "l2", CertificatePEM: "cert"})
+		definition.RecoveredCredential{Lineage: "l2", CertificatePEM: recoveredPEM})
 	require.ErrorIs(t, err, definition.ErrRecoveryStage, "a recovery was finalized before it was prepared")
 
 	prepared, err := f.service.PrepareRecovery(ctx, certificateRequest("rec-1", "1", "csr"))
@@ -62,10 +65,10 @@ func TestRecovery_StagesFollowInOrderAndTheBodyIsTheOnePrepared(t *testing.T) {
 	require.ErrorIs(t, err, definition.ErrRequestReused)
 
 	finalized, err := f.service.FinalizeRecovery(ctx, firstAgent, "rec-1",
-		definition.RecoveredCredential{Lineage: "l2", CertificatePEM: "cert"})
+		definition.RecoveredCredential{Lineage: "l2", CertificatePEM: recoveredPEM})
 	require.NoError(t, err)
 	assert.Equal(t, definition.RecoveryFinalized, finalized.Stage)
-	assert.Equal(t, &definition.RecoveredCredential{Lineage: "l2", CertificatePEM: "cert"}, finalized.Recovered)
+	assert.Equal(t, &definition.RecoveredCredential{Lineage: "l2", CertificatePEM: recoveredPEM}, finalized.Recovered)
 
 	// The controller's repeat is answered the recovered credential.
 	fetched, err := f.service.PrepareRecovery(ctx, certificateRequest("rec-1", "1", "csr"))

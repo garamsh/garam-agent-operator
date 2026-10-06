@@ -11,14 +11,20 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
+// stopOrg and stopOperation are what a console stop and start of the agent are bound to.
+const (
+	stopOrg       = "acme"
+	stopOperation = "agent:configure"
+)
+
 func TestActivate_NothingIsActivatedWhileAStopHoldsTheAgent(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	first := e.activate(t, e.adapter, requestID, generation, "1")
 	require.Equal(t, http.StatusCreated, first.status, first.raw)
 	stop := definition.StopInput{
-		Key: definition.RequestKey{Organization: "acme", RequestID: "stop-1"}, Agent: agent,
-		Binding: definition.Binding{Actor: "admin", Operation: "agent:configure", Target: agent},
+		Key: definition.RequestKey{Organization: stopOrg, RequestID: "stop-1"}, Agent: agent,
+		Binding: definition.Binding{Actor: "admin", Operation: stopOperation, Target: agent},
 	}
 	_, _, err := e.definitions.Stop(ctx, stop)
 	require.NoError(t, err)
@@ -32,8 +38,8 @@ func TestActivate_NothingIsActivatedWhileAStopHoldsTheAgent(t *testing.T) {
 
 	// Control: once the stop ends, the adapter's activation is admitted again.
 	_, err = e.definitions.Start(ctx, definition.StopInput{
-		Key: definition.RequestKey{Organization: "acme", RequestID: "start-1"}, Agent: agent,
-		Binding: definition.Binding{Actor: "admin", Operation: "agent:configure", Target: agent},
+		Key: definition.RequestKey{Organization: stopOrg, RequestID: "start-1"}, Agent: agent,
+		Binding: definition.Binding{Actor: "admin", Operation: stopOperation, Target: agent},
 	})
 	require.NoError(t, err)
 	again := e.activate(t, e.adapter, requestID, generation, "1")

@@ -503,7 +503,8 @@ var _ = Describe("Agent workload", Ordered, func() {
 		}, 3*time.Minute, time.Second).Should(Succeed())
 	})
 
-	It("keeps a Control-source agent the control service stopped at no replica, its Pod released on evidence, across a manager restart", func() {
+	It("keeps a Control-source agent the control service stopped at no replica, "+
+		"its Pod released on evidence, across a manager restart", func() {
 		// #280 (D). The renderer writes spec.stopped from the control service's
 		// feed; Kind runs no control service, so the spec makes that patch, as
 		// the move to Control above does. The renderer's own write is asserted in

@@ -54,6 +54,13 @@ func mint(t *testing.T, operation, agent, requestID string, body []byte) string 
 	return authority
 }
 
+// sendMinted sends body to agent's console route under a fresh authority the real garam mints for
+// operation, requestID and body.
+func sendMinted(t *testing.T, agent, route, operation, requestID string, body []byte) (int, map[string]any) {
+	t.Helper()
+	return consoleSend(t, lifecycleRoute(agent, route), mint(t, operation, agent, requestID, body), body)
+}
+
 // readRecovery reads agent's recovery as an administrator does, under agent:execution-read bound to
 // the route.
 func readRecovery(t *testing.T, agent string) map[string]any {
@@ -103,18 +110,27 @@ func prepareAs(t *testing.T, agent, body string) (int, map[string]any) {
 // openAndPrepare opens a recovery of a from the console under a fresh agent:recover authority, has
 // its controller prepare it over a key generated here, and returns the recovery's identifier, the
 // prepared bytes as the read answers them, and the pair of that key with a recovered certificate.
-func openAndPrepare(t *testing.T, a placedAgent) (recoveryID string, prepared []byte, pairFor func(string) tls.Certificate) {
+func openAndPrepare(t *testing.T, a placedAgent) (
+	recoveryID string, prepared []byte, pairFor func(string) tls.Certificate,
+) {
 	t.Helper()
 	recoveryID, openID := name(t, "recovery"), name(t, "open")
 	open := requestBody(t, struct {
 		RequestID         string `json:"requestId"`
 		RecoveryRequestID string `json:"recoveryRequestId"`
 	}{openID, recoveryID})
-	status, opened := consoleSend(t, lifecycleRoute(a.grn, "/recovery"), mint(t, "agent:recover", a.grn, openID, open), open)
+	status, opened := sendMinted(t, a.grn, "/recovery", "agent:recover", openID, open)
 	require.Equal(t, http.StatusCreated, status, opened)
 	assert.Equal(t, "requested", opened["stage"])
-	assert.Equal(t, map[string]any{"requestId": recoveryID, "epoch": a.epoch}, desiredOf(t, a.grn)["recovery"],
-		"the feed does not tell the controller to prepare the recovery")
+	var released struct {
+		RequestID string `json:"requestId"`
+		Epoch     string `json:"epoch"`
+	}
+	raw, err := json.Marshal(desiredOf(t, a.grn)["recovery"])
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &released))
+	assert.Equal(t, recoveryID, released.RequestID, "the feed does not tell the controller to prepare the recovery")
+	assert.Equal(t, a.epoch, released.Epoch)
 
 	key, csr := certificateRequestPEM(t)
 	status, out := prepareAs(t, a.grn, certificateRequestBody(recoveryID, a.epoch, csr))
@@ -144,7 +160,7 @@ func TestRecovery_AgainstGaram(t *testing.T) {
 		RequestID         string `json:"requestId"`
 		RecoveryRequestID string `json:"recoveryRequestId"`
 	}{openID, name(t, "recovery")})
-	status, refused := consoleSend(t, lifecycleRoute(a.grn, "/recovery"), mint(t, "agent:configure", a.grn, openID, open), open)
+	status, refused := sendMinted(t, a.grn, "/recovery", "agent:configure", openID, open)
 	assert.Equal(t, http.StatusForbidden, status, refused)
 
 	// Control: an agent:recover authority opens it, and the controller prepares it.
@@ -198,7 +214,7 @@ func TestRecovery_AgainstGaram(t *testing.T) {
 		RequestID         string `json:"requestId"`
 		RecoveryRequestID string `json:"recoveryRequestId"`
 	}{reopenID, recoveryID})
-	status, reused := consoleSend(t, lifecycleRoute(a.grn, "/recovery"), mint(t, "agent:recover", a.grn, reopenID, reopen), reopen)
+	status, reused := sendMinted(t, a.grn, "/recovery", "agent:recover", reopenID, reopen)
 	assert.Equal(t, http.StatusConflict, status, reused)
 }
 
@@ -285,7 +301,7 @@ func TestStop_AgainstGaram(t *testing.T) {
 	// Control: agent:configure stops it, and garam ends its activation.
 	stopID := name(t, "stop")
 	body := stopBody(t, stopID)
-	status, stopped := consoleSend(t, lifecycleRoute(a.grn, "/stop"), mint(t, "agent:configure", a.grn, stopID, body), body)
+	status, stopped := sendMinted(t, a.grn, "/stop", "agent:configure", stopID, body)
 	require.Equal(t, http.StatusOK, status, stopped)
 	assert.Equal(t, true, stopped["stopped"])
 	assert.Equal(t, true, stopped["deactivated"])
@@ -296,20 +312,21 @@ func TestStop_AgainstGaram(t *testing.T) {
 	// A new placement is registered, and nothing is activated on it.
 	a.token = "token pod-2"
 	mustPlace(t, a.grn, placementOf(a.epoch, "pod-2", "pod-1"), http.StatusCreated)
-	replacement := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), a.epoch, strings.Repeat("e", 32)))
+	replacement := postAgent(t, a, a.pair, "activations",
+		activationOf(name(t, "activation"), a.epoch, strings.Repeat("e", 32)))
 	assert.Equal(t, http.StatusForbidden, replacement.status, replacement.raw)
 	assert.Equal(t, "placement_not_current", replacement.body["kind"], "a replacement was activated while stopped")
 
 	againID := name(t, "stop")
 	again := stopBody(t, againID)
-	status, twice := consoleSend(t, lifecycleRoute(a.grn, "/stop"), mint(t, "agent:configure", a.grn, againID, again), again)
+	status, twice := sendMinted(t, a.grn, "/stop", "agent:configure", againID, again)
 	assert.Equal(t, http.StatusConflict, status, twice)
 	assert.Equal(t, "agent_stopped", twice["kind"])
 
 	// The start ends the stop, and the next generation on the new placement is activated.
 	startID := name(t, "start")
 	start := stopBody(t, startID)
-	status, started := consoleSend(t, lifecycleRoute(a.grn, "/start"), mint(t, "agent:configure", a.grn, startID, start), start)
+	status, started := sendMinted(t, a.grn, "/start", "agent:configure", startID, start)
 	require.Equal(t, http.StatusOK, status, started)
 	assert.Equal(t, false, started["stopped"])
 	assert.NotContains(t, desiredOf(t, a.grn), "stopped")
@@ -341,8 +358,10 @@ SELECT $1, $2, $3, actor, 'agent:configure', $3, $4, $5, $6, $7, $8 FROM creatio
 	require.NoError(t, err)
 	restartAttached(t)
 	require.Equal(t, activation, *introspectFence(t, a, a.pair.Certificate[0], generation))
-	refused := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), a.epoch, strings.Repeat("8", 32)))
-	assert.Equal(t, http.StatusForbidden, refused.status, "an activation was admitted between the stop and its deactivation")
+	refused := postAgent(t, a, a.pair, "activations",
+		activationOf(name(t, "activation"), a.epoch, strings.Repeat("8", 32)))
+	assert.Equal(t, http.StatusForbidden, refused.status,
+		"an activation was admitted between the stop and its deactivation")
 
 	status, stopped := consoleSend(t, lifecycleRoute(a.grn, "/stop"), authority, body)
 	require.Equal(t, http.StatusOK, status, stopped)

@@ -232,11 +232,11 @@ func TestStop_StopsDeactivatesAndStartAdmitsTheNextActivation(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	activation := definition.ActivationRequest{
-		RequestID: "a1", Epoch: "1", Generation: strings.Repeat("a", 32), ConfigRevision: 1, PlacementPodUID: "pod",
+		RequestID: "a1", Epoch: "1", Generation: strings.Repeat("a", 32), ConfigRevision: 1, PlacementPodUID: "pod-a",
 	}
 	_, err := e.definitions.PrepareActivation(ctx, agent, activation)
 	require.NoError(t, err)
-	require.NoError(t, e.definitions.RecordActivation(ctx, agent, "a1", "activation-1"))
+	require.NoError(t, e.definitions.RecordActivation(ctx, agent, "a1", "activation-a"))
 	stop := []byte(`{"requestId":"stop-1"}`)
 
 	e.lifecycle.set(nil, console.ErrLifecycleUndecided)
@@ -252,7 +252,7 @@ func TestStop_StopsDeactivatesAndStartAdmitsTheNextActivation(t *testing.T) {
 	assert.Equal(t, true, stopped.body["stopped"])
 	assert.Equal(t, true, stopped.body["deactivated"])
 	_, deactivated := e.lifecycle.calls()
-	assert.Equal(t, []string{"activation-1", "activation-1"}, deactivated)
+	assert.Equal(t, []string{"activation-a", "activation-a"}, deactivated)
 
 	// Once deactivated, a repeat does not ask garam again.
 	require.Equal(t, http.StatusOK, e.lifecycleCall(t, "/stop", e.authorize("stop-1", stop, nil), stop).status)
@@ -264,7 +264,7 @@ func TestStop_StopsDeactivatesAndStartAdmitsTheNextActivation(t *testing.T) {
 	require.Equal(t, http.StatusOK, started.status, started.body)
 	assert.Equal(t, false, started.body["stopped"])
 	_, err = e.definitions.PrepareActivation(ctx, agent, definition.ActivationRequest{
-		RequestID: "a2", Epoch: "1", Generation: strings.Repeat("b", 32), ConfigRevision: 1, PlacementPodUID: "pod",
+		RequestID: "a2", Epoch: "1", Generation: strings.Repeat("b", 32), ConfigRevision: 1, PlacementPodUID: "pod-a",
 	})
 	require.NoError(t, err)
 }

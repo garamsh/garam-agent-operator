@@ -14,6 +14,9 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
+// stopOperation is the operation a console stop is bound to.
+const stopOperation = "agent:configure"
+
 // openRecovery opens recovery rec-1 of agent from the console, as an agent:recover authority binds it.
 func (e *env) openRecovery(t *testing.T, agent string) {
 	t.Helper()
@@ -98,12 +101,12 @@ func TestDesired_CarriesTheOpenRecoveryAndTheStop(t *testing.T) {
 	e.openRecovery(t, agentA)
 	_, _, err := e.definitions.Stop(ctx, definition.StopInput{
 		Key: definition.RequestKey{Organization: orgID, RequestID: "stop-1"}, Agent: agentB,
-		Binding: definition.Binding{Actor: "admin", Operation: "agent:configure", Target: agentB},
+		Binding: definition.Binding{Actor: "admin", Operation: stopOperation, Target: agentB},
 	})
 	require.NoError(t, err)
 
 	agents = e.rawAgents(t)
-	assert.Equal(t, map[string]any{"requestId": "rec-1", "epoch": epoch}, agents[agentA]["recovery"])
+	assert.Equal(t, map[string]any{"requestId": "rec-1", keyEpoch: epoch}, agents[agentA]["recovery"])
 	assert.NotContains(t, agents[agentA], "stopped")
 	assert.Equal(t, true, agents[agentB]["stopped"])
 	assert.NotContains(t, agents[agentB], "recovery")
