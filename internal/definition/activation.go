@@ -3,6 +3,7 @@ package definition
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // WithActivationLock runs fn while the agent's activation attempts are serialized: one attempt
@@ -81,12 +82,22 @@ func (s *service) ActivationOfGeneration(ctx context.Context, agent GRN, generat
 	return s.repository.ActivationOfGeneration(ctx, agent, generation)
 }
 
+// RuntimeReport is an accepted runtime report: the activation and generation it was made under,
+// the revision it names, whether the runtime is serving it, and when the runtime observed it.
+type RuntimeReport struct {
+	ActivationID   string
+	Generation     string
+	ConfigRevision string
+	Serving        bool
+	ObservedAt     time.Time
+}
+
 // RecordRuntimeStatus records an accepted runtime report. The revision it names becomes the one
 // the runtime applied only where the runtime is serving it and it is a revision the agent has; an
 // empty or unknown one is unknown, never evidence, and changes nothing.
-func (s *service) RecordRuntimeStatus(ctx context.Context, agent GRN, activationID, configRevision string, serving bool) error {
-	revision, err := ParseRevision(configRevision)
-	if err != nil || !serving {
+func (s *service) RecordRuntimeStatus(ctx context.Context, agent GRN, report RuntimeReport) error {
+	revision, err := ParseRevision(report.ConfigRevision)
+	if err != nil || !report.Serving {
 		return nil
 	}
 	latest, err := s.repository.GetDefinition(ctx, agent)
@@ -96,5 +107,7 @@ func (s *service) RecordRuntimeStatus(ctx context.Context, agent GRN, activation
 	if revision > latest.Revision {
 		return nil
 	}
-	return s.repository.RecordRuntimeApplied(ctx, agent, RuntimeApplied{Revision: revision, ActivationID: activationID})
+	return s.repository.RecordRuntimeApplied(ctx, agent, RuntimeApplied{
+		Revision: revision, ActivationID: report.ActivationID, Generation: report.Generation, ObservedAt: report.ObservedAt,
+	})
 }

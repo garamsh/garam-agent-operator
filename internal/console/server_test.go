@@ -102,7 +102,7 @@ type env struct {
 // controllerGRN is the controller agents are created on, where the configure tests' assignment is.
 const controllerGRN = "grn:acme:default:operator:k8s"
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T, consoleOrigins ...string) *env {
 	t.Helper()
 	ctx := context.Background()
 	reg := &registrar{}
@@ -136,10 +136,28 @@ func newEnv(t *testing.T) *env {
 		Audience:     audience,
 		Now:          func() time.Time { return now },
 		Logger:       slog.New(slog.DiscardHandler),
+
+		ConsoleOrigins: consoleOrigins,
 	}))
 	t.Cleanup(server.Close)
 	e.url = server.URL
 	return e
+}
+
+// testConfiguration is a configuration as the console sends one, with ego and the model key
+// reference apiKeyRef.
+func testConfiguration(ego, apiKeyRef string) map[string]any {
+	return map[string]any{
+		"model": map[string]string{"provider": "anthropic", "baseUrl": "https://api.anthropic.com",
+			"name": "claude-opus-5-5", "apiKeyRef": apiKeyRef},
+		"ego":   ego,
+		"tools": map[string]string{"web_fetch": "sha256:aa"},
+	}
+}
+
+// versionOf is a named, numbered version as the wire carries one.
+func versionOf(name string, version int64) map[string]any {
+	return map[string]any{"name": name, "version": version}
 }
 
 // body is a configure request's body.
@@ -152,13 +170,8 @@ func (e *env) bodyWithKey(requestID, ego string, expected int, keyRef string) []
 	b, err := json.Marshal(map[string]any{
 		"requestId":        requestID,
 		"expectedRevision": strconv.Itoa(expected),
-		"profile":          map[string]any{"name": e.profile.Name, "version": e.profile.Version},
-		"configuration": map[string]any{
-			"model": map[string]string{"provider": "anthropic", "baseUrl": "https://api.anthropic.com",
-				"name": "claude-opus-5-5", "apiKeyRef": keyRef},
-			"ego":   ego,
-			"tools": map[string]string{"web_fetch": "sha256:aa"},
-		},
+		"profile":          versionOf(e.profile.Name, int64(e.profile.Version)),
+		"configuration":    testConfiguration(ego, keyRef),
 	})
 	if err != nil {
 		panic(err)

@@ -34,6 +34,8 @@ type Memory struct {
 	applied     map[definition.GRN]definition.RuntimeApplied
 	// cutovers holds each agent's cutover import.
 	cutovers map[definition.GRN]definition.CutoverImport
+	// publications holds every publish request, by its key.
+	publications map[definition.RequestKey]definition.Publication
 }
 
 var _ definition.Repository = (*Memory)(nil)
@@ -62,6 +64,7 @@ func NewMemory() *Memory {
 		latest:       map[definition.GRN]string{},
 		applied:      map[definition.GRN]definition.RuntimeApplied{},
 		cutovers:     map[definition.GRN]definition.CutoverImport{},
+		publications: map[definition.RequestKey]definition.Publication{},
 	}
 }
 
@@ -106,6 +109,58 @@ func (m *Memory) GetTemplate(_ context.Context, org string, ref definition.Templ
 		return definition.Template{}, definition.ErrNotFound
 	}
 	return cloneTemplate(versions[ref.Version-1]), nil
+}
+
+func (m *Memory) ListTemplates(_ context.Context, org string) ([]definition.Template, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest []definition.Template
+	for key, versions := range m.templates {
+		if key.org == org && len(versions) > 0 {
+			latest = append(latest, cloneTemplate(versions[len(versions)-1]))
+		}
+	}
+	slices.SortFunc(latest, func(a, b definition.Template) int { return cmp.Compare(a.Name, b.Name) })
+	return latest, nil
+}
+
+func (m *Memory) ListProfiles(_ context.Context, org string) ([]definition.ProfileRef, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var refs []definition.ProfileRef
+	for key, versions := range m.profiles {
+		if key.org != org {
+			continue
+		}
+		for _, p := range versions {
+			refs = append(refs, definition.ProfileRef{Name: p.Name, Version: p.Version})
+		}
+	}
+	slices.SortFunc(refs, func(a, b definition.ProfileRef) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Version, b.Version))
+	})
+	return refs, nil
+}
+
+func (m *Memory) PublishOnce(_ context.Context, p definition.Publication, t definition.Template) (definition.Publication, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if stored, ok := m.publications[p.Key]; ok {
+		return stored, false, nil
+	}
+	key := named{org: p.Key.Organization, name: t.Name}
+	t = cloneTemplate(t)
+	t.Version = definition.Version(len(m.templates[key]) + 1)
+	m.templates[key] = append(m.templates[key], t)
+	p.Template = definition.TemplateRef{Name: t.Name, Version: t.Version}
+	m.publications[p.Key] = p
+	return p, true, nil
+}
+
+func (m *Memory) GetStatus(_ context.Context, agent definition.GRN) (definition.Status, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.statuses[agent], nil
 }
 
 func (m *Memory) Configure(_ context.Context, r definition.Request, d definition.Definition) (definition.Request, error) {

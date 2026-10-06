@@ -158,6 +158,127 @@ func (p *Postgres) GetTemplate(ctx context.Context, org string, ref definition.T
 	}, nil
 }
 
+func (p *Postgres) ListTemplates(ctx context.Context, org string) ([]definition.Template, error) {
+	rows, err := p.pool.Query(ctx, listTemplates, org)
+	if err != nil {
+		return nil, storeError("list templates", err)
+	}
+	defer rows.Close()
+	var latest []definition.Template
+	for rows.Next() {
+		var (
+			t                       definition.Template
+			version, profileVersion int64
+			raw                     []byte
+		)
+		if err := rows.Scan(&t.Name, &version, &t.Profile.Name, &profileVersion, &raw); err != nil {
+			return nil, storeError("list templates", err)
+		}
+		t.Version, t.Profile.Version = definition.Version(version), definition.Version(profileVersion)
+		if t.Config, err = decodeConfig(raw); err != nil {
+			return nil, err
+		}
+		latest = append(latest, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storeError("list templates", err)
+	}
+	return latest, nil
+}
+
+func (p *Postgres) ListProfiles(ctx context.Context, org string) ([]definition.ProfileRef, error) {
+	rows, err := p.pool.Query(ctx, listProfiles, org)
+	if err != nil {
+		return nil, storeError("list profiles", err)
+	}
+	defer rows.Close()
+	var refs []definition.ProfileRef
+	for rows.Next() {
+		var (
+			ref     definition.ProfileRef
+			version int64
+		)
+		if err := rows.Scan(&ref.Name, &version); err != nil {
+			return nil, storeError("list profiles", err)
+		}
+		ref.Version = definition.Version(version)
+		refs = append(refs, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, storeError("list profiles", err)
+	}
+	return refs, nil
+}
+
+// PublishOnce publishes and records the publication in one transaction, under the templates
+// lock, so a concurrent repeat of the key waits and then reads the first's version.
+func (p *Postgres) PublishOnce(ctx context.Context, pub definition.Publication, t definition.Template) (
+	definition.Publication, bool, error,
+) {
+	raw, err := encodeConfig(t.Config)
+	if err != nil {
+		return definition.Publication{}, false, storeError("encode configuration", err)
+	}
+	key, b := pub.Key, pub.Binding
+	var (
+		stored  definition.Publication
+		created bool
+	)
+	err = p.inTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, lockTemplates); err != nil {
+			return err
+		}
+		var version int64
+		stored = definition.Publication{Key: key}
+		sb := &stored.Binding
+		err := tx.QueryRow(ctx, getPublication, key.Organization, key.RequestID).
+			Scan(&sb.Actor, &sb.Operation, &sb.Target, &sb.BodySHA256, &sb.OperationRef, &stored.Template.Name, &version)
+		if err == nil {
+			stored.Template.Version = definition.Version(version)
+			return nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err := tx.QueryRow(ctx, publishTemplate, key.Organization, t.Name, t.Profile.Name,
+			int64(t.Profile.Version), raw).Scan(&version); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, insertPublication, key.Organization, key.RequestID, b.Actor, b.Operation, b.Target,
+			b.BodySHA256, b.OperationRef, t.Name, version); err != nil {
+			return err
+		}
+		stored = definition.Publication{Key: key, Binding: b,
+			Template: definition.TemplateRef{Name: t.Name, Version: definition.Version(version)}}
+		created = true
+		return nil
+	})
+	if err != nil {
+		return definition.Publication{}, false, storeError("publish", err)
+	}
+	return stored, created, nil
+}
+
+func (p *Postgres) GetStatus(ctx context.Context, agent definition.GRN) (definition.Status, error) {
+	var (
+		observed, rendered int64
+		applied            *int64
+	)
+	err := p.pool.QueryRow(ctx, getStatus, string(agent)).Scan(&observed, &rendered, &applied)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return definition.Status{}, nil
+	}
+	if err != nil {
+		return definition.Status{}, storeError("get status", err)
+	}
+	s := definition.Status{Observed: definition.Revision(observed), Rendered: definition.Revision(rendered)}
+	if applied != nil {
+		r := definition.Revision(*applied)
+		s.Applied = &r
+	}
+	return s, nil
+}
+
 func (p *Postgres) Configure(ctx context.Context, r definition.Request, d definition.Definition) (definition.Request, error) {
 	raw, err := encodeConfig(d.Config)
 	if err != nil {
@@ -726,21 +847,23 @@ func (p *Postgres) ConfigureReference(ctx context.Context, agent definition.GRN,
 }
 
 func (p *Postgres) RecordRuntimeApplied(ctx context.Context, agent definition.GRN, applied definition.RuntimeApplied) error {
-	if _, err := p.pool.Exec(ctx, recordRuntimeApplied, string(agent), int64(applied.Revision), applied.ActivationID); err != nil {
+	if _, err := p.pool.Exec(ctx, recordRuntimeApplied, string(agent), int64(applied.Revision), applied.ActivationID,
+		applied.Generation, applied.ObservedAt); err != nil {
 		return storeError("record runtime applied", err)
 	}
 	return nil
 }
 
 func (p *Postgres) GetRuntimeApplied(ctx context.Context, agent definition.GRN) (definition.RuntimeApplied, error) {
-	var (
-		revision   int64
-		activation string
-	)
-	if err := p.pool.QueryRow(ctx, getRuntimeApplied, string(agent)).Scan(&revision, &activation); err != nil {
+	var applied definition.RuntimeApplied
+	var revision int64
+	err := p.pool.QueryRow(ctx, getRuntimeApplied, string(agent)).
+		Scan(&revision, &applied.ActivationID, &applied.Generation, &applied.ObservedAt)
+	if err != nil {
 		return definition.RuntimeApplied{}, storeError("get runtime applied", notFound("get runtime applied", err))
 	}
-	return definition.RuntimeApplied{Revision: definition.Revision(revision), ActivationID: activation}, nil
+	applied.Revision = definition.Revision(revision)
+	return applied, nil
 }
 
 // scanActivation reads one activation_requests row.

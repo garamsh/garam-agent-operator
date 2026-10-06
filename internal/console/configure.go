@@ -63,7 +63,7 @@ func (s *server) configure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.RequestID != b.RequestID {
-		s.respondError(w, &MismatchError{Field: "request id"})
+		s.respondError(w, &MismatchError{Field: fieldRequestID})
 		return
 	}
 	applied, err := s.definitions.Configure(r.Context(), definition.ConfigureInput{

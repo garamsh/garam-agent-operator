@@ -16,6 +16,12 @@ const (
 	// OperationCutover is the operation an authority binds to carry one stage of a legacy
 	// agent's cutover to garam's route for that stage (garam@1a5273d, ADR-0086).
 	OperationCutover = "agent:cutover"
+	// The console's reads and template publication, one route each, each binding the exact
+	// request target it is sent to (garam@33b1c41 api/machine.yaml OperationBinding).
+	OperationTemplateRead    = "agent-template:read"
+	OperationTemplatePublish = "agent-template:publish"
+	OperationProfileRead     = "execution-profile:read"
+	OperationExecutionRead   = "agent:execution-read"
 )
 
 // Binding is what an authority binds, as garam's introspection answers it.
@@ -31,7 +37,9 @@ type Binding struct {
 	RequestID    string
 	BodySHA256   string
 	// RequestTarget is the exact route the authority may be carried to, where the operation names
-	// one: for agent:cutover, garam's own cutover route for one stage.
+	// one: for agent:cutover, garam's own cutover route for one stage; for the reads and the
+	// publication, the exact origin-form target the request arrives here with, escaped path and raw
+	// query.
 	RequestTarget string
 	ExpiresAt     time.Time
 }
@@ -59,6 +67,9 @@ var (
 	// ErrDigestMismatch is returned for a body whose SHA-256 is not the one the authority binds.
 	ErrDigestMismatch = errors.New("request body is not the body the authority binds")
 )
+
+// fieldRequestID is the bound field a body's request id is compared with.
+const fieldRequestID = "request id"
 
 // MismatchError is returned for an authority that binds a field to another value than the
 // request carries.

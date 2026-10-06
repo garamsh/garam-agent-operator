@@ -51,8 +51,10 @@ func (s *server) reportStatus(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	err = s.definitions.RecordRuntimeStatus(r.Context(), definition.GRN(agent), in.ActivationID, in.ConfigRevision,
-		in.State == stateServing)
+	err = s.definitions.RecordRuntimeStatus(r.Context(), definition.GRN(agent), definition.RuntimeReport{
+		ActivationID: in.ActivationID, Generation: in.Generation, ConfigRevision: in.ConfigRevision,
+		Serving: in.State == stateServing, ObservedAt: in.ObservedAt,
+	})
 	if err != nil {
 		s.respondError(w, err)
 		return

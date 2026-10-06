@@ -25,6 +25,9 @@ type Config struct {
 	Now func() time.Time
 	// Logger receives one line per request that failed for a reason the caller cannot act on.
 	Logger *slog.Logger
+	// ConsoleOrigins are the browser origins the console calls from, each exactly as a browser
+	// sends it in Origin. Only these get a CORS answer; none means no CORS answer at all.
+	ConsoleOrigins []string
 }
 
 type server struct {
@@ -34,6 +37,7 @@ type server struct {
 	audience     string
 	now          func() time.Time
 	logger       *slog.Logger
+	origins      map[string]struct{}
 }
 
 // NewHandler returns the console's routes:
@@ -41,6 +45,12 @@ type server struct {
 //	POST /v1/orgs/{org}/agents                    create an agent on a controller
 //	POST /v1/orgs/{org}/agents/{agent}/revisions  configure an agent's definition
 //	POST /v1/orgs/{org}/agents/{agent}/cutover/{import,freeze,switch,rollback}  one cutover stage
+//	GET  /v1/orgs/{org}/templates                     agent-template:read     the latest version of each template
+//	GET  /v1/orgs/{org}/templates/{name}/versions/{v} agent-template:read     one template version
+//	POST /v1/orgs/{org}/templates/{name}/versions     agent-template:publish  publish a template's next version
+//	GET  /v1/orgs/{org}/profiles                      execution-profile:read  every published profile version
+//	GET  /v1/orgs/{org}/profiles/{name}/versions/{v}  execution-profile:read  one profile version
+//	GET  /v1/orgs/{org}/agents/{agent}/execution      agent:execution-read    an agent's execution
 func NewHandler(c Config) http.Handler {
 	s := &server{
 		definitions:  c.Definitions,
@@ -49,6 +59,10 @@ func NewHandler(c Config) http.Handler {
 		audience:     c.Audience,
 		now:          c.Now,
 		logger:       c.Logger,
+		origins:      map[string]struct{}{},
+	}
+	for _, origin := range c.ConsoleOrigins {
+		s.origins[origin] = struct{}{}
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/orgs/{org}/agents", s.create)
@@ -57,7 +71,13 @@ func NewHandler(c Config) http.Handler {
 	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/cutover/freeze", s.freezeCutover)
 	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/cutover/switch", s.switchCutover)
 	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/cutover/rollback", s.rollBackCutover)
-	return s.recoverPanics(mux)
+	mux.HandleFunc("GET /v1/orgs/{org}/templates", s.listTemplates)
+	mux.HandleFunc("GET /v1/orgs/{org}/templates/{name}/versions/{version}", s.getTemplate)
+	mux.HandleFunc("POST /v1/orgs/{org}/templates/{name}/versions", s.publish)
+	mux.HandleFunc("GET /v1/orgs/{org}/profiles", s.listProfiles)
+	mux.HandleFunc("GET /v1/orgs/{org}/profiles/{name}/versions/{version}", s.getProfile)
+	mux.HandleFunc("GET /v1/orgs/{org}/agents/{agent}/execution", s.execution)
+	return s.recoverPanics(s.cors(mux))
 }
 
 // recoverPanics answers 500 to a request whose handler panicked, rather than closing its connection.

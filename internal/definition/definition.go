@@ -220,6 +220,41 @@ type Binding struct {
 	Assignment   Assignment
 }
 
+// PublishInput is a request to publish a template's next version.
+type PublishInput struct {
+	Request  RequestKey
+	Binding  Binding
+	Template Template
+}
+
+// Publication records one publish request and the version it published, which every repeat of
+// its key returns.
+type Publication struct {
+	Key      RequestKey
+	Binding  Binding
+	Template TemplateRef
+}
+
+// Execution is what is known of an agent's execution: the revision its organization asked
+// for, the revision a controller reported rendering, and what the running agent reported.
+type Execution struct {
+	// Desired is the agent's latest revision.
+	Desired Revision
+	// Rendered is the latest revision a controller reported rendering, 0 before any.
+	Rendered Revision
+	// Effective is what the running agent reported, nil until a runtime report is accepted. It
+	// is never inferred from the other two.
+	Effective *Effective
+}
+
+// Effective is an accepted runtime report: the revision the agent runs, under which generation,
+// and when it said so.
+type Effective struct {
+	Revision   Revision
+	Generation string
+	ObservedAt time.Time
+}
+
 // Assignment is where an agent ran when its configuration change was authorized.
 type Assignment struct {
 	Operator string
@@ -536,11 +571,13 @@ type Activation struct {
 	ActivationID         string
 }
 
-// RuntimeApplied is the revision the agent's runtime last reported effective, and the activation
-// it reported it under.
+// RuntimeApplied is the revision the agent's runtime last reported effective, the activation and
+// the generation it reported it under, and when it said so.
 type RuntimeApplied struct {
 	Revision     Revision
 	ActivationID string
+	Generation   string
+	ObservedAt   time.Time
 }
 
 // CutoverStage is how far a cutover import has gone.

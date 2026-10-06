@@ -23,6 +23,24 @@ RETURNING version`
 	getTemplate = `
 SELECT profile_name, profile_version, config FROM templates WHERE organization = $1 AND name = $2 AND version = $3`
 
+	// listTemplates is the latest version of each of an organization's templates.
+	listTemplates = `
+SELECT DISTINCT ON (name) name, version, profile_name, profile_version, config
+FROM templates WHERE organization = $1 ORDER BY name, version DESC`
+
+	listProfiles = `SELECT name, version FROM profiles WHERE organization = $1 ORDER BY name, version`
+
+	getPublication = `
+SELECT actor, operation, target, body_sha256, operation_ref, template_name, template_version
+FROM publications WHERE organization = $1 AND request_id = $2`
+
+	insertPublication = `
+INSERT INTO publications (organization, request_id, actor, operation, target, body_sha256, operation_ref,
+    template_name, template_version)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+
+	getStatus = `SELECT observed_revision, rendered_revision, applied_revision FROM agent_status WHERE agent = $1`
+
 	// appendDefinition inserts nothing unless the revision is one past the agent's latest.
 	appendDefinition = `
 WITH next AS (UPDATE positions SET position = position + 1 RETURNING position)
@@ -183,13 +201,15 @@ WHERE agent = $1 AND generation = $2 AND activation_id IS NOT NULL LIMIT 1`
 SELECT operation_ref FROM requests WHERE agent = $1 AND revision = $2 AND outcome = 'applied'`
 
 	recordRuntimeApplied = `
-INSERT INTO agent_status (agent, observed_revision, rendered_revision, applied_revision, applied_activation_id)
-VALUES ($1, $2, $2, $2, $3)
+INSERT INTO agent_status (agent, observed_revision, rendered_revision, applied_revision, applied_activation_id,
+    applied_generation, applied_observed_at)
+VALUES ($1, $2, $2, $2, $3, $4, $5)
 ON CONFLICT (agent) DO UPDATE SET applied_revision = EXCLUDED.applied_revision,
-    applied_activation_id = EXCLUDED.applied_activation_id`
+    applied_activation_id = EXCLUDED.applied_activation_id, applied_generation = EXCLUDED.applied_generation,
+    applied_observed_at = EXCLUDED.applied_observed_at`
 
 	getRuntimeApplied = `
-SELECT applied_revision, applied_activation_id FROM agent_status
+SELECT applied_revision, applied_activation_id, applied_generation, applied_observed_at FROM agent_status
 WHERE agent = $1 AND applied_revision IS NOT NULL`
 
 	cutoverColumns = `organization, import_id, epoch, assignee, source_digest, source_values, dispositions, profile_name,

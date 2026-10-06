@@ -49,7 +49,8 @@ func (s *server) authorizeHeader(ctx context.Context, header string, body []byte
 		return Binding{}, &MismatchError{Field: "operation"}
 	case want.grn != "" && b.Target != want.grn:
 		return Binding{}, &MismatchError{Field: "target"}
-	case (b.Operation == OperationConfigure || b.Operation == OperationCutover) && b.Assignment == nil:
+	case (b.Operation == OperationConfigure || b.Operation == OperationCutover ||
+		b.Operation == OperationExecutionRead) && b.Assignment == nil:
 		return Binding{}, &MismatchError{Field: "assignment"}
 	case want.requestTarget != "" && b.RequestTarget != want.requestTarget:
 		return Binding{}, &MismatchError{Field: "request target"}

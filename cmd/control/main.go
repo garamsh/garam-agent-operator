@@ -63,6 +63,7 @@ type options struct {
 	serverRootFile  string
 	certificateFile string
 	keyFile         string
+	consoleOrigins  []string
 }
 
 func main() {
@@ -78,6 +79,17 @@ func main() {
 	flag.StringVar(&o.certificateFile, "operator-certificate-file", "",
 		"PEM file holding this service's operator certificate, whose SAN URI is its operator GRN.")
 	flag.StringVar(&o.keyFile, "operator-key-file", "", "PEM file holding the operator certificate's private key.")
+	flag.Func("console-origin",
+		"A browser origin the console calls from, exactly as a browser sends it: scheme, host and any port, "+
+			"with no path. Repeat for each. Only these get a CORS answer; none set answers no CORS at all.",
+		func(value string) error {
+			origin, err := consoleOrigin(value)
+			if err != nil {
+				return err
+			}
+			o.consoleOrigins = append(o.consoleOrigins, origin)
+			return nil
+		})
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -123,6 +135,8 @@ func run(ctx context.Context, o options, databaseURL string) error {
 		Audience:     audience,
 		Now:          time.Now,
 		Logger:       slog.Default(),
+
+		ConsoleOrigins: o.consoleOrigins,
 	}))
 	api.Handle("/v1/operators/", distribution.NewHandler(distribution.Config{
 		Definitions:  definitions,
@@ -152,7 +166,7 @@ func run(ctx context.Context, o options, databaseURL string) error {
 	healthServer := &http.Server{Addr: o.probeAddr, Handler: health, ReadHeaderTimeout: 5 * time.Second}
 	// Every console request carries a bearer operation authority, so its routes are served over TLS only.
 	apiServer := &http.Server{
-		Addr: o.apiAddr, Handler: api, TLSConfig: apiTLS,
+		Addr: o.apiAddr, Handler: noRedirects(api), TLSConfig: apiTLS,
 		ReadHeaderTimeout: 5 * time.Second, WriteTimeout: apiWriteTimeout,
 	}
 	servers := []*http.Server{healthServer, apiServer}

@@ -5,7 +5,7 @@ The control service: agents' execution definitions and their revisions, template
 ## Current decisions
 
 - **The control service is a second binary, and its desired state is `internal/definition/`.** It follows `stack-go.md` alone, as `docs/convention/README.md` §Stack-specific splits a binary that is not the manager. Nothing in the manager imports it.
-- **The binary serves health, the console's create and configure routes, the controller routes, and the agent routes.** `cmd/control/main.go` opens its store from the connection URL in `CONTROL_DATABASE_URL`, which is an environment variable rather than a flag because it carries a password, and applies the schema.
+- **The binary serves health, the console's routes, the controller routes, and the agent routes.** `cmd/control/main.go` opens its store from the connection URL in `CONTROL_DATABASE_URL`, which is an environment variable rather than a flag because it carries a password, and applies the schema.
   - **Health.** `/healthz` and `/readyz` are served on `--health-probe-bind-address` (default `:8081`). `/readyz` answers only while the database answers a ping.
   - **API routes.** The console's and the controllers' routes share one listener on `--api-bind-address` (default `:8080`), over TLS 1.3 and nothing else.
     - **Certificate.** The binary terminates TLS itself, under the certificate chain in `--api-certificate-file` and the key in `--api-key-file`. It refuses to start without both. Both files are read again whenever either one's modification time changes, so a rotated certificate is served without a restart. A pair that fails to load leaves the one loaded before it in service (`internal/certificate`). controller-runtime's `pkg/certwatcher` does the same and is already in `go.mod`, but it is the manager's framework. The control service follows `stack-go.md` alone, and does not take a dependency on controller-runtime for one reloader.
@@ -40,18 +40,19 @@ The control service: agents' execution definitions and their revisions, template
 - **The persistent store is a PostgreSQL database of the control service's own, through pgx v5.** `internal/definition/repository/postgres.go` implements `Repository`.
   - **Schema.** `schema.sql` beside it is embedded in the binary, which applies it at every start through `Postgres.ApplySchema`. Every statement in it only creates what is missing.
   - **Stale revision.** The key on `definitions` (agent, revision) refuses a second revision under one number. A configure request that loses that race is stored as `Stale` under a savepoint, so its request record still commits.
-  - **Duplicate requests.** The keys on `creations` and `requests`, each (organization, request id), leave one record per request. A concurrent repeat waits for the first and then reads its outcome.
+  - **Duplicate requests.** The keys on `creations`, `requests` and `publications`, each (organization, request id), leave one record per request. A concurrent repeat waits for the first and then reads its outcome. A publication and the template version it publishes are stored in one transaction, under the templates lock that numbers versions.
   - **Order.** Every stored revision takes the next value of the one-row `positions` table, in the same transaction. Writers serialize on that row, so positions follow commit order, and a reader holding a position has seen every revision below it. The feed reads its revisions and their position in one repeatable-read snapshot.
   - **Cutover imports.** `cutover_imports` holds each legacy agent's import: its source's values verbatim, their dispositions, the digest, the epoch and assignee garam answered, the profile, the stage, and the switch's configure reference. Its revision 1 is a `definitions` row with no assignment until the switch sets one. Both are new objects.
   - **Activations.** `activation_requests` holds every activation request, keyed by (agent, request id), with the anchor and the reference fixed when it was recorded, and the activation garam answered. `agent_activations` holds each agent's latest activation. `agent_status` gains the activation the applied revision was reported under. That last is an edit in place, as before, because nothing is deployed.
   - **Placements.** `placements` holds every placement registered for an agent, keyed by (agent, Pod UID), revoked ones included. A partial unique index admits one current placement per agent. Both are new objects, so a database created before them gains them at its next start.
   - **First certificates.** `initial_certificates` holds one row per agent, referencing its creation through the unique index on `creations (agent)`. A row is `pending` while garam's answer is unknown and `issued` with the public result once answered. Both are new objects, so a database created before them gains them at its next start.
   - **Status.** `agent_status` holds each agent's observed and rendered revision, raised with `GREATEST` and never lowered. `applied_revision` is null until the runtime reports.
-  - **Earlier databases.** `schema.sql` has been edited in place four times, three times in issue #211 and once in issue #270, because no database had been deployed, so none is migrated:
+  - **Earlier databases.** `schema.sql` has been edited in place five times, three times in issue #211, once in issue #270 and once in issue #220, because no database had been deployed, so none is migrated:
     - the `creations` key moved from (actor, organization, request id) to (organization, request id);
     - `definitions` gained `position` and the recorded assignment, beside the new `positions` and `agent_status` tables;
     - `creations` gained the bound fields, the controller, the profile version, the epoch and the conflict flag;
-    - `profiles`, `templates` and `definitions` gained `organization`, which every key and reference naming a profile or a template carries.
+    - `profiles`, `templates` and `definitions` gained `organization`, which every key and reference naming a profile or a template carries;
+    - `agent_status` gained `applied_generation` and `applied_observed_at`, beside the applied revision the runtime reports.
     A database created before any of these changes keeps the earlier shape, because `CREATE TABLE IF NOT EXISTS` alters nothing.
 - **The console API is `internal/console`, a domain of its own over `internal/definition`'s surface** ([ADR 0039](adr/0039-serve-the-consoles-mutations-from-a-console-domain-over-the-definition-domains-surface.md)). `{org}` is the organization's identifier, the last segment of its GRN. It serves the create and configure routes below, and a legacy agent's cutover stages (ADR 0050):
   - **`POST /v1/orgs/{org}/agents`** creates an agent on a controller.
@@ -71,12 +72,34 @@ The control service: agents' execution definitions and their revisions, template
     - **Rollback.** Only from frozen. A switched import is 409 `reverse_migration_required` before garam is asked. A frozen one is rolled back at garam, then discarded here with its revision 1.
     - **Answer.** `{agent, importId, stage, sourceDigest, revision: "1", dispositions}`, 201 for a new import and 200 otherwise. garam's own refusals pass through with its `reason` as `kind`.
     - **Until the switch.** A configure of an imported agent is 409 `cutover_stage`, so nothing of it is released early.
-- **Its principal is the user garam's operation authority names.** The console presents the authority as `Authorization: Garam-Operation <authority>`, outside the body. The authority is never logged or stored. Every console mutation runs in this order, and stops at the first refusal:
+- **Its principal is the user garam's operation authority names.** The console presents the authority as `Authorization: Garam-Operation <authority>`, outside the body. The authority is never logged or stored. Every console request runs in this order, and stops at the first refusal:
   1. **Introspect.** The authority is introspected on garam's `POST /operation-authorities/introspection` under `Garam-Contract-Version: operation-authority.v1` (`garam@f2ac780`, `api/machine.yaml`). Introspection consumes nothing.
   2. **Bound fields.** Every field the answer binds is checked against the request: an expiry still in the future, the audience (this service), the organization, and the operation (`agent:create` or `agent:configure`). A configure's target is the agent in its path, and it must bind an assignment.
+     - **The reads and the publication** bind their operation (the table below), the organization or the agent as their target, an assignment for `agent:execution-read`, and the request target: the raw origin-form path and query the request arrived with (`RequestURI`), compared byte for byte before any decoding the router does, so `%20` and `?page=2` are part of it. The empty body's digest does not tell one read from another, and this does. A create, configure or cutover handoff is refused on each.
   3. **Digest.** The SHA-256 of the exact body received, in lowercase hex, must be the digest the authority binds.
   4. **Request id.** The body is parsed, and its `requestId` must be the one the authority binds. A create's target is the `controller` its body names, so it is compared here, once the digest has proved the body is the one bound.
-  5. **Record and apply.** Only then is the request recorded and the revision applied, or garam's managed create called, so no stored outcome is revealed to a request whose authority fails.
+  5. **Record and apply.** Only then is anything read from the store, a request recorded and applied, or garam's managed create called, so nothing stored is revealed to a request whose authority fails.
+
+The console's reads and template publication (#220; garam's actions at `garam@33b1c41` `api/machine.yaml` `OperationBinding`):
+
+| Route | Operation | Target | Answer |
+|---|---|---|---|
+| `GET /v1/orgs/{org}/templates` | `agent-template:read` | the organization | `{templates: [{name, version, profile: {name, version}}]}`, the latest version of each template, by name |
+| `GET /v1/orgs/{org}/templates/{name}/versions/{v}` | `agent-template:read` | the organization | `{name, version, profile, configuration}` |
+| `POST /v1/orgs/{org}/templates/{name}/versions` | `agent-template:publish` | the organization | `201 {name, version}`, or `200` with the same for a repeat |
+| `GET /v1/orgs/{org}/profiles` | `execution-profile:read` | the organization | `{profiles: [{name, version}]}`, every published version, by name and version |
+| `GET /v1/orgs/{org}/profiles/{name}/versions/{v}` | `execution-profile:read` | the organization | `{name, version, resources, storageSize, storageClassName}` |
+| `GET /v1/orgs/{org}/agents/{agent}/execution` | `agent:execution-read` | the agent | `{desired: {revision, pending}, rendered: {revision} \| null, effective: {revision, generation, observedAt} \| null}` |
+
+- **Each read answers its organization's own.** The organization's target is its GRN, `grn:root:default:org:{org}`. A name or an agent another organization holds is 404, as one nobody holds is.
+- **A configuration is answered with its model key's reference, never a value.** `apiKeyRef` is the `<secret-name>/<key>` the store holds; no secret is stored to answer.
+- **Publishing a template** takes `{requestId, profile: {name, version}, configuration}`, unknown fields refused, the profile resolved in the organization only. It publishes the next immutable version and never edits one. It is recorded once under (organization, request id) with the fields its authority bound, in `publications`: an identical repeat answers the version it published with `200`, and the key reused for another body or template is 409.
+- **The execution read** answers the latest revision as desired, pending while no controller has reported rendering it, and the latest rendered revision a controller reported. `effective` is the running agent's own accepted runtime report, `{revision, generation, observedAt}`, and only while the activation it was reported under is the agent's latest: a generation a newer activation replaced is not shown. It is `null` until such a report is accepted, and never inferred from what a controller rendered.
+- **No route here redirects.** Go's `ServeMux` redirects a path it would clean and a subtree's path without its slash, and a redirect changes the request target an authority binds. `cmd/control` wraps the whole API listener so that what would redirect is 404 with no `Location`, on the console's and the controllers' routes alike.
+- **CORS answers only the console's registered origins**, given as `--console-origin`, repeated, each an exact `scheme://host[:port]` as a browser sends it. None set answers no CORS at all.
+  - A preflight from a registered origin is `204` with `Access-Control-Allow-Origin` that origin, `Access-Control-Allow-Methods: GET, POST, PUT`, `Access-Control-Allow-Headers: Authorization, Content-Type, Garam-Contract-Version` and `Access-Control-Max-Age: 600`, and never `Access-Control-Allow-Credentials`: the console sends no cookie.
+  - A request from a registered origin carries `Access-Control-Allow-Origin` that origin. Any other origin gets no CORS header: its preflight is 403, and its request is served without one, so the browser withholds the answer.
+  - CORS covers the console's routes only, not the controllers'. The authority is read only from `Authorization`, never a query string, and never logged.
 - **garam's 500 and 503 are handled at the client** (`internal/garammachine`), shared by both API domains, as garam's ADR-0050 places a listener's 5xx. Introspection and the controller proof decide without writing, so an attempt answered 500 or 503, or whose connection failed, is sent again: three attempts at most, waiting 200 ms and then 400 ms. After the third it is answered as undecided. An answer under another contract version is refused, not read.
 - **Each refusal has one status**, chosen in `internal/console/respond.go` and nowhere else:
 
@@ -88,9 +111,9 @@ The control service: agents' execution definitions and their revisions, template
 | garam stays undecided (500 or 503 on every attempt, or unreachable) | 503 |
 | garam's managed create refuses the creation (403 or 404), now or as stored | 403 |
 | garam's managed create stays undecided | 503, with the creation still `Pending` |
-| The body is not one create or configure request, or its `expectedRevision` is not a canonical decimal string | 400 |
-| A configure's model key reference, or the one in the template a create copies, is not the form `definition.SecretRef` states | 400, `{"kind": "invalid_api_key_ref"}` |
-| The agent has no revision in the request's organization, or the template or profile version is unpublished there | 404 |
+| The body is not one create, configure or publish request, or a configure's `expectedRevision` is not a canonical decimal string | 400 |
+| A configure's model key reference, the one in the template a create copies, or the one a publication names, is not the form `definition.SecretRef` states | 400, `{"kind": "invalid_api_key_ref"}` |
+| The agent has no revision in the request's organization, the template or profile version is unpublished there, or a path's version is no canonical number | 404 |
 | A stale expected revision, or a request id reused with another binding, body, agent, controller, template or profile | 409 |
 | garam's managed create answers 409, now or as stored, or a repeat finds the agent moved | 409 |
 
@@ -158,7 +181,7 @@ The control service: agents' execution definitions and their revisions, template
     - **`operationRef`.** It is null only when the runtime has reported that revision effective under the agent's latest activation. Otherwise it is the reference that produced the revision: the creation's for revision 1, and the configure request's after. A pending revision therefore keeps its durable reference, and a restart of it is refused once that reference no longer authorizes (#218; `garamsh/garam#1167` comments 5981832156 and 5981832363).
   - **`POST /v1/agents/{grn}/runtime-status`**, with `{activationId, grn, epoch, generation, configRevision, state, startedAt, observedAt}` and no placement token. `204` accepts it, and an identical retry is `204` too.
     - **Acceptance.** B on the leaf with the reported generation must answer `credential=current` (else 403 `credential_fenced`, also for garam's own 403, 404 or 422, as the contract lists no other) and `generation=current`. The identity, the epoch, the assignee (the current placement's controller) and garam's current activation must equal the report's. The activation control recorded for that generation must be the reported one. Anything else is 409 `generation_not_current`; undecided is 503 `undecided`.
-    - **What is stored.** A report never activates or supersedes anything. Its revision becomes the one the runtime applied (`agent_status.applied_revision`, with the activation it was reported under) only when the runtime is `serving` and the revision is a canonical decimal string the agent has. An empty or unknown one is unknown, and changes nothing.
+    - **What is stored.** A report never activates or supersedes anything. Its revision becomes the one the runtime applied (`agent_status.applied_revision`, with the activation and generation it was reported under and its `observedAt`) only when the runtime is `serving` and the revision is a canonical decimal string the agent has. An empty or unknown one is unknown, and changes nothing.
 - **Each controller-route refusal has one status**, chosen in `internal/distribution/respond.go`:
 
 | Refusal | Status |
@@ -226,9 +249,8 @@ A creation stays `Pending` on an unknown outcome rather than failing, because a 
 
 ## Open questions
 
-- **How the schema changes once a table holds rows.** `schema.sql` creates what is missing and alters nothing, so a change to an existing table needs a migration that no part of the binary performs yet. Every in-place edit above, the latest `agent_status.applied_activation_id`, rests on nothing being deployed. That stops holding at the first deployment, and from then on this question binds.
+- **How the schema changes once a table holds rows.** `schema.sql` creates what is missing and alters nothing, so a change to an existing table needs a migration that no part of the binary performs yet. Every in-place edit above, the latest `agent_status.applied_generation` and `applied_observed_at` (#220), rests on nothing being deployed. That stops holding at the first deployment, and from then on this question binds.
 - **What else configuration the domain refuses.** A model key reference the manager could not render is refused (#242). Every other value is stored as given, including an empty tool-pin set, which `agent.md` records `sherlock` refusing, and a model missing its provider, base URL or name, which the manager also leaves unrendered. Which of those to refuse here is not decided.
-- **The rest of the API.** Console reads and publishing wait on #220 (`garamsh/garam#1170`). Each is judged against `structure.md` §A new domain when it arrives (ADR 0039).
 - **Fixture gaps for the activation e2e.** Expiry of the agent's first leaf cannot be run against a real garam: its CA's minimum certificate lifetime is one hour (`garamsh/garam@e81a1e0` `internal/ca/service.go` `MinCertificateLifetime`). That case is integration-tested against a double.
 - **Who may publish a profile or a template.** `garamsh/garam#1155` D4 makes editing a profile a high-trust action; nothing here checks an actor yet.
 - **What placing an agent elsewhere does.** An agent moved away from a controller is absent from its next answer, and is released to its new controller once reconfigured there. The placement itself is issue #218.
