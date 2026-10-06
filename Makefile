@@ -251,9 +251,10 @@ verify-pins: ## Report every SHA-pinned action and fail when its version comment
 # writes neither, so the check leaves the tree as it found it whether it passes
 # or fails. A non-zero exit with no diff is tidy failing to run (a module it
 # could not fetch, say), which is reported as unchecked rather than as untidy.
+# The status is taken with `||` because the recipe shell runs with -e.
 .PHONY: verify-tidy
 verify-tidy: ## Fail when go.mod or go.sum is not what `go mod tidy` writes, naming the fix.
-	@diff=$$(go mod tidy -diff); status=$$?; \
+	@status=0; diff=$$(go mod tidy -diff) || status=$$?; \
 	if [ "$$status" -eq 0 ]; then echo "tidy check: go mod tidy -diff changes nothing in go.mod or go.sum"; exit 0; fi; \
 	if [ -z "$$diff" ]; then echo "tidy check: go mod tidy -diff exited $$status without a diff, so tidiness was not checked" >&2; exit 1; fi; \
 	printf '%s\n' "$$diff" >&2; \
