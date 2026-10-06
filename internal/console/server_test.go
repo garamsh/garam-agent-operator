@@ -108,6 +108,7 @@ const (
 	modelName        = "claude-opus-5-5"
 	embeddingBaseURL = "https://embeddings.example/v1"
 	embeddingName    = "bge-base-en-v1.5"
+	embeddingKeyRef  = "embeddings/key"
 )
 
 // embeddingBody is a configure body's configuration.model.embedding; an empty field is left out.
@@ -119,7 +120,7 @@ type embeddingBody struct {
 
 // anEmbedding is the embeddings endpoint the configure bodies name unless a test changes it.
 func anEmbedding() *embeddingBody {
-	return &embeddingBody{BaseURL: embeddingBaseURL, Name: embeddingName, APIKeyRef: "embeddings/key"}
+	return &embeddingBody{BaseURL: embeddingBaseURL, Name: embeddingName, APIKeyRef: embeddingKeyRef}
 }
 
 // controllerGRN is the controller agents are created on, where the configure tests' assignment is.

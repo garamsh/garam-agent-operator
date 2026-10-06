@@ -31,7 +31,7 @@ func TestConfigure_RefusesAModelWithNoEmbeddingAsEmbeddingRequired(t *testing.T)
 			accepted := e.configure(t, e.authorize("c1", sound, nil), sound)
 			require.Equal(t, 200, accepted.status, accepted.message)
 			assert.Equal(t, &definition.Embedding{
-				BaseURL: embeddingBaseURL, Name: embeddingName, APIKey: "embeddings/key",
+				BaseURL: embeddingBaseURL, Name: embeddingName, APIKey: embeddingKeyRef,
 			}, e.revision(t).Config.Model.Embedding)
 		})
 	}

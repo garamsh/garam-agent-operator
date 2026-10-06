@@ -531,8 +531,7 @@ func TestTemplateVersion_AnswersTheEmbeddingWhereTheModelNamesOne(t *testing.T) 
 		require.Equal(t, http.StatusOK, got.status, got.message)
 		return got.body["configuration"].(map[string]any)["model"].(map[string]any)
 	}
-	assert.Equal(t, map[string]any{"baseUrl": embeddingBaseURL, "name": embeddingName, "apiKeyRef": "embeddings/key"},
-		read("1")["embedding"])
+	assert.Equal(t, decoded(t, anEmbedding()), read("1")["embedding"])
 
 	// Control: version 2, the mock naming none, answers no embedding rather than an empty one.
 	assert.NotContains(t, read("2"), "embedding")

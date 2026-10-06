@@ -74,9 +74,11 @@ func TestConfigure_StoresAndReleasesTheEmbeddingAndRefusesItsChange(t *testing.T
 	// Control: naming its embedding, the same change is stored and released with it.
 	status, _ = configureKind(t, g, newConfigureRequest(name(t, "request"), profile, "edited", 1))
 	require.Equal(t, http.StatusOK, status)
-	assert.Equal(t, map[string]any{
-		"baseUrl": "https://embeddings.example/v1", "name": "bge-base-en-v1.5", "apiKeyRef": "embeddings/key",
-	}, releasedEmbedding(t, g))
+	sent, err := json.Marshal(newConfigureRequest("", profile, "", 1).Configuration.Model.Embedding)
+	require.NoError(t, err)
+	var want map[string]any
+	require.NoError(t, json.Unmarshal(sent, &want))
+	assert.Equal(t, want, releasedEmbedding(t, g), "the embedding is released as it was configured")
 
 	// Changing the embedding's model once set is refused, and stores nothing.
 	changed := newConfigureRequest(name(t, "request"), profile, "edited", 2)
