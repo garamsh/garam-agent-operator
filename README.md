@@ -34,7 +34,7 @@ The Makefile downloads controller-gen, kustomize, setup-envtest, and golangci-li
 
 ## Running the checks
 
-`make ci` runs the whole check set — module tidiness, lint, format, test, build. An untidy `go.mod` or `go.sum` fails it first, with the fix named: run `go mod tidy` and commit what it changes. It is what CI invokes, and what to run before pushing. `make help` lists every target.
+`make ci` runs the whole check set — module tidiness, lint, format, test, build, and the image build context. An untidy `go.mod` or `go.sum` fails it first, with the fix named: run `go mod tidy` and commit what it changes. It is what CI invokes, and what to run before pushing. `make help` lists every target.
 
 End-to-end tests need Docker and a cluster and are not part of that set: `make test-e2e` runs the control service's suite against a PostgreSQL container and a real garam it builds at `GARAM_REVISION` (`make test-e2e-control` alone; fetching garam needs git credentials that can read `garamsh/garam`), then creates a Kind cluster, runs the manager's, and tears it down.
 
