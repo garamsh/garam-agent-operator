@@ -389,7 +389,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 			"the replacement was created at %s, before the evidence was read at %s", createdAt, observedAt)
 	})
 
-	It("keeps a claimed agent's workload, claim and Secret across its move to Control, with an edited pin and its revision", func() {
+	It("keeps a claimed agent's workload, claim and Secret across its move to Control, with new pin and revision", func() {
 		// #217 AC1. A claimed agent is one the poller built from garam, on the
 		// Garam source. The move is what the renderer patches when the feed marks
 		// it cut over: spec.identity.source, and the revision's spec, its number
