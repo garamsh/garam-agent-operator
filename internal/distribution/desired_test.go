@@ -224,7 +224,7 @@ func TestDesired_MarksAnAgentCutOverFromItsLegacySource(t *testing.T) {
 	ctx := context.Background()
 	const legacy = "grn:acme:default:agent:legacy"
 	_, _, err := e.definitions.ImportCutover(ctx, definition.CutoverImport{
-		Agent: legacy, Organization: "acme", ImportID: "import-1", Epoch: epoch, Assignee: controller, SourceDigest: "digest",
+		Agent: legacy, Organization: orgID, ImportID: "import-1", Epoch: epoch, Assignee: controller, SourceDigest: "digest",
 		Values: map[string]string{}, Dispositions: map[string]definition.Disposition{}, Profile: e.profile,
 	})
 	require.NoError(t, err)
