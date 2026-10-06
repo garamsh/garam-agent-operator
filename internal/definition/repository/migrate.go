@@ -26,7 +26,7 @@ import (
 var migrations embed.FS
 
 // adoptable are the versions a database made before migrations existed is adopted at, when its
-// schema is exactly what migrations up to that version produce (ADR 0054): 1, what the published
+// schema is exactly what migrations up to that version produce (ADR 0055): 1, what the published
 // 7c216469476d created, and 2, what the last schema.sql before migrations created.
 var adoptable = []uint{1, 2}
 
@@ -256,7 +256,7 @@ func difference(expected, found []string) []string {
 }
 
 // archives are the tables migration 2 moves earlier rows into, each with the columns its key is read
-// from (ADR 0054).
+// from (ADR 0055).
 var archives = []struct{ table, key string }{
 	{"creations_n1", "organization || '/' || request_id"},
 	{"templates_n1", "name || ' version ' || version"},

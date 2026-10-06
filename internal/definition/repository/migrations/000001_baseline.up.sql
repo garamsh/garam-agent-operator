@@ -1,6 +1,6 @@
 -- Migration 1: the schema the published control service 7c216469476d created, verbatim
 -- (git show 7c21646:internal/definition/repository/schema.sql, below its first line). A database
--- holding exactly this and no schema_migrations table is adopted at this version (ADR 0054).
+-- holding exactly this and no schema_migrations table is adopted at this version (ADR 0055).
 
 CREATE TABLE IF NOT EXISTS profiles (
     name     text   NOT NULL,

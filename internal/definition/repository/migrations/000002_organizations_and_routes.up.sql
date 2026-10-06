@@ -1,7 +1,7 @@
 -- Migration 2: from 7c216469476d's schema (migration 1) to the organization-scoped schema with the
 -- console's publication and the controller and agent routes' tables (#270, #220, #212, #217, #218).
 -- The whole file runs in one transaction. It drops no row the earlier schema stored and truncates
--- no table (ADR 0054):
+-- no table (ADR 0055):
 --   - an organization the earlier rows lack is read from what they carry: a definition's from its
 --     agent's GRN, grn:<organization>:..., a template's from the creations naming it, a profile's
 --     from the templates and definitions naming it, one copy per organization naming it;
