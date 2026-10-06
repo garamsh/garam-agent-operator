@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/garamsh/garam-agent-operator/internal/console"
 	"github.com/garamsh/garam-agent-operator/internal/definition"
@@ -123,6 +124,12 @@ func anEmbedding() *embeddingBody {
 	return &embeddingBody{BaseURL: embeddingBaseURL, Name: embeddingName, APIKeyRef: embeddingKeyRef}
 }
 
+// runnableSettings are execution settings a profile publication accepts: a storage size and
+// nothing else.
+func runnableSettings() definition.ExecutionSettings {
+	return definition.ExecutionSettings{StorageSize: resource.MustParse("1Gi")}
+}
+
 // controllerGRN is the controller agents are created on, where the configure tests' assignment is.
 const controllerGRN = "grn:acme:default:operator:k8s"
 
@@ -132,7 +139,7 @@ func newEnv(t *testing.T, consoleOrigins ...string) *env {
 	reg := &registrar{}
 	store := repository.NewMemory()
 	definitions := definition.NewService(store, reg, nil)
-	p, err := definitions.PublishProfile(ctx, org, "small", definition.ExecutionSettings{})
+	p, err := definitions.PublishProfile(ctx, org, "small", runnableSettings())
 	require.NoError(t, err)
 	profile := definition.ProfileRef{Name: p.Name, Version: p.Version}
 	tmpl, err := definitions.PublishTemplate(ctx, org, definition.Template{Name: "researcher", Profile: profile})

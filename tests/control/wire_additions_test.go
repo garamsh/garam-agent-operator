@@ -123,8 +123,10 @@ func TestDesired_CarriesTheProfilesWorkspaceSizeWhereItNamesOne(t *testing.T) {
 	g := requireGaram(t)
 	plain := seedRevision(t, g)
 	sized := name(t, "profile")
-	require.NoError(t, execute(t, `INSERT INTO profiles (organization, name, version, settings)
-VALUES ($1, $2, 1, '{"storageSize": "1Gi", "workspaceStorageSize": "5Gi"}')`, g.org(), sized))
+	fields := runnable(g.org(), sized, 1)
+	fields["workspaceStorageSize"] = "5Gi"
+	published := runPublishProfile(t, profileFile(t, fields))
+	require.Equal(t, 0, published.code, published.stderr)
 
 	status, _ := configureKind(t, g, newConfigureRequest(name(t, "request"), sized, "sized", 1))
 	require.Equal(t, http.StatusOK, status)

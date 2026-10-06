@@ -1,6 +1,7 @@
 // Command control runs the control service: it opens its PostgreSQL store, applies the
 // store's schema, serves the console's routes under garam's operation authority, and serves
-// its health until it is stopped.
+// its health until it is stopped. Its publish-profile subcommand publishes a deployment's
+// profile versions into that store, and serves nothing.
 package main
 
 import (
@@ -67,6 +68,12 @@ type options struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == publishProfileCommand {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := publishProfiles(ctx, os.Args[2:], os.Getenv(databaseURLVariable), os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	var o options
 	flag.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "The address the health endpoints bind to.")
 	flag.StringVar(&o.apiAddr, "api-bind-address", ":8080", "The address the console's routes bind to, over TLS.")

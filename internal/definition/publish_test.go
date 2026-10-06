@@ -136,3 +136,74 @@ func TestPublishTemplate_RefusesAMalformedKeyReference(t *testing.T) {
 	_, err = f.service.PublishTemplate(ctx, org, definition.Template{Name: "modelless", Profile: f.profile})
 	require.NoError(t, err)
 }
+
+func TestPublishProfile_SettingsNoWorkloadCouldRunWithAreRefused(t *testing.T) {
+	quantity := func(s string) *resource.Quantity { q := resource.MustParse(s); return &q }
+	class := func(s string) *string { return &s }
+	refused := map[string]func(*definition.ExecutionSettings){
+		"no storage size":           func(s *definition.ExecutionSettings) { s.StorageSize = resource.Quantity{} },
+		"a zero workspace size":     func(s *definition.ExecutionSettings) { s.WorkspaceStorageSize = quantity("0") },
+		"a negative workspace size": func(s *definition.ExecutionSettings) { s.WorkspaceStorageSize = quantity("-1Gi") },
+		"a storage class no name":   func(s *definition.ExecutionSettings) { s.StorageClassName = class("Fast_SSD") },
+		"a request above its limit": func(s *definition.ExecutionSettings) {
+			s.Resources.Limits = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m")}
+		},
+	}
+	for name, change := range refused {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			changed := settings("500m", "1Gi")
+			change(&changed)
+			_, err := f.service.PublishProfile(context.Background(), org, "checked", changed)
+			assert.ErrorIs(t, err, definition.ErrInvalidProfile)
+			_, _, err = f.service.PublishProfileVersion(context.Background(), org,
+				definition.Profile{Name: "checked", Version: 1, Settings: changed})
+			assert.ErrorIs(t, err, definition.ErrInvalidProfile)
+			_, err = f.repository.GetProfile(context.Background(), org, definition.ProfileRef{Name: "checked", Version: 1})
+			assert.ErrorIs(t, err, definition.ErrNotFound, "a refused profile was stored")
+		})
+	}
+
+	// Control: the same settings with each named field well formed are published.
+	f := newFixture(t)
+	runnable := settings("500m", "1Gi")
+	runnable.WorkspaceStorageSize = quantity("5Gi")
+	runnable.Resources.Limits = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")}
+	_, created, err := f.service.PublishProfileVersion(context.Background(), org,
+		definition.Profile{Name: "checked", Version: 1, Settings: runnable})
+	require.NoError(t, err)
+	assert.True(t, created)
+}
+
+func TestPublishProfileVersion_APublishedVersionIsNeverChanged(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	first := definition.Profile{Name: "pinned", Version: 1, Settings: settings("1", "1Gi")}
+	published, created, err := f.service.PublishProfileVersion(ctx, org, first)
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.Equal(t, definition.Version(1), published.Version)
+
+	// The same settings again, written in another form, publish nothing.
+	again := definition.Profile{Name: "pinned", Version: 1, Settings: settings("1000m", "1024Mi")}
+	stored, created, err := f.service.PublishProfileVersion(ctx, org, again)
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.Equal(t, "1Gi", stored.Settings.StorageSize.String())
+
+	// Other settings under the published version are refused, and the version keeps its own.
+	changed := definition.Profile{Name: "pinned", Version: 1, Settings: settings("2", "1Gi")}
+	_, _, err = f.service.PublishProfileVersion(ctx, org, changed)
+	require.ErrorIs(t, err, definition.ErrProfileVersionConflict)
+	kept, err := f.repository.GetProfile(ctx, org, definition.ProfileRef{Name: "pinned", Version: 1})
+	require.NoError(t, err)
+	assert.Equal(t, "1", kept.Settings.Resources.Requests.Cpu().String())
+
+	// A version past the next is refused; the next one is published with its own settings.
+	_, _, err = f.service.PublishProfileVersion(ctx, org, definition.Profile{Name: "pinned", Version: 3, Settings: changed.Settings})
+	require.ErrorIs(t, err, definition.ErrProfileVersionGap)
+	next, created, err := f.service.PublishProfileVersion(ctx, org, definition.Profile{Name: "pinned", Version: 2, Settings: changed.Settings})
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.Equal(t, "2", next.Settings.Resources.Requests.Cpu().String())
+}

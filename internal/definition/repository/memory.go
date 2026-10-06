@@ -81,6 +81,26 @@ func (m *Memory) PublishProfile(_ context.Context, org, name string, settings de
 	return cloneProfile(p), nil
 }
 
+func (m *Memory) PublishProfileVersion(_ context.Context, org string, p definition.Profile) (definition.Profile, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := named{org: org, name: p.Name}
+	versions := m.profiles[key]
+	switch {
+	case int(p.Version) <= len(versions):
+		stored := versions[p.Version-1]
+		if !stored.Settings.Same(p.Settings) {
+			return definition.Profile{}, false, definition.ErrProfileVersionConflict
+		}
+		return cloneProfile(stored), false, nil
+	case int(p.Version) != len(versions)+1:
+		return definition.Profile{}, false, definition.ErrProfileVersionGap
+	}
+	p = definition.Profile{Name: p.Name, Version: p.Version, Settings: cloneSettings(p.Settings)}
+	m.profiles[key] = append(versions, p)
+	return cloneProfile(p), true, nil
+}
+
 func (m *Memory) GetProfile(_ context.Context, org string, ref definition.ProfileRef) (definition.Profile, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -12,6 +12,10 @@ RETURNING version`
 
 	getProfile = `SELECT settings FROM profiles WHERE organization = $1 AND name = $2 AND version = $3`
 
+	latestProfileVersion = `SELECT COALESCE(MAX(version), 0) FROM profiles WHERE organization = $1 AND name = $2`
+
+	insertProfileVersion = `INSERT INTO profiles (organization, name, version, settings) VALUES ($1, $2, $3, $4)`
+
 	lockTemplates = `LOCK TABLE templates IN SHARE ROW EXCLUSIVE MODE`
 
 	publishTemplate = `

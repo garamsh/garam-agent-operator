@@ -122,7 +122,7 @@ func TestSchema_ReferenceToAnotherOrganizationsRowRefused(t *testing.T) {
 			return insertDefinition(t, name(t, "agent"), organization, 1, profile)
 		}},
 		{"a creation naming a template", func(t *testing.T, other, profile, _ string) {
-			require.NoError(t, insertProfile(t, other, profile))
+			publishProfileNamed(t, other, profile)
 		}, insertCreationNaming},
 		{"a creation naming a profile", func(t *testing.T, other, _, template string) {
 			own := publishProfile(t, other)
@@ -146,14 +146,8 @@ func TestSchema_ReferenceToAnotherOrganizationsRowRefused(t *testing.T) {
 	}
 }
 
-// publishProfile stores version 1 of a profile of organization, named for the test, and returns its name.
-func publishProfile(t *testing.T, organization string) string {
-	t.Helper()
-	profile := name(t, "profile")
-	require.NoError(t, insertProfile(t, organization, profile))
-	return profile
-}
-
+// insertProfile stores version 1 of organization's profile by SQL, for the schema's own key test:
+// the binary's publish-profile answers that row's repeat as unchanged rather than storing it.
 func insertProfile(t *testing.T, organization, profile string) error {
 	t.Helper()
 	return execute(t, `INSERT INTO profiles (organization, name, version, settings) VALUES ($1, $2, 1, '{}')`,

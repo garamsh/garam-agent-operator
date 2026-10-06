@@ -5,6 +5,7 @@ import "context"
 // Service is what the control service offers over its desired state.
 type Service interface {
 	PublishProfile(ctx context.Context, org, name string, settings ExecutionSettings) (Profile, error)
+	PublishProfileVersion(ctx context.Context, org string, p Profile) (published Profile, created bool, err error)
 	PublishTemplate(ctx context.Context, org string, t Template) (Template, error)
 	Publish(ctx context.Context, in PublishInput) (p Publication, created bool, err error)
 	ListTemplates(ctx context.Context, org string) ([]Template, error)

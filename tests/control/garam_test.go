@@ -362,7 +362,7 @@ func TestConfigure_AnotherOrganizationsProfileAnswersNotFound(t *testing.T) {
 
 	// Control: once g's organization publishes the name, the same request is accepted, and its
 	// controller is released the one revision it stored, beside the other organization's profile.
-	require.NoError(t, insertProfile(t, g.org(), profile))
+	publishProfileNamed(t, g.org(), profile)
 	status, err = sendConfigure(g, g.mint(t, requestID, body), body)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)
@@ -499,7 +499,7 @@ VALUES ($1, $2, 1, $3, 1, '{"ego":"created"}')`, real.orgID, template, own))
 		{"another organization's profile", func(t *testing.T, other string) (string, string, func()) {
 			template := publishTemplate(t, real.orgID, publishProfile(t, real.orgID))
 			profile := publishProfile(t, other)
-			return template, profile, func() { require.NoError(t, insertProfile(t, real.orgID, profile)) }
+			return template, profile, func() { publishProfileNamed(t, real.orgID, profile) }
 		}},
 	}
 	for _, tt := range tests {
