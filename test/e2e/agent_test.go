@@ -399,7 +399,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 			migrated    = "e2e-migrated"
 			migratedPod = migrated + "-0"
 			stateClaim  = "state-" + migratedPod
-			configEnv   = `{.initContainers[*].env[?(@.name=="AGENT_CONFIG_CONTENT")].value}`
+			configEnv   = `.initContainers[*].env[?(@.name=="AGENT_CONFIG_CONTENT")].value}`
 		)
 		apply := exec.Command("kubectl", "apply", "-f", "-")
 		apply.Stdin = strings.NewReader(agentManifestFor(migrated, agentImage) + `  identity:
@@ -431,7 +431,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			pod, err = uidOf("pod", migratedPod)
 			g.Expect(err).NotTo(HaveOccurred())
-			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec}"+configEnv)
+			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring("sha256:before"))
 			// The control for this is the same read after the move, below, carrying one.
@@ -451,7 +451,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 			`{"spec":{"identity":{"source":"Control"},"revision":"1","tools":{"pins":{"message_send":"sha256:after"}}}}`)
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(func(g Gomega) {
-			config, err := kubectlIn("get", "statefulset", migrated, "-o", "jsonpath={.spec.template.spec}"+configEnv)
+			config, err := kubectlIn("get", "statefulset", migrated, "-o", "jsonpath={.spec.template.spec"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring("sha256:after"))
 			g.Expect(config).To(ContainSubstring(`revision: "1"`))
@@ -467,7 +467,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 			uid, err := uidOf("pod", migratedPod)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(uid).NotTo(Equal(pod))
-			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec}"+configEnv)
+			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring("sha256:after"), "the edited pin did not reach the Pod")
 			g.Expect(config).To(ContainSubstring(`revision: "1"`), "the revision did not reach the Pod")
@@ -485,7 +485,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 		_, err = kubectlIn("patch", "agent", migrated, "--type", "merge", "-p", `{"spec":{"revision":"2"}}`)
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(func(g Gomega) {
-			config, err := kubectlIn("get", "statefulset", migrated, "-o", "jsonpath={.spec.template.spec}"+configEnv)
+			config, err := kubectlIn("get", "statefulset", migrated, "-o", "jsonpath={.spec.template.spec"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring(`revision: "2"`))
 		}, 2*time.Minute, time.Second).Should(Succeed())
@@ -497,7 +497,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 			uid, err := uidOf("pod", migratedPod)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(uid).NotTo(Equal(replaced))
-			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec}"+configEnv)
+			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring(`revision: "2"`), "the later revision did not reach the Pod")
 		}, 3*time.Minute, time.Second).Should(Succeed())
