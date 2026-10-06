@@ -167,7 +167,7 @@ type recoveryRoute struct {
 	finalized bool
 	// chain, where set, is the issuer the answer names, with answeredRoot as its server root: a
 	// control from ADR 0062 on. Unset, the answer names none, as an older control's.
-	chain *authority
+	chain     *authority
 	sent      []wireCertificateRequest
 	persisted []bool
 }
