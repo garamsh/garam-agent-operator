@@ -121,3 +121,25 @@ CREATE TABLE IF NOT EXISTS initial_certificates (
     CHECK ((state = 'issued') = (certificate_pem IS NOT NULL AND issuer_pem IS NOT NULL
         AND server_root_pem IS NOT NULL AND not_after IS NOT NULL))
 );
+
+-- Every placement a controller registered for an agent: the Pod, the state claim it started on,
+-- the epoch, the digest of its placement token, the placement it replaced with the digest of that
+-- one's writer-stopped evidence, and the controller's leaf exactly as presented. One per agent is
+-- current; a replaced one is revoked and kept, so it is never registered again.
+CREATE TABLE IF NOT EXISTS placements (
+    agent                          text        NOT NULL,
+    pod_uid                        text        NOT NULL,
+    controller                     text        NOT NULL,
+    epoch                          text        NOT NULL,
+    pvc_uid                        text        NOT NULL,
+    token_sha256                   text        NOT NULL,
+    previous_pod_uid               text        NOT NULL DEFAULT '',
+    previous_writer_stopped_sha256 text        NOT NULL DEFAULT '',
+    leaf_der                       bytea       NOT NULL,
+    registered_at                  timestamptz NOT NULL DEFAULT now(),
+    revoked_at                     timestamptz,
+    PRIMARY KEY (agent, pod_uid)
+);
+
+-- One current placement per agent: the one it replaces is revoked before it can be stored.
+CREATE UNIQUE INDEX IF NOT EXISTS placements_current ON placements (agent) WHERE revoked_at IS NULL;

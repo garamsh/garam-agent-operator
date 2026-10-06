@@ -24,7 +24,20 @@ const (
 	kindEpochSuperseded = "epoch_superseded"
 	// kindRequestReused names the refusal of a certificate request other than the one stored.
 	kindRequestReused = "request_reused"
+	// kindInvalidRequest names the refusal of a placement registration that is not one.
+	kindInvalidRequest = "invalid_request"
 )
+
+// placementRefusals is the kind each refusal of a placement registration is answered 409 under.
+var placementRefusals = []struct {
+	err  error
+	kind string
+}{
+	{definition.ErrPlacementSuperseded, "placement_superseded"},
+	{definition.ErrPreviousMismatch, "previous_mismatch"},
+	{definition.ErrEvidenceMissing, "evidence_missing"},
+	{definition.ErrPlacementConflict, "placement_conflict"},
+}
 
 // refusalStatus is the status each class of garam's refusal of an issuance is answered with.
 var refusalStatus = map[definition.Refusal]int{
@@ -36,8 +49,16 @@ var refusalStatus = map[definition.Refusal]int{
 // respondError translates err to its status. It is the only place a controller route chooses a
 // status for an error, and the only place one is logged.
 func (s *server) respondError(w http.ResponseWriter, err error) {
+	for _, refusal := range placementRefusals {
+		if errors.Is(err, refusal.err) {
+			writeJSON(w, http.StatusConflict, errorBody{Kind: refusal.kind, Message: err.Error()})
+			return
+		}
+	}
 	var refused *definition.IssuanceRefusedError
 	switch {
+	case errors.Is(err, errInvalidPlacementBody):
+		writeJSON(w, http.StatusBadRequest, errorBody{Kind: kindInvalidRequest, Message: err.Error()})
 	case errors.As(err, &refused) && refusalStatus[refused.Refusal] != 0:
 		writeJSON(w, refusalStatus[refused.Refusal], errorBody{Kind: refused.Kind, Message: err.Error()})
 	case errors.Is(err, errEpochSuperseded):

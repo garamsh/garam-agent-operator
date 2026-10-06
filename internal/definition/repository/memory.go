@@ -23,6 +23,8 @@ type Memory struct {
 	creations    map[definition.RequestKey]definition.Creation
 	requests     map[definition.RequestKey]definition.Request
 	certificates map[definition.GRN]definition.InitialCertificate
+	// placements holds every placement stored for an agent, by Pod UID, superseded ones too.
+	placements map[definition.GRN]map[string]definition.Placement
 }
 
 var _ definition.Repository = (*Memory)(nil)
@@ -45,6 +47,7 @@ func NewMemory() *Memory {
 		requests:    map[definition.RequestKey]definition.Request{},
 
 		certificates: map[definition.GRN]definition.InitialCertificate{},
+		placements:   map[definition.GRN]map[string]definition.Placement{},
 	}
 }
 
@@ -258,6 +261,44 @@ func (m *Memory) ClearInitialCertificate(_ context.Context, agent definition.GRN
 	return nil
 }
 
+func (m *Memory) RegisterPlacement(_ context.Context, in definition.PlacementInput) (definition.Placement, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stored := m.placements[in.Agent]
+	var current, same *definition.Placement
+	for _, p := range stored {
+		if !p.Superseded {
+			current = &p
+		}
+	}
+	if p, ok := stored[in.Request.PodUID]; ok {
+		same = &p
+	}
+	action, err := definition.DecidePlacement(current, same, in)
+	if err != nil {
+		return definition.Placement{}, false, err
+	}
+	switch action {
+	case definition.PlacementRepeat:
+		return clonePlacement(*same), false, nil
+	case definition.PlacementRefresh:
+		same.LeafDER = slices.Clone(in.LeafDER)
+		stored[same.Request.PodUID] = *same
+		return clonePlacement(*same), false, nil
+	}
+	if stored == nil {
+		stored = map[string]definition.Placement{}
+		m.placements[in.Agent] = stored
+	}
+	if current != nil {
+		current.Superseded = true
+		stored[current.Request.PodUID] = *current
+	}
+	p := definition.Placement{Agent: in.Agent, Controller: in.Controller, Request: in.Request, LeafDER: slices.Clone(in.LeafDER)}
+	stored[p.Request.PodUID] = p
+	return clonePlacement(p), true, nil
+}
+
 func (m *Memory) appendLocked(d definition.Definition) error {
 	revisions := m.definitions[d.Agent]
 	if int(d.Revision) != len(revisions)+1 {
@@ -311,4 +352,9 @@ func cloneCertificate(c definition.InitialCertificate) definition.InitialCertifi
 		c.Issued = &issued
 	}
 	return c
+}
+
+func clonePlacement(p definition.Placement) definition.Placement {
+	p.LeafDER = slices.Clone(p.LeafDER)
+	return p
 }

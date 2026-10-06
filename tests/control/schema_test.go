@@ -217,3 +217,18 @@ func assertViolation(t *testing.T, code string, err error) {
 	require.True(t, errors.As(err, &pgErr), "want a PostgreSQL error, got %v", err)
 	assert.Equal(t, code, pgErr.Code, pgErr.Message)
 }
+
+func TestSchema_SecondCurrentPlacementOfOneAgentRefused(t *testing.T) {
+	agent := name(t, "agent")
+	insert := func(pod string) error {
+		return execute(t, `INSERT INTO placements (agent, pod_uid, controller, epoch, pvc_uid, token_sha256, leaf_der)
+VALUES ($1, $2, 'controller', '1', 'pvc', 'token', '\x00')`, agent, pod)
+	}
+
+	require.NoError(t, insert("pod-1"))
+	assertUniqueViolation(t, insert("pod-2"))
+
+	// Control: once the first is revoked, the next is current.
+	require.NoError(t, execute(t, "UPDATE placements SET revoked_at = now() WHERE agent = $1", agent))
+	require.NoError(t, insert("pod-2"))
+}

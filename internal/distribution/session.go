@@ -8,10 +8,11 @@ import (
 )
 
 // controller is the caller of a controller route: the operator GRN its leaf certificate names,
-// and that leaf exactly as presented.
+// and that leaf exactly as presented, as one PEM block and as its DER.
 type controller struct {
 	grn     string
 	leafPEM []byte
+	leafDER []byte
 }
 
 // authenticate reads the controller from the request's client certificate and has garam prove it
@@ -27,6 +28,7 @@ func (s *server) authenticate(ctx context.Context, r *http.Request) (controller,
 	c := controller{
 		grn:     leaf.URIs[0].String(),
 		leafPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}),
+		leafDER: leaf.Raw,
 	}
 	proof, err := s.prover.Prove(ctx, c.grn, c.leafPEM, "")
 	if err != nil {
