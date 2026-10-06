@@ -10,6 +10,7 @@ import (
 // AgentSpec defines the desired state of Agent
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || (has(self.identity) && self.identity.grn == oldSelf.identity.grn)",message="identity.grn cannot be changed or removed once set"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || !has(oldSelf.identity.source) || oldSelf.identity.source != 'Control' || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="identity.source cannot leave Control once set"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.model) || !has(oldSelf.model.embedding) || (has(self.model) && has(self.model.embedding) && self.model.embedding.name == oldSelf.model.embedding.name && self.model.embedding.baseURL == oldSelf.model.embedding.baseURL)",message="model.embedding.name and model.embedding.baseURL cannot be changed or removed once set, because the agent's stored memory is embedded under them"
 type AgentSpec struct {
 	// type names the agent binary the workload carries. Today three are admitted
 	// — sherlock, claude-code and codex — and each maps to a different
@@ -158,6 +159,7 @@ const (
 // because a field left out would fall back to the agent's own default for it —
 // for sherlock, an OpenAI endpoint and model — and a key paired with another
 // vendor's endpoint fails at the first request rather than here.
+// +kubebuilder:validation:XValidation:rule="self.provider == 'mock' || has(self.embedding)",message="embedding is required with a provider other than mock, because sherlock refuses to start without one"
 type ModelSpec struct {
 	// provider is the wire protocol the endpoint speaks, in the agent's own
 	// words: for sherlock, openai-compatible or anthropic-compatible. It is
@@ -182,6 +184,31 @@ type ModelSpec struct {
 	// Secret exists. Agents on one endpoint can name one Secret.
 	// +required
 	APIKeySecretRef SecretKeyReference `json:"apiKeySecretRef"`
+
+	// embedding is the embeddings endpoint the agent's memory is recalled with.
+	// It is required with every provider but mock. Its name and baseURL cannot
+	// change once set: the agent's stored memory carries vectors that endpoint
+	// produced, and nothing here embeds it again.
+	// +optional
+	Embedding *EmbeddingSpec `json:"embedding,omitempty"`
+}
+
+// EmbeddingSpec is an OpenAI-compatible embeddings endpoint.
+type EmbeddingSpec struct {
+	// baseURL is the endpoint's API root.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	BaseURL string `json:"baseURL"`
+
+	// name is the embedding model name passed to the endpoint.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// apiKeySecretRef names the key of a Secret in the Agent's namespace holding
+	// the endpoint's API key. Unset sends no key, as a local endpoint needs none.
+	// +optional
+	APIKeySecretRef *SecretKeyReference `json:"apiKeySecretRef,omitempty"`
 }
 
 // SecretKeyReference names one key of a Secret in the referring object's
@@ -354,6 +381,11 @@ const (
 	// ReasonModelKeySecretMissing is set when the Secret the spec names for the
 	// model's API key does not exist, which leaves the workload unbuilt.
 	ReasonModelKeySecretMissing = "ModelKeySecretMissing"
+
+	// ReasonEmbeddingKeySecretMissing is set when the Secret the spec names for
+	// the embeddings endpoint's API key does not exist, which leaves the workload
+	// unbuilt.
+	ReasonEmbeddingKeySecretMissing = "EmbeddingKeySecretMissing"
 
 	// ReasonWorkloadReplacing is set while the StatefulSet is replaced to give the
 	// agent's state and its workspace separate volumes. The old one is deleted

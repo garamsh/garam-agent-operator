@@ -319,6 +319,11 @@ func secretsRequiredBy(agent *agentv1alpha1.Agent) []requiredSecret {
 		required = append(required, requiredSecret{
 			name: agent.Spec.Model.APIKeySecretRef.Name, missingReason: agentv1alpha1.ReasonModelKeySecretMissing,
 		})
+		if key := embeddingKeyOf(agent); key != nil {
+			required = append(required, requiredSecret{
+				name: key.Name, missingReason: agentv1alpha1.ReasonEmbeddingKeySecretMissing,
+			})
+		}
 	}
 
 	return required
