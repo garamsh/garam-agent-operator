@@ -105,3 +105,20 @@ VALUES ($1, $2, 1, $3, 1, '{"ego":"created"}')`, real.orgID, created, profile)
 		certificateRequestBody(name(t, "certificate"), made["epoch"], csr))
 	assert.Equal(t, http.StatusCreated, status, out)
 }
+
+// TestCertificate_AnAgentWithNoCreationIsNotFoundWhereNoCreationWasArchived holds the archive's
+// reader to a database migration 2 made no archive in, as the suite's own is.
+func TestCertificate_AnAgentWithNoCreationIsNotFoundWhereNoCreationWasArchived(t *testing.T) {
+	require.False(t, exists(t, pool, "creations_n1"), "the suite's database holds an archive")
+	g := requireGaram(t)
+	profile := seedRevision(t, g)
+	// A configure records the latest revision for the controller garam assigned the agent to,
+	// which the route requires before it looks for a creation.
+	status, _ := configureKind(t, g, newConfigureRequest(name(t, "request"), profile, "configured", 1))
+	require.Equal(t, http.StatusOK, status)
+	_, csr := certificateRequestPEM(t)
+
+	status, out := requestCertificateAt(t, attachedURL, g.agent(),
+		certificateRequestBody(name(t, "certificate"), g.assignment, csr))
+	assert.Equal(t, http.StatusNotFound, status, out)
+}
