@@ -4,7 +4,7 @@ How a change reaches `dev` and then `main`, and which checks run at each step.
 
 ## Current decisions
 
-- **Two entry points carry every check, and CI invokes them by name.** `make ci` is lint, format, test and build; `make test-e2e` first runs the control service's suite (`make test-e2e-control`, the built binary against a PostgreSQL container), then builds a Kind cluster, runs the manager's e2e suite against it and tears it down. `.github/workflows/checks.yml` runs the first and `.github/workflows/test-e2e.yml` runs the second, each as a single `make` invocation. Neither workflow spells out a command inside a target, and neither holds a tool version the `Makefile` does not.
+- **Two entry points carry every check, and CI invokes them by name.** `make ci` is lint, format, test and build; `make test-e2e` first runs the control service's suite (`make test-e2e-control`, the built binary against a PostgreSQL container and a real garam built at `GARAM_REVISION`), then builds a Kind cluster, runs the manager's e2e suite against it and tears it down. `.github/workflows/checks.yml` runs the first and `.github/workflows/test-e2e.yml` runs the second, each as a single `make` invocation. Neither workflow spells out a command inside a target, and neither holds a tool version the `Makefile` does not.
 - **Nothing runs on `dev`.** No workflow fires for a push to `dev` or for a pull request into it. Both run on a pull request into `main`, which is the promotion below, and on nothing else.
 
 | Workflow | Runs on | Why there |
