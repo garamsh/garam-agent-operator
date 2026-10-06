@@ -1,6 +1,7 @@
 package execution_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/garamsh/garam-agent-operator/internal/definition"
 	"github.com/garamsh/garam-agent-operator/internal/execution"
 )
 
@@ -282,4 +284,35 @@ func TestActivate_ConcurrentActivationsAreSerialized(t *testing.T) {
 	assert.Equal(t, []int{http.StatusCreated, http.StatusCreated}, statuses)
 	anchors := []string{e.garam.calls[0].ReplacesActivationID, e.garam.calls[1].ReplacesActivationID}
 	assert.ElementsMatch(t, []string{"", firstActivation}, anchors)
+}
+
+// TestActivate_RefusedUnderAnExpiredControllerLeafAndAcceptedOnceTheLeafIsRefreshed is #218's
+// window: the controller leaf stored with the placement expires, and the controller presents the
+// placement again under its renewed leaf.
+func TestActivate_RefusedUnderAnExpiredControllerLeafAndAcceptedOnceTheLeafIsRefreshed(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	placement, err := e.definitions.CurrentPlacement(ctx, agent)
+	require.NoError(t, err)
+	e.garam.set(func(g *garam) { g.expiredLeaves[string(placement.LeafDER)] = true })
+
+	refused := e.activate(t, e.adapter, requestID, generation, "1")
+	assert.Equal(t, http.StatusForbidden, refused.status, refused.raw)
+	assert.Equal(t, kindNotAuthorized, refused.kind())
+	assert.Equal(t, 0, e.garam.callCount(), "garam was asked to activate under an expired controller leaf")
+
+	// The controller presents the same placement under its renewed leaf, as the placement route does.
+	renewed := []byte("renewed controller leaf")
+	_, first, err := e.definitions.RegisterPlacement(ctx, definition.PlacementInput{
+		Agent: agent, Controller: controller, LeafDER: renewed, Request: placement.Request,
+	})
+	require.NoError(t, err)
+	require.False(t, first, "the refresh registered a new placement")
+	refreshed, err := e.definitions.CurrentPlacement(ctx, agent)
+	require.NoError(t, err)
+	require.Equal(t, renewed, refreshed.LeafDER)
+
+	// Control: the same activation, proved over the refreshed leaf, is accepted.
+	accepted := e.activate(t, e.adapter, requestID, generation, "1")
+	assert.Equal(t, http.StatusCreated, accepted.status, accepted.raw)
 }
