@@ -9,7 +9,9 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/garamsh/garam-agent-operator/internal/secretref"
 )
@@ -145,6 +147,35 @@ type ExecutionSettings struct {
 	// WorkspaceStorageSize sizes the agent's workspace claim, nil where the profile leaves it to
 	// StorageSize (ADR 0044).
 	WorkspaceStorageSize *resource.Quantity
+}
+
+// check refuses settings an agent's workload could not run with (ADR 0056): a storage size not
+// above zero, a workspace size not above zero where one is named, a storage class name that is
+// not a DNS subdomain, or a resource request above its own limit.
+func (s ExecutionSettings) check() error {
+	if s.StorageSize.Sign() <= 0 {
+		return fmt.Errorf("%w: storage size %s is not above zero", ErrInvalidProfile, s.StorageSize.String())
+	}
+	if s.WorkspaceStorageSize != nil && s.WorkspaceStorageSize.Sign() <= 0 {
+		return fmt.Errorf("%w: workspace storage size %s is not above zero", ErrInvalidProfile, s.WorkspaceStorageSize.String())
+	}
+	if s.StorageClassName != nil {
+		if problems := validation.IsDNS1123Subdomain(*s.StorageClassName); len(problems) > 0 {
+			return fmt.Errorf("%w: storage class %q: %s", ErrInvalidProfile, *s.StorageClassName, strings.Join(problems, "; "))
+		}
+	}
+	for name, request := range s.Resources.Requests {
+		if limit, ok := s.Resources.Limits[name]; ok && request.Cmp(limit) > 0 {
+			return fmt.Errorf("%w: %s request %s is above its limit %s", ErrInvalidProfile, name, request.String(), limit.String())
+		}
+	}
+	return nil
+}
+
+// Same reports whether s and o are one set of settings: equal quantities written in any form, and
+// no resource list and an empty one, are the same.
+func (s ExecutionSettings) Same(o ExecutionSettings) bool {
+	return equality.Semantic.DeepEqual(s, o)
 }
 
 // Profile is a published, immutable version of a named set of execution settings. Its name and
@@ -444,6 +475,18 @@ var (
 	// ErrIssuanceUndecided is wrapped by an Issuer garam did not answer with a decision. The
 	// certificate request's outcome is unknown, so it stays pending and is sent again unchanged.
 	ErrIssuanceUndecided = errors.New("certificate issuance undecided")
+
+	// ErrInvalidProfile is returned for a profile publication with no name, a version below 1, or
+	// settings an agent's workload could not run with (ADR 0056).
+	ErrInvalidProfile = errors.New("the profile is not one an agent can run with")
+
+	// ErrProfileVersionConflict is returned for a profile version already published with other
+	// settings: a published version is never changed (ADR 0056).
+	ErrProfileVersionConflict = errors.New("the profile version is published with other settings")
+
+	// ErrProfileVersionGap is returned for a profile version that is neither published nor the one
+	// after the latest, so versions stay numbered from 1 without a gap (ADR 0056).
+	ErrProfileVersionGap = errors.New("the profile version is not the next one")
 )
 
 // CertificateRequest is a controller's request for an agent's first certificate, as it was sent:

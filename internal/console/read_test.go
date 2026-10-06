@@ -229,7 +229,7 @@ func TestReads_RefuseAnAuthorityForAnotherTargetOrBody(t *testing.T) {
 func TestReads_ResolveOnlyInTheRequestsOrganization(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	foreign, err := e.definitions.PublishProfile(ctx, otherOrg, "foreign", definition.ExecutionSettings{})
+	foreign, err := e.definitions.PublishProfile(ctx, otherOrg, "foreign", runnableSettings())
 	require.NoError(t, err)
 	_, err = e.definitions.PublishTemplate(ctx, otherOrg, definition.Template{Name: "foreign",
 		Profile: definition.ProfileRef{Name: foreign.Name, Version: foreign.Version}})
@@ -311,7 +311,7 @@ func TestPublish_PublishesTheNextVersionOncePerRequest(t *testing.T) {
 func TestPublish_RefusesWhatItCannotPublish(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	foreign, err := e.definitions.PublishProfile(ctx, otherOrg, "foreign", definition.ExecutionSettings{})
+	foreign, err := e.definitions.PublishProfile(ctx, otherOrg, "foreign", runnableSettings())
 	require.NoError(t, err)
 
 	// Control: a well-formed request naming the organization's profile is published.
@@ -376,9 +376,9 @@ func TestPublish_RefusesAMalformedKeyReference(t *testing.T) {
 
 func TestProfiles_ListEveryPublishedVersion(t *testing.T) {
 	e := newEnv(t)
-	_, err := e.definitions.PublishProfile(context.Background(), org, e.profile.Name, definition.ExecutionSettings{})
+	_, err := e.definitions.PublishProfile(context.Background(), org, e.profile.Name, runnableSettings())
 	require.NoError(t, err)
-	_, err = e.definitions.PublishProfile(context.Background(), org, "large", definition.ExecutionSettings{})
+	_, err = e.definitions.PublishProfile(context.Background(), org, "large", runnableSettings())
 	require.NoError(t, err)
 
 	c := request{http.MethodGet, "/v1/orgs/" + org + "/profiles", nil}

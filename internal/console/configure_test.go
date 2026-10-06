@@ -178,7 +178,7 @@ func TestConfigure_RefusesARevisionThatIsNotACanonicalString(t *testing.T) {
 func TestConfigure_AnotherOrganizationsProfileAnswersNotFound(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	gpu, err := e.definitions.PublishProfile(ctx, "globex", "gpu", definition.ExecutionSettings{})
+	gpu, err := e.definitions.PublishProfile(ctx, "globex", "gpu", runnableSettings())
 	require.NoError(t, err)
 	e.profile = definition.ProfileRef{Name: gpu.Name, Version: gpu.Version}
 
@@ -194,7 +194,7 @@ func TestConfigure_AnotherOrganizationsProfileAnswersNotFound(t *testing.T) {
 	assert.Equal(t, strings.Replace(never.message, "unpublished", "gpu", 1), refused.message)
 
 	// Control: once the agent's own organization publishes the name, the same request is accepted.
-	_, err = e.definitions.PublishProfile(ctx, org, "gpu", definition.ExecutionSettings{})
+	_, err = e.definitions.PublishProfile(ctx, org, "gpu", runnableSettings())
 	require.NoError(t, err)
 	accepted := e.configure(t, e.authorize("c1", body, nil), body)
 	assert.Equal(t, 200, accepted.status, accepted.message)

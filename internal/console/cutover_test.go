@@ -169,7 +169,7 @@ type cutoverEnv struct {
 func newCutoverEnv(t *testing.T, values map[string]string) *cutoverEnv {
 	t.Helper()
 	definitions := definition.NewService(repository.NewMemory(), &registrar{}, nil)
-	p, err := definitions.PublishProfile(context.Background(), org, "small", definition.ExecutionSettings{})
+	p, err := definitions.PublishProfile(context.Background(), org, "small", runnableSettings())
 	require.NoError(t, err)
 	e := &cutoverEnv{
 		introspector: &introspector{answers: map[console.Authority]answer{}},

@@ -7,6 +7,11 @@ import "context"
 type Repository interface {
 	// PublishProfile stores settings as the next version of org's named profile.
 	PublishProfile(ctx context.Context, org, name string, settings ExecutionSettings) (Profile, error)
+	// PublishProfileVersion stores p as the version it names of org's p.Name, and reports whether
+	// it stored it, deciding in one step: under a version already published it stores nothing and
+	// returns the stored profile where its settings are Same as p's, and ErrProfileVersionConflict
+	// otherwise; a version neither published nor one past the latest is ErrProfileVersionGap.
+	PublishProfileVersion(ctx context.Context, org string, p Profile) (Profile, bool, error)
 	// GetProfile returns ErrNotFound for a version org never published.
 	GetProfile(ctx context.Context, org string, ref ProfileRef) (Profile, error)
 

@@ -114,6 +114,51 @@ func (p *Postgres) PublishProfile(ctx context.Context, org, name string, setting
 	return p.GetProfile(ctx, org, definition.ProfileRef{Name: name, Version: definition.Version(version)})
 }
 
+func (p *Postgres) PublishProfileVersion(ctx context.Context, org string, profile definition.Profile) (definition.Profile, bool, error) {
+	raw, err := json.Marshal(settingsColumn(profile.Settings))
+	if err != nil {
+		return definition.Profile{}, false, storeError("encode settings", err)
+	}
+	created := false
+	err = p.inTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, lockProfiles); err != nil {
+			return err
+		}
+		var stored []byte
+		err := tx.QueryRow(ctx, getProfile, org, profile.Name, int64(profile.Version)).Scan(&stored)
+		switch {
+		case err == nil:
+			var s settingsColumn
+			if err := json.Unmarshal(stored, &s); err != nil {
+				return fmt.Errorf("decode settings: %v", err)
+			}
+			if !definition.ExecutionSettings(s).Same(profile.Settings) {
+				return definition.ErrProfileVersionConflict
+			}
+			return nil
+		case !errors.Is(err, pgx.ErrNoRows):
+			return err
+		}
+		var latest int64
+		if err := tx.QueryRow(ctx, latestProfileVersion, org, profile.Name).Scan(&latest); err != nil {
+			return err
+		}
+		if int64(profile.Version) != latest+1 {
+			return definition.ErrProfileVersionGap
+		}
+		if _, err := tx.Exec(ctx, insertProfileVersion, org, profile.Name, int64(profile.Version), raw); err != nil {
+			return err
+		}
+		created = true
+		return nil
+	})
+	if err != nil {
+		return definition.Profile{}, false, storeError("publish profile version", err)
+	}
+	published, err := p.GetProfile(ctx, org, definition.ProfileRef{Name: profile.Name, Version: profile.Version})
+	return published, created, err
+}
+
 func (p *Postgres) GetProfile(ctx context.Context, org string, ref definition.ProfileRef) (definition.Profile, error) {
 	var raw []byte
 	if err := p.pool.QueryRow(ctx, getProfile, org, ref.Name, int64(ref.Version)).Scan(&raw); err != nil {
@@ -1091,7 +1136,8 @@ func notFound(op string, err error) error {
 // storeError passes a domain sentinel through and keeps any other error, the
 // driver's included, opaque to the caller.
 func storeError(op string, err error) error {
-	if errors.Is(err, definition.ErrNotFound) || errors.Is(err, definition.ErrStaleRevision) {
+	if errors.Is(err, definition.ErrNotFound) || errors.Is(err, definition.ErrStaleRevision) ||
+		errors.Is(err, definition.ErrProfileVersionConflict) || errors.Is(err, definition.ErrProfileVersionGap) {
 		return err
 	}
 	return fmt.Errorf("%s: %v", op, err)

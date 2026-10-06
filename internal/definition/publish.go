@@ -5,9 +5,30 @@ import (
 	"fmt"
 )
 
-// PublishProfile publishes settings as the next version of org's named profile.
+// PublishProfile publishes settings as the next version of org's named profile, once they are
+// settings an agent's workload could run with.
 func (s *service) PublishProfile(ctx context.Context, org, name string, settings ExecutionSettings) (Profile, error) {
+	if err := settings.check(); err != nil {
+		return Profile{}, err
+	}
 	return s.repository.PublishProfile(ctx, org, name, settings)
+}
+
+// PublishProfileVersion publishes p as the version it names of org's profile p.Name, and reports
+// whether this call published it. The same settings under a version already published are
+// published already; other settings are ErrProfileVersionConflict, and a version neither published
+// nor the next is ErrProfileVersionGap (ADR 0056).
+func (s *service) PublishProfileVersion(ctx context.Context, org string, p Profile) (Profile, bool, error) {
+	switch {
+	case org == "" || p.Name == "":
+		return Profile{}, false, fmt.Errorf("%w: a profile needs an organization and a name", ErrInvalidProfile)
+	case p.Version < 1:
+		return Profile{}, false, fmt.Errorf("%w: version %d is below 1", ErrInvalidProfile, p.Version)
+	}
+	if err := p.Settings.check(); err != nil {
+		return Profile{}, false, err
+	}
+	return s.repository.PublishProfileVersion(ctx, org, p)
 }
 
 // Publish publishes in.Template as the next version of its name in the request's organization,
