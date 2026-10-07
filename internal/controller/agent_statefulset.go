@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -562,6 +563,10 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	// Every Pod the StatefulSet creates carries the writer fence, so a deleted
 	// one is held until its writers are seen to stop (ADR 0042).
 	statefulSet.Spec.Template.Finalizers = []string{writerStoppedFinalizer}
+	// Long enough for the agent's drain to commit the step in flight, so that
+	// the fence reads a clean exit rather than the kubelet's SIGKILL (ADR 0064).
+	statefulSet.Spec.Template.Spec.TerminationGracePeriodSeconds =
+		ptr.To(int64(descriptor.terminationGrace / time.Second))
 
 	if statefulSet.Spec.Template.Spec.SecurityContext == nil {
 		statefulSet.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{}
