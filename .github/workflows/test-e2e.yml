@@ -14,6 +14,10 @@ jobs:
   test-e2e:
     permissions:
       contents: read
+      # Pulls garam's private test image, which `make garam-e2e` copies garam,
+      # its test-principal fixture and its migrations out of (#271). The package
+      # grants this repository's Actions read access in its own settings.
+      packages: read
     name: Run on Ubuntu
     runs-on: ubuntu-latest
     steps:
@@ -35,5 +39,15 @@ jobs:
       # this job holds no kind version of its own. helm/kind-action would put that
       # version and the cluster back here, where a contributor's command cannot
       # reach either.
+      # The login `make garam-e2e` pulls ghcr.io/garamsh/garam-test with, as this
+      # run's GITHUB_TOKEN. The action logs out again at the end of the job, so
+      # no credential outlives it.
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run the e2e tests
         run: make test-e2e
