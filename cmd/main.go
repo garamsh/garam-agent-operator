@@ -134,9 +134,10 @@ func main() {
 			"at agent-storage-size.")
 	flag.StringVar(&agentCopyImage, "agent-copy-image", "",
 		"The image the init container of every agent's Pod runs to copy that agent's credential into the "+
-			"volume the agent reads it from. It needs a shell and install, and nothing of the agent. It has "+
-			"no default and is always required: an agent whose credential arrives any other way is one its "+
-			"reader refuses.")
+			"volume the agent reads it from, and the image a memory move's copy and verification Jobs run. "+
+			"It needs a shell, install, cp, sha256sum, flock, stat and find, and nothing of the agent. Name it "+
+			"by digest, so every node runs one build. It has no default and is always required: an agent "+
+			"whose credential arrives any other way is one its reader refuses.")
 	flag.StringVar(&agentWorkspaceImage, "agent-workspace-image", "",
 		"The image every agent's Pod runs its workspace container from: the process serving the files an "+
 			"agent reads and writes and the commands it runs. It needs a shell, and the agent's own image "+

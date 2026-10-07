@@ -4,6 +4,9 @@ FROM busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a014
 
 COPY entrypoint.sh /usr/local/bin/agent-stand-in
 
+# Ahead of busybox's own on PATH, so the suite runs it as the copy image's cp.
+COPY cp /usr/local/bin/cp
+
 # The user every container of an agent's Pod is given.
 USER 65532:65532
 

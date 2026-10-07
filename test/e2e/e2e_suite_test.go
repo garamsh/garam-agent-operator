@@ -93,12 +93,16 @@ func deployOperator() {
 	// occurrence of the flag. The stand-in image waits as a workspace when it is
 	// started with no command, so every Agent's Pod carries the workspace and
 	// its own claim, the shape a deployment runs.
-	By("naming a workspace image, as an overlay does")
+	// The stand-in is also the copy image, appended after the base's so that it
+	// is the one the manager reads: its cp corrupts a memory move's copy where a
+	// spec marks the source for it, which only the move's verification can tell.
+	By("naming a workspace image and a copy image, as an overlay does")
 	cmd = exec.Command("kubectl", "-n", namespace, "patch", "deployment", deploymentName, "--type=json", "-p",
 		`[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--agent-workspace-image=`+
+			agentImage+`"},{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--agent-copy-image=`+
 			agentImage+`"}]`)
 	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to name the workspace image")
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to name the workspace and copy images")
 	cmd = exec.Command("kubectl", "-n", namespace, "rollout", "status", "deployment/"+deploymentName, "--timeout=3m")
 	_, err = utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "The controller-manager did not roll out with the workspace image")

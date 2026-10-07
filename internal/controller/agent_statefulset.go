@@ -339,7 +339,7 @@ func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agent
 	if err != nil {
 		return nil, err
 	}
-	if err := r.replaceStateTemplate(ctx, statefulSet, plan); err != nil {
+	if plan, err = r.replaceStateTemplate(ctx, agent, statefulSet, plan); err != nil {
 		return nil, err
 	}
 
@@ -466,32 +466,36 @@ func (r *AgentReconciler) replaceSharedShape(ctx context.Context, agent *agentv1
 // makes the state claim, once the agent's memory is on a claim it mounts by
 // name: a claim template cannot be removed from a StatefulSet. Only a move
 // names such a claim, and only with no Pod left, so the deletion orphans
-// nothing that runs; its claims are kept either way.
-func (r *AgentReconciler) replaceStateTemplate(ctx context.Context, statefulSet *appsv1.StatefulSet, plan statePlan) error {
-	if plan.claim == "" {
-		return nil
-	}
+// nothing that runs; its claims are kept either way. A StatefulSet that already
+// lost the template mounts even its own claim by name, which is where a refused
+// move puts the memory back.
+func (r *AgentReconciler) replaceStateTemplate(ctx context.Context, agent *agentv1alpha1.Agent,
+	statefulSet *appsv1.StatefulSet, plan statePlan) (statePlan, error) {
 	existing := &appsv1.StatefulSet{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(statefulSet), existing); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil
+			return plan, nil
 		}
 
-		return fmt.Errorf("get statefulset: %w", err)
+		return plan, fmt.Errorf("get statefulset: %w", err)
 	}
-	if claimTemplate(existing, stateVolumeName) == nil {
-		return nil
+	templated := claimTemplate(existing, stateVolumeName) != nil
+	if plan.claim == "" && !templated {
+		plan.claim = stateClaimName(agent)
+	}
+	if plan.claim == "" || !templated {
+		return plan, nil
 	}
 
 	uid := existing.UID
 	if err := r.Delete(ctx, existing, client.PropagationPolicy(metav1.DeletePropagationOrphan),
 		client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("delete the statefulset whose template makes the claim the memory moved off: %w", err)
+		return plan, fmt.Errorf("delete the statefulset whose template makes the claim the memory moved off: %w", err)
 	}
 	logf.FromContext(ctx).Info("Replacing the StatefulSet to mount the claim the agent's memory moved to",
 		"statefulSet", existing.Name, "claim", plan.claim)
 
-	return errReplacingForMove
+	return plan, errReplacingForMove
 }
 
 // claimExists reports whether the claim the StatefulSet makes from the template

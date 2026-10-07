@@ -263,7 +263,8 @@ var _ = Describe("Memory move", func() {
 
 		By("switching: the StatefulSet whose template makes the source claim is replaced, keeping its claims")
 		reconcileOnce(name)
-		Expect(readAgent(name).Annotations).To(HaveKeyWithValue(stateClaimAnnotation, target))
+		linked, _ := claimOf(source.Name)
+		Expect(linked.Annotations).To(HaveKeyWithValue(movedToAnnotation, target))
 		Expect(syncedReason(name)).To(Equal(agentv1alpha1.ReasonWorkloadReplacing))
 		finishOrphaning(name)
 		reconcileOnce(name)
@@ -440,7 +441,8 @@ var _ = Describe("Memory move", func() {
 			Expect(phaseOf(target)).To(Equal(movePhaseRefused))
 			Expect(moveCondition(refused.name).Reason).To(Equal(agentv1alpha1.ReasonVerificationFailed))
 			Expect(moveCondition(refused.name).Message).To(ContainSubstring(refused.says))
-			Expect(readAgent(refused.name).Annotations).NotTo(HaveKey(stateClaimAnnotation))
+			kept, _ := claimOf(stateVolumeName + "-" + refused.name + "-0")
+			Expect(kept.Annotations).NotTo(HaveKey(movedToAnnotation))
 			Expect(claimTemplate(statefulSetFor(refused.name), stateVolumeName)).NotTo(BeNil())
 			expectStoppedForMove(refused.name)
 
@@ -508,12 +510,39 @@ var _ = Describe("Memory move", func() {
 		Expect(phaseOf(target)).To(Equal(movePhaseRefused))
 		Expect(moveCondition(name).Reason).To(Equal(agentv1alpha1.ReasonAgentRefusedStore))
 		Expect(moveCondition(name).Message).To(ContainSubstring("v0.2.0"))
-		Expect(readAgent(name).Annotations).To(HaveKeyWithValue(stateClaimAnnotation, source.Name))
+		restored, _ := claimOf(source.Name)
+		Expect(restored.Annotations).NotTo(HaveKey(movedToAnnotation))
 		Expect(stateVolumeClaim(name)).To(Equal(source.Name))
 		Expect(containerOf(statefulSetFor(name).Spec.Template.Spec, agentContainerName).Args).
 			NotTo(ContainElement(sherlockRequireStoreFlag))
 		expectStoppedForMove(name)
 		Expect(pod.UID).NotTo(BeEmpty())
+	})
+
+	It("starts an Agent recreated after a move on the claim its memory moved to, not on the one it moved off", func() {
+		name := "move-recreated"
+		drainedAgent(name, 0)
+		copyAndVerify(name, "a", "abc")
+		reconcileOnce(name)
+		finishOrphaning(name)
+		reconcileOnce(name)
+		target := targetClaimName(readAgent(name), "a")
+
+		By("deleting the Agent and its StatefulSet, as a reconstruct finds them gone")
+		agent := readAgent(name)
+		releaseFinalizers(agent)
+		Expect(k8sClient.Delete(ctx, agent)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, statefulSetFor(name))).To(Succeed())
+		Eventually(func() error {
+			return k8sClient.Get(ctx, client.ObjectKeyFromObject(agent), &agentv1alpha1.Agent{})
+		}).Should(MatchError(apierrors.IsNotFound, "a not-found error"))
+
+		createAgent(newAgent(name))
+		reconcileOnce(name)
+		statefulSet := statefulSetFor(name)
+		Expect(claimTemplate(statefulSet, stateVolumeName)).To(BeNil())
+		Expect(stateVolumeClaim(name)).To(Equal(target))
+		Expect(containerOf(statefulSet.Spec.Template.Spec, agentContainerName).Args).To(ContainElement(sherlockRequireStoreFlag))
 	})
 
 	It("holds the agent stopped while a Job of a move runs, even once the move is cleared", func() {

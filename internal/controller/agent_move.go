@@ -22,14 +22,15 @@ import (
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 )
 
-// A move's record is kept on the cluster's objects and never in the Agent's
-// status, which a reconcile does not read (ADR 0065): the claim the agent's
-// memory is on is annotated on the Agent, the last writer of a claim on the
-// claim, and every step of a move on the claim it moves to.
+// A move's record is kept on the claims, which outlive the Agent, and never in
+// the Agent's status, which a reconcile does not read (ADR 0065): a claim the
+// memory moved off names the claim it moved to, a claim names its last writer,
+// and the claim a move moves to holds every step of it.
 const (
-	// stateClaimAnnotation names, on the Agent, the claim its state volume
-	// mounts by name. Absent, the state volume is the StatefulSet's own claim.
-	stateClaimAnnotation = "agent.garam.sh/state-claim"
+	// movedToAnnotation names, on a claim the agent's memory moved off, the
+	// claim it moved to. Followed from the StatefulSet's own claim, the chain
+	// ends at the claim the memory is on.
+	movedToAnnotation = "agent.garam.sh/moved-to"
 
 	// lastWriterAnnotation records, on a state claim, the last Pod that wrote
 	// it: running while the Pod runs, and its agent's exit once the fence
@@ -223,31 +224,48 @@ func (r *AgentReconciler) reconcileMove(ctx context.Context, agent *agentv1alpha
 	return r.advanceMove(ctx, agent, plan, target, podGone, descriptor)
 }
 
-// stateInUse is the claim the agent's state is on: the one the Agent's
-// annotation names, which must be the StatefulSet's own claim or one a move of
-// this Agent created, or the StatefulSet's own claim where none is named.
+// stateInUse is the claim the agent's memory is on: the StatefulSet's own
+// claim, or the end of the chain of moves that starts there. Every claim on the
+// chain must be one a move of this Agent created; one that is not holds the
+// agent stopped.
 func (r *AgentReconciler) stateInUse(ctx context.Context, agent *agentv1alpha1.Agent) (statePlan, string, error) {
-	named, ok := agent.Annotations[stateClaimAnnotation]
-	if !ok {
-		return statePlan{}, stateClaimName(agent), nil
-	}
+	name := stateClaimName(agent)
+	for range maxMoves {
+		claim := &corev1.PersistentVolumeClaim{}
+		err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: name}, claim)
+		if apierrors.IsNotFound(err) && name == stateClaimName(agent) {
+			return statePlan{}, name, nil
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			return statePlan{}, "", fmt.Errorf("get claim %q: %w", name, err)
+		}
+		moved := err == nil && claim.Labels[moveAgentLabel] == agent.Name && claim.Annotations[moveIDAnnotation] != ""
+		if name != stateClaimName(agent) && !moved {
+			setMemoryMove(agent, metav1.ConditionFalse, agentv1alpha1.ReasonSourceChanged,
+				fmt.Sprintf("The agent's memory moved to claim %q, which does not exist or no move of this Agent created; "+
+					"the agent is held at no replica", name))
 
-	claim := &corev1.PersistentVolumeClaim{}
-	err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: named}, claim)
-	if err != nil && !apierrors.IsNotFound(err) {
-		return statePlan{}, "", fmt.Errorf("get claim %q: %w", named, err)
-	}
-	moved := err == nil && claim.Labels[moveAgentLabel] == agent.Name && claim.Annotations[moveIDAnnotation] != ""
-	if err == nil && (named == stateClaimName(agent) || moved) {
-		return statePlan{claim: named, requireStore: moved}, named, nil
-	}
+			return statePlan{hold: true}, name, nil
+		}
+		next := claim.Annotations[movedToAnnotation]
+		if next == "" {
+			if name == stateClaimName(agent) {
+				return statePlan{}, name, nil
+			}
 
+			return statePlan{claim: name, requireStore: true}, name, nil
+		}
+		name = next
+	}
 	setMemoryMove(agent, metav1.ConditionFalse, agentv1alpha1.ReasonSourceChanged,
-		fmt.Sprintf("Annotation %s names claim %q, which is neither this Agent's own claim nor one a move of it created; "+
-			"the agent is held at no replica until it names one", stateClaimAnnotation, named))
+		fmt.Sprintf("The chain of claims the agent's memory moved through is longer than %d, so where it is cannot be read", maxMoves))
 
-	return statePlan{hold: true}, named, nil
+	return statePlan{hold: true}, name, nil
 }
+
+// maxMoves bounds the chain of moves stateInUse follows, so that claims edited
+// into a cycle hold the agent rather than the reconcile.
+const maxMoves = 64
 
 // moveJobRunning reports whether a Job of a move of this Agent has not ended.
 func (r *AgentReconciler) moveJobRunning(ctx context.Context, agent *agentv1alpha1.Agent) (bool, error) {
@@ -517,12 +535,12 @@ func (r *AgentReconciler) runVerify(ctx context.Context, agent *agentv1alpha1.Ag
 		fmt.Sprintf("The copy on claim %q matches its source, digest %s", target.Name, copied))
 }
 
-// switchMove makes the verified copy the claim the agent's memory is on. The
-// Agent's annotation is written first, so a manager stopped before the phase
-// is recorded finds the copy in use and records it then.
+// switchMove makes the verified copy the claim the agent's memory is on, by
+// naming it on the source. That is written first, so a manager stopped before
+// the phase is recorded finds the copy in use and records it then.
 func (r *AgentReconciler) switchMove(ctx context.Context, agent *agentv1alpha1.Agent,
 	target *corev1.PersistentVolumeClaim) (statePlan, error) {
-	if err := r.annotateStateClaim(ctx, agent, target.Name); err != nil {
+	if err := r.linkMove(ctx, agent, target.Annotations[moveSourceAnnotation], target.Name); err != nil {
 		return statePlan{hold: true}, err
 	}
 
@@ -600,7 +618,7 @@ func (r *AgentReconciler) restoreSource(ctx context.Context, agent *agentv1alpha
 	source := target.Annotations[moveSourceAnnotation]
 	plan := statePlan{claim: source, requireStore: source != stateClaimName(agent), hold: true}
 
-	return plan, r.annotateStateClaim(ctx, agent, source)
+	return plan, r.linkMove(ctx, agent, source, "")
 }
 
 // agentExitedNonZero reports the exit of the agent's container, where it last
@@ -846,21 +864,28 @@ func (r *AgentReconciler) refuseBeforeRecord(agent *agentv1alpha1.Agent, plan st
 	return plan, nil
 }
 
-// annotateStateClaim names on the Agent the claim its memory is on.
-func (r *AgentReconciler) annotateStateClaim(ctx context.Context, agent *agentv1alpha1.Agent, claim string) error {
-	if agent.Annotations[stateClaimAnnotation] == claim {
+// linkMove names on the source claim the claim the memory moved to, or, with
+// to empty, takes that name off, which puts the memory back on the source.
+func (r *AgentReconciler) linkMove(ctx context.Context, agent *agentv1alpha1.Agent, source, to string) error {
+	claim := &corev1.PersistentVolumeClaim{}
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: source}, claim); err != nil {
+		return fmt.Errorf("get claim %q: %w", source, err)
+	}
+	if claim.Annotations[movedToAnnotation] == to {
 		return nil
 	}
-	marked := agent.DeepCopy()
+	marked := claim.DeepCopy()
 	if marked.Annotations == nil {
 		marked.Annotations = map[string]string{}
 	}
-	marked.Annotations[stateClaimAnnotation] = claim
-	if err := r.Patch(ctx, marked, client.MergeFrom(agent)); err != nil {
-		return fmt.Errorf("name claim %q as the agent's memory: %w", claim, err)
+	if to == "" {
+		delete(marked.Annotations, movedToAnnotation)
+	} else {
+		marked.Annotations[movedToAnnotation] = to
 	}
-	agent.Annotations = marked.Annotations
-	agent.ResourceVersion = marked.ResourceVersion
+	if err := r.Patch(ctx, marked, client.MergeFrom(claim)); err != nil {
+		return fmt.Errorf("name on claim %q where the memory moved: %w", source, err)
+	}
 
 	return nil
 }
