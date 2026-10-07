@@ -40,7 +40,12 @@ func placementOf(epoch, pod, previous string) string {
 // registerPlacement posts body on the controller route for agent, presenting the controller's
 // leaf, and returns the status and the raw answer.
 func registerPlacement(agent, body string) (int, []byte, error) {
-	resp, err := real.feedClient().Post(attachedURL+"/v1/operators/self/agents/"+agent+"/placements",
+	return registerPlacementAt(attachedURL, agent, body)
+}
+
+// registerPlacementAt is registerPlacement on the binary whose routes are at base.
+func registerPlacementAt(base, agent, body string) (int, []byte, error) {
+	resp, err := real.feedClient().Post(base+"/v1/operators/self/agents/"+agent+"/placements",
 		"application/json", strings.NewReader(body))
 	if err != nil {
 		return 0, nil, err

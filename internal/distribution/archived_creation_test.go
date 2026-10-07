@@ -39,8 +39,11 @@ func TestRequestCertificate_AnAgentWhoseOnlyCreationIsArchivedIsRefused409(t *te
 	status, raw, out := e.requestCertificate(t, e.withCert, archived, certificateBody("c1", epoch, csr))
 	assert.Equal(t, http.StatusConflict, status, string(raw))
 	assert.Equal(t, "creation_archived", out["kind"])
+	assert.Contains(t, out["message"], "To keep the agent, its GRN, identity and memory, have an owner or admin "+
+		"recover its credential")
+	assert.Contains(t, out["message"], "and then configure it")
 	assert.Contains(t, out["message"], "re-create the agent through the console's create route, which gives it a new GRN")
-	assert.Contains(t, out["message"], "unproven for one that never had a certificate (garamsh/garam-agent-operator#308)")
+	assert.NotContains(t, out["message"], "unproven")
 	assert.Equal(t, 0, e.issuer.calls(), "garam was asked with no reference")
 
 	// An agent with no creation, archived or current, is still not found.

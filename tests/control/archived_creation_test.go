@@ -86,7 +86,7 @@ func TestMigration_AnAgentWhoseOnlyCreationTheUpgradeArchivedIsToldToBeRecreated
 	assert.Equal(t, "creation_archived", out["kind"])
 	assert.Contains(t, out["message"], "re-create the agent through the console's create route, which gives it a new GRN")
 	assert.Contains(t, out["message"], "POST /v1/orgs/{org}/agents/{agent}/recovery under agent:recover")
-	assert.Contains(t, out["message"], "unproven for one that never had a certificate")
+	assert.Contains(t, out["message"], "To keep the agent")
 
 	status, out = requestCertificateAt(t, base, unregistered,
 		certificateRequestBody(name(t, "certificate"), unregisteredEpoch, csr))

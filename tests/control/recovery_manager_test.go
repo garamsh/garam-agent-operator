@@ -31,6 +31,8 @@ type managerStore struct {
 	key, certificatePEM []byte
 	written             desired.Certificate
 	lineage, refused    string
+	// unplaced is an agent whose first credential was never placed: no chain is kept.
+	unplaced bool
 }
 
 func (m *managerStore) Recovering(context.Context) ([]string, error) {
@@ -64,7 +66,7 @@ func (m *managerStore) SaveRecovery(_ context.Context, agent string, request des
 }
 
 func (m *managerStore) KeptIssuer(_ context.Context, agent string) ([]byte, bool, error) {
-	return m.issuer, agent == m.agent, nil
+	return m.issuer, agent == m.agent && !m.unplaced, nil
 }
 
 func (m *managerStore) RefuseRecovery(_ context.Context, _, reason string) error {
