@@ -8,9 +8,16 @@ rules:
   - ""
   resources:
   - nodes
-  - persistentvolumeclaims
   verbs:
   - get
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - create
+  - get
+  - patch
 - apiGroups:
   - ""
   resources:
@@ -56,4 +63,13 @@ rules:
   - get
   - list
   - update
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - get
+  - list
   - watch

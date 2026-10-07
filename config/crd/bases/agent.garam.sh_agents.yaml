@@ -30,6 +30,10 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Suspended")].status
       name: Suspended
       type: string
+    - jsonPath: .status.conditions[?(@.type=="MemoryMove")].reason
+      name: Moved
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -128,6 +132,49 @@ spec:
                   admits and grants none of the three.
                 minLength: 1
                 type: string
+              memoryMove:
+                description: |-
+                  memoryMove moves the agent's memory to a new volume through a verified
+                  copy: the agent is stopped, its memory is copied once its writer is seen
+                  to have stopped cleanly, the copy is verified against the source, and the
+                  agent starts again on the copy, which it must accept before it serves.
+                  The source volume is never written or deleted. It is a person's to set:
+                  this operator never writes it. Clearing it after the move changes
+                  nothing, and a new id moves the memory again from where it is then.
+                properties:
+                  id:
+                    description: |-
+                      id names this move. The volume the memory moves to is the claim
+                      <agent>-state-<id>, and an id whose move was refused is never used
+                      again.
+                    maxLength: 40
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  storageClassName:
+                    description: |-
+                      storageClassName is the StorageClass the new volume is provisioned from.
+                      Unset means the cluster's default StorageClass.
+                    minLength: 1
+                    type: string
+                  storageSize:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: storageSize is the size of the new volume.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                    x-kubernetes-validations:
+                    - message: storageSize must be greater than zero
+                      rule: quantity(string(self)).isGreaterThan(quantity('0'))
+                required:
+                - id
+                - storageSize
+                type: object
+                x-kubernetes-validations:
+                - message: a memory move's target cannot change under the same id;
+                    name a new id
+                  rule: self.id != oldSelf.id || self == oldSelf
               model:
                 description: |-
                   model is the chat model the agent answers with. Unset leaves the agent on

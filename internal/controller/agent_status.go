@@ -26,6 +26,17 @@ func setSynced(agent *agentv1alpha1.Agent, status metav1.ConditionStatus, reason
 	})
 }
 
+// setMemoryMove records on the Agent where a move of its memory stands.
+func setMemoryMove(agent *agentv1alpha1.Agent, status metav1.ConditionStatus, reason, message string) {
+	meta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{
+		Type:               agentv1alpha1.ConditionMemoryMove,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: agent.Generation,
+	})
+}
+
 // setAvailable records on the Agent what this reconcile observed of the
 // workload's readiness, which is a different question from whether the workload
 // carries what the spec asks for.

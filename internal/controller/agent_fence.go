@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -67,6 +68,16 @@ func agentPodName(agent *agentv1alpha1.Agent) string { return agent.Name + "-0" 
 // stateClaimName is the claim the StatefulSet makes for that Pod's state volume.
 func stateClaimName(agent *agentv1alpha1.Agent) string {
 	return stateVolumeName + "-" + agentPodName(agent)
+}
+
+// claimOfPod is the claim the Pod's state volume mounts: the StatefulSet's own,
+// or the one a move put the agent's memory on (ADR 0065).
+func claimOfPod(agent *agentv1alpha1.Agent, pod *corev1.Pod) string {
+	if claim := podStateClaim(pod); claim != "" {
+		return claim
+	}
+
+	return stateClaimName(agent)
 }
 
 // placementSecretName is the Secret an Agent's placement token is minted into.
@@ -140,6 +151,12 @@ func (r *AgentReconciler) releaseFence(ctx context.Context, agent *agentv1alpha1
 		}); err != nil {
 			return err
 		}
+	}
+
+	// The claim keeps the agent's exit as its last writer's, where a move reads
+	// it, since the Agent's status is never read back (ADR 0065).
+	if err := r.recordStoppedWriter(ctx, agent, pod, evidence); err != nil {
+		return err
 	}
 
 	released := pod.DeepCopy()
@@ -231,13 +248,14 @@ func (r *AgentReconciler) readNode(ctx context.Context, name string) (node *core
 // says.
 func (r *AgentReconciler) readClaim(ctx context.Context, agent *agentv1alpha1.Agent,
 	pod *corev1.Pod) (pvcUID, reason, message string, err error) {
+	name := claimOfPod(agent, pod)
 	claim := &corev1.PersistentVolumeClaim{}
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: stateClaimName(agent)}, claim); err != nil {
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: name}, claim); err != nil {
 		if apierrors.IsNotFound(err) {
-			return "", agentv1alpha1.ReasonPVCChanged, fmt.Sprintf("Claim %q no longer exists", stateClaimName(agent)), nil
+			return "", agentv1alpha1.ReasonPVCChanged, fmt.Sprintf("Claim %q no longer exists", name), nil
 		}
 
-		return "", "", "", fmt.Errorf("get claim %q: %w", stateClaimName(agent), err)
+		return "", "", "", fmt.Errorf("get claim %q: %w", name, err)
 	}
 
 	recorded := pod.Annotations[pvcUIDAnnotation]
@@ -372,15 +390,21 @@ func neverCreatedRefusal(pod *corev1.Pod, node *corev1.Node) string {
 func (r *AgentReconciler) recordPlacement(ctx context.Context, agent *agentv1alpha1.Agent, pod *corev1.Pod) error {
 	recorded, annotated := pod.Annotations[pvcUIDAnnotation]
 	if !annotated {
+		name := claimOfPod(agent, pod)
 		claim := &corev1.PersistentVolumeClaim{}
-		err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: stateClaimName(agent)}, claim)
+		err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: name}, claim)
 		if apierrors.IsNotFound(err) {
 			// The StatefulSet makes the claim before the Pod; a Pod with none is
 			// one this reconcile sees early, and the next records it.
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("get claim %q: %w", stateClaimName(agent), err)
+			return fmt.Errorf("get claim %q: %w", name, err)
+		}
+		// The claim learns of its writer before the Pod is marked, so a Pod seen
+		// marked is one its claim already names (ADR 0065).
+		if err := r.recordLastWriter(ctx, claim, lastWriter{PodUID: string(pod.UID), State: writerRunning}); err != nil {
+			return err
 		}
 
 		marked := pod.DeepCopy()
@@ -492,4 +516,55 @@ func newPlacementToken() ([]byte, error) {
 	}
 
 	return []byte(hex.EncodeToString(raw)), nil
+}
+
+// recordStoppedWriter records on the Pod's claim that its writer stopped, with
+// the agent's exit where the evidence holds one. A Pod released with no agent
+// exit, never given a node or never started, records none, which no move
+// takes for a clean drain.
+func (r *AgentReconciler) recordStoppedWriter(ctx context.Context, agent *agentv1alpha1.Agent, pod *corev1.Pod,
+	evidence *agentv1alpha1.WriterStoppedEvidence) error {
+	writer := lastWriter{PodUID: string(pod.UID), State: writerStopped}
+	for _, container := range evidence.Containers {
+		if container.Name == agentContainerName {
+			writer.ExitCode = ptr.To(container.ExitCode)
+		}
+	}
+
+	name := claimOfPod(agent, pod)
+	claim := &corev1.PersistentVolumeClaim{}
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: name}, claim); err != nil {
+		// Only a Pod never given a node is released without its claim, which
+		// it never wrote.
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+
+		return fmt.Errorf("get claim %q: %w", name, err)
+	}
+
+	return r.recordLastWriter(ctx, claim, writer)
+}
+
+// recordLastWriter writes the record of a claim's last writer, where it says
+// something else.
+func (r *AgentReconciler) recordLastWriter(ctx context.Context, claim *corev1.PersistentVolumeClaim,
+	writer lastWriter) error {
+	value, err := json.Marshal(writer)
+	if err != nil {
+		return fmt.Errorf("encode the last writer of claim %q: %w", claim.Name, err)
+	}
+	if claim.Annotations[lastWriterAnnotation] == string(value) {
+		return nil
+	}
+	marked := claim.DeepCopy()
+	if marked.Annotations == nil {
+		marked.Annotations = map[string]string{}
+	}
+	marked.Annotations[lastWriterAnnotation] = string(value)
+	if err := r.Patch(ctx, marked, client.MergeFrom(claim)); err != nil {
+		return fmt.Errorf("record the last writer of claim %q: %w", claim.Name, err)
+	}
+
+	return nil
 }
