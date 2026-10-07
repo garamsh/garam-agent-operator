@@ -363,6 +363,19 @@ type WriterStoppedEvidence struct {
 	// +listType=atomic
 	Containers []TerminatedContainer `json:"containers,omitempty"`
 
+	// neverCreated are the writing containers the kubelet reported with no
+	// container ever created, counted as stopped only on podPhase.
+	// +optional
+	// +listType=atomic
+	NeverCreated []string `json:"neverCreated,omitempty"`
+
+	// podPhase is the deleting Pod's terminal phase, set where neverCreated is.
+	// The kubelet writes a terminal phase only once it has found no container of
+	// the Pod running, which is what the containers in neverCreated are
+	// released on.
+	// +optional
+	PodPhase corev1.PodPhase `json:"podPhase,omitempty"`
+
 	// observedAt is when the controller read the evidence.
 	// +required
 	ObservedAt metav1.Time `json:"observedAt"`
