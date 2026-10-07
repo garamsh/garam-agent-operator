@@ -1,6 +1,6 @@
 # ADR 0058: Refuse the first certificate of an agent whose only creation the upgrade archived, and name its recovery
 
-> Status: accepted
+> Status: accepted; the recovery route's standing and the message's remedy superseded by ADR 0063
 > Date: 2026-10-07
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
