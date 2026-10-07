@@ -45,13 +45,15 @@ func stand(t *testing.T, contract string, status int, answer string) (*lifecycle
 
 func TestGaram_RecoverSendsTheBodyExactlyUnderTheHandoff(t *testing.T) {
 	g, got, _ := stand(t, garammachine.ExecutionFence, http.StatusCreated,
-		`{"grn":"`+agent+`","lineage":"lineage-2","certificatePem":"cert"}`)
+		`{"grn":"`+agent+`","lineage":"lineage-2","certificatePem":"cert","issuerPem":"issuer","serverRootPem":"root"}`)
 	// Not what encoding/json would write: the bytes, not their meaning, are what the handoff binds.
 	body := []byte(`{"epoch":"3", "requestId":"rec-1","certificateRequestPem":"csr"}`)
 
 	recovered, err := g.Recover(context.Background(), agent, "recover-handoff", body)
 	require.NoError(t, err)
-	assert.Equal(t, definition.RecoveredCredential{Lineage: "lineage-2", CertificatePEM: "cert"}, recovered)
+	assert.Equal(t, definition.RecoveredCredential{
+		Lineage: "lineage-2", CertificatePEM: "cert", IssuerPEM: "issuer", ServerRootPEM: "root",
+	}, recovered)
 	assert.Equal(t, seen{http.MethodPost, "/agents/" + agent + "/credential-recovery", garammachine.ExecutionFence,
 		"Garam-Operation recover-handoff", string(body)}, *got)
 }

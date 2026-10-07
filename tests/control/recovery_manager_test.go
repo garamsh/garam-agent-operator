@@ -29,6 +29,7 @@ type managerStore struct {
 	issuer              []byte
 	request             *desired.PendingRequest
 	key, certificatePEM []byte
+	written             desired.Certificate
 	lineage, refused    string
 }
 
@@ -73,10 +74,11 @@ func (m *managerStore) RefuseRecovery(_ context.Context, _, reason string) error
 	return nil
 }
 
-func (m *managerStore) PlaceRecovered(_ context.Context, _ string, key, certificatePEM []byte, lineage string) error {
+func (m *managerStore) PlaceRecovered(_ context.Context, _ string, key []byte, certificate desired.Certificate,
+	lineage string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.key, m.certificatePEM, m.lineage, m.request = key, certificatePEM, lineage, nil
+	m.key, m.certificatePEM, m.written, m.lineage, m.request = key, certificate.CertificatePEM, certificate, lineage, nil
 	return nil
 }
 
@@ -98,7 +100,7 @@ func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
 	status, raw, err := requestCertificate(grn, certificateRequestBody(name(t, "certificate"), epoch, csr))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, status, string(raw))
-	var first struct{ CertificatePem, IssuerPem string }
+	var first struct{ CertificatePem, IssuerPem, ServerRootPem string }
 	require.NoError(t, json.Unmarshal(raw, &first))
 	a := placedAgent{grn: grn, epoch: epoch, token: name(t, "placement-token"),
 		pair: tls.Certificate{Certificate: [][]byte{parsePEM(t, first.CertificatePem).Raw}, PrivateKey: key}}
@@ -170,6 +172,16 @@ func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
 	assert.Nil(t, request, "the request outlived the placed credential")
 	assert.NotEmpty(t, lineage)
 	assert.Equal(t, finalized["certificatePem"], string(certificatePEM))
+	// The chain written is the one garam answered the recovery with (garam@f54b9e8, ADR 0062), which
+	// for this organization's authority is the one its first certificate named.
+	store.mu.Lock()
+	written := store.written
+	store.mu.Unlock()
+	assert.Equal(t, finalized["issuerPem"], string(written.IssuerPEM), "the answered issuer is not what is written")
+	assert.Equal(t, finalized["serverRootPem"], string(written.ServerRootPEM),
+		"the answered server root is not what is written")
+	assert.Equal(t, first.IssuerPem, string(written.IssuerPEM))
+	assert.Equal(t, first.ServerRootPem, string(written.ServerRootPEM))
 	recovered, err := tls.X509KeyPair(certificatePEM, persisted.KeyPEM)
 	require.NoError(t, err, "the placed certificate is not over the persisted key")
 

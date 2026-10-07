@@ -28,15 +28,19 @@ const (
 )
 
 // Recovered is the control service's answer to a recovery's certificate
-// request: the recovery it is for, and garam's recovered credential, the
-// lineage and the certificate, once the recovery is finalized. CertificatePEM
-// is nil before that.
+// request: the recovery it is for, and garam's recovered credential once the
+// recovery is finalized: the lineage, the certificate, and the issuer and garam
+// server root it was signed under. CertificatePEM is nil before that, and
+// IssuerPEM and ServerRootPEM are nil where control answers none, which a
+// control before ADR 0062 does.
 type Recovered struct {
 	Agent          string
 	RequestID      string
 	Epoch          string
 	Lineage        string
 	CertificatePEM []byte
+	IssuerPEM      []byte
+	ServerRootPEM  []byte
 }
 
 // RecoveryStore holds what the recoverer persists and reads.
@@ -53,8 +57,8 @@ type RecoveryStore interface {
 	SaveRecovery(ctx context.Context, agent string, request PendingRequest) error
 
 	// KeptIssuer returns the issuer of agent's placed credential, which a
-	// recovered certificate is kept beside, and false where no credential is
-	// placed.
+	// recovered certificate answered with no chain is kept beside, and false
+	// where no credential is placed.
 	KeptIssuer(ctx context.Context, agent string) ([]byte, bool, error)
 
 	// RefuseRecovery records on agent's persisted recovery request why its
@@ -62,9 +66,12 @@ type RecoveryStore interface {
 	RefuseRecovery(ctx context.Context, agent, reason string) error
 
 	// PlaceRecovered writes the recovered certificate and the key it was signed
-	// over into agent's credential, keeping its issuer and server root, records
-	// the lineage on it, and then removes the persisted recovery request.
-	PlaceRecovered(ctx context.Context, agent string, keyPEM, certificatePEM []byte, lineage string) error
+	// over into agent's credential, with the issuer and server root of
+	// certificate where it names them and keeping the placed ones where it does
+	// not, records the lineage on it, and then removes the persisted recovery
+	// request. Where no credential is placed, it creates it whole, which needs
+	// the chain named.
+	PlaceRecovered(ctx context.Context, agent string, keyPEM []byte, certificate Certificate, lineage string) error
 }
 
 // Recoverer takes each managed agent's open credential recovery through this
@@ -226,13 +233,10 @@ func (r *Recoverer) recover(ctx context.Context, agent string, open *OpenRecover
 }
 
 // begin persists a new key and request for the open recovery, under its
-// request id and epoch, and returns it. It returns the zero request, and
-// persists nothing, for an agent with no credential placed: recovery replaces
-// a credential, and the first one is the issuer's to place.
+// request id and epoch, and returns it. An agent with no credential placed is
+// begun too: garam answers a recovered certificate with its chain, which is
+// what such an agent's credential is placed with (ADR 0062).
 func (r *Recoverer) begin(ctx context.Context, agent string, open OpenRecovery) (PendingRequest, error) {
-	if _, placed, err := r.store.KeptIssuer(ctx, agent); err != nil || !placed {
-		return PendingRequest{}, err
-	}
 	request, err := newPendingRequest(open.Epoch)
 	if err != nil {
 		return PendingRequest{}, err
@@ -253,23 +257,34 @@ func (r *Recoverer) begin(ctx context.Context, agent string, open OpenRecovery) 
 	return persisted, nil
 }
 
-// place verifies the recovered certificate against the issuer kept from the
-// first certificate and places it. One that does not verify is not placed:
+// place verifies the recovered certificate against the issuer it is to be
+// written beside, and places it. That is the issuer control answered with it
+// (ADR 0062), and the one kept from the agent's placed credential only where
+// control answered none (ADR 0059). One that does not verify is not placed:
 // the reason is recorded on the persisted request, which is kept.
 func (r *Recoverer) place(ctx context.Context, agent string, request PendingRequest, recovered Recovered, state *attempt) {
 	log := logf.FromContext(ctx).WithName("desired").WithValues("agent", agent)
-	issuer, placed, err := r.store.KeptIssuer(ctx, agent)
-	if err != nil {
-		log.Error(err, "Failed to read the kept issuer")
-		r.retryTransient(state)
-
-		return
+	certificate := Certificate{
+		Agent: agent, Epoch: recovered.Epoch, CertificatePEM: recovered.CertificatePEM,
+		IssuerPEM: recovered.IssuerPEM, ServerRootPEM: recovered.ServerRootPEM,
 	}
-	if !placed {
-		log.Error(errors.New("no credential is placed"), "Not placing a recovered certificate where no credential was")
-		state.next = time.Now().Add(r.refusedWait)
+	issuer := recovered.IssuerPEM
+	if len(recovered.IssuerPEM) == 0 || len(recovered.ServerRootPEM) == 0 {
+		kept, placed, err := r.store.KeptIssuer(ctx, agent)
+		if err != nil {
+			log.Error(err, "Failed to read the kept issuer")
+			r.retryTransient(state)
 
-		return
+			return
+		}
+		if !placed {
+			log.Error(errors.New("no chain is answered or placed"),
+				"Not placing a recovered certificate with no chain to place it beside")
+			state.next = time.Now().Add(r.refusedWait)
+
+			return
+		}
+		issuer, certificate.IssuerPEM, certificate.ServerRootPEM = kept, nil, nil
 	}
 	if err := VerifyRecovered(agent, request.KeyPEM, recovered.CertificatePEM, issuer); err != nil {
 		state.backoff, state.next = 0, time.Now().Add(r.refusedWait)
@@ -277,14 +292,14 @@ func (r *Recoverer) place(ctx context.Context, agent string, request PendingRequ
 			log.Error(err, "Failed to record why the recovered certificate was not placed")
 		}
 		if state.refusedAs != agentv1alpha1.ReasonRecoveredCertificateUnverified {
-			log.Error(err, "Not placing a recovered certificate that does not verify against the kept issuer",
+			log.Error(err, "Not placing a recovered certificate that does not verify against the issuer it would be placed beside",
 				"lineage", recovered.Lineage)
 			state.refusedAs = agentv1alpha1.ReasonRecoveredCertificateUnverified
 		}
 
 		return
 	}
-	if err := r.store.PlaceRecovered(ctx, agent, request.KeyPEM, recovered.CertificatePEM, recovered.Lineage); err != nil {
+	if err := r.store.PlaceRecovered(ctx, agent, request.KeyPEM, certificate, recovered.Lineage); err != nil {
 		log.Error(err, "Failed to place the recovered certificate")
 		r.retryTransient(state)
 

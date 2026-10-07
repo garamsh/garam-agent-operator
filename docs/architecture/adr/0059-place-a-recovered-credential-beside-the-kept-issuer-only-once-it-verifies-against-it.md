@@ -1,6 +1,6 @@
 # ADR 0059: Place a recovered credential beside the issuer kept from the first certificate, only once it verifies against it
 
-> Status: accepted
+> Status: accepted; the kept chain, outside an answer naming none, superseded by ADR 0062
 > Date: 2026-10-07
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

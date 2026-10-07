@@ -46,6 +46,8 @@ func (g *Garam) Recover(ctx context.Context, agent string, handoff console.Autho
 		GRN            string `json:"grn"`
 		Lineage        string `json:"lineage"`
 		CertificatePEM string `json:"certificatePem"`
+		IssuerPEM      string `json:"issuerPem"`
+		ServerRootPEM  string `json:"serverRootPem"`
 	}
 	if err := json.Unmarshal(answer.Body, &out); err != nil {
 		return definition.RecoveredCredential{}, fmt.Errorf("decode the recovery: %v", err)
@@ -54,7 +56,9 @@ func (g *Garam) Recover(ctx context.Context, agent string, handoff console.Autho
 		return definition.RecoveredCredential{}, fmt.Errorf("garam answered the recovery of %s for %q, lineage %q",
 			agent, out.GRN, out.Lineage)
 	}
-	return definition.RecoveredCredential{Lineage: out.Lineage, CertificatePEM: out.CertificatePEM}, nil
+	return definition.RecoveredCredential{
+		Lineage: out.Lineage, CertificatePEM: out.CertificatePEM, IssuerPEM: out.IssuerPEM, ServerRootPEM: out.ServerRootPEM,
+	}, nil
 }
 
 // Deactivate asks garam to end the activation, if it is still the current one.

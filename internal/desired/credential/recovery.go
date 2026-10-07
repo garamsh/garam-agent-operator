@@ -103,16 +103,41 @@ func (s *Secrets) RefuseRecovery(ctx context.Context, agent, reason string) erro
 	return nil
 }
 
-// PlaceRecovered implements desired.RecoveryStore. The patch names the
-// certificate, the key and the lineage only, so the issuer and the server root
-// placed with the first certificate are kept as they are.
-func (s *Secrets) PlaceRecovered(ctx context.Context, agent string, keyPEM, certificatePEM []byte, lineage string) error {
-	existing := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: agentname.CredentialsSecret(agent), Namespace: s.namespace}}
-	recovered := existing.DeepCopy()
-	recovered.Annotations = map[string]string{agentname.CredentialLineageAnnotation: lineage}
-	recovered.Data = map[string][]byte{garam.CertificateKey: certificatePEM, garam.KeyKey: keyPEM}
-	if err := s.client.Patch(ctx, recovered, client.MergeFrom(existing)); err != nil {
-		return fmt.Errorf("place the recovered credential of %s: %w", agent, err)
+// PlaceRecovered implements desired.RecoveryStore. On a placed credential the
+// patch names the certificate, the key, the lineage, and the issuer and server
+// root only where certificate names them, so a chain it does not name is kept as
+// it is. With no credential placed, the credential is created whole, chain
+// included.
+func (s *Secrets) PlaceRecovered(ctx context.Context, agent string, keyPEM []byte, certificate desired.Certificate,
+	lineage string) error {
+	data := map[string][]byte{garam.CertificateKey: certificate.CertificatePEM, garam.KeyKey: keyPEM}
+	if len(certificate.IssuerPEM) > 0 && len(certificate.ServerRootPEM) > 0 {
+		data[garam.IssuerKey], data[garam.ServerRootKey] = certificate.IssuerPEM, certificate.ServerRootPEM
+	}
+	placed, err := s.exists(ctx, agentname.CredentialsSecret(agent))
+	if err != nil {
+		return err
+	}
+	if placed {
+		existing := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: agentname.CredentialsSecret(agent), Namespace: s.namespace}}
+		recovered := existing.DeepCopy()
+		recovered.Annotations = map[string]string{agentname.CredentialLineageAnnotation: lineage}
+		recovered.Data = data
+		if err := s.client.Patch(ctx, recovered, client.MergeFrom(existing)); err != nil {
+			return fmt.Errorf("place the recovered credential of %s: %w", agent, err)
+		}
+	} else {
+		if len(data) != 4 {
+			return fmt.Errorf("place the recovered credential of %s: no credential is placed and no chain is answered", agent)
+		}
+		secret, err := s.ownedSecret(ctx, agent, agentname.CredentialsSecret(agent), data)
+		if err != nil {
+			return err
+		}
+		secret.Annotations = map[string]string{agentname.CredentialLineageAnnotation: lineage}
+		if err := s.client.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("place the recovered credential of %s: %w", agent, err)
+		}
 	}
 
 	return s.deleteSecret(ctx, agentname.RecoveryRequestSecret(agent))
