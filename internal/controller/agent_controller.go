@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
@@ -20,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/agentname"
 )
 
 // AgentReconciler reconciles a Agent object
@@ -131,6 +133,9 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 	setSuspendedFromPod(&agent, podGone)
+	if err := r.reconcileRecovery(ctx, &agent); err != nil {
+		return ctrl.Result{}, err
+	}
 	agent.Status.ObservedGeneration = agent.Generation
 
 	if err := r.writeStatus(ctx, &agent, held); err != nil {
@@ -329,6 +334,35 @@ func secretsRequiredBy(agent *agentv1alpha1.Agent) []requiredSecret {
 	return required
 }
 
+// reconcileRecovery reports whether this operator holds a recovery request for
+// the agent, and why its recovered certificate was refused where it was
+// (ADR 0059). The request Secret's metadata is all that is read: the
+// recoverer records a refusal there, and the condition is this controller's
+// alone to write.
+func (r *AgentReconciler) reconcileRecovery(ctx context.Context, agent *agentv1alpha1.Agent) error {
+	identity := agent.Spec.Identity
+	if identity == nil || identity.Source != agentv1alpha1.DesiredSourceControl {
+		// Only the control service recovers a credential: an agent on no other
+		// source carries the condition.
+		meta.RemoveStatusCondition(&agent.Status.Conditions, agentv1alpha1.ConditionRecovery)
+
+		return nil
+	}
+	persisted, refusedAs := false, ""
+	secret := &metav1.PartialObjectMetadata{}
+	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
+	err := r.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: agentname.RecoveryRequestSecret(identity.GRN)}, secret)
+	switch {
+	case err == nil:
+		persisted, refusedAs = true, secret.GetAnnotations()[agentname.RecoveryRefusedAnnotation]
+	case !apierrors.IsNotFound(err):
+		return fmt.Errorf("read the recovery request of the agent: %w", err)
+	}
+	setRecovery(agent, persisted, refusedAs)
+
+	return nil
+}
+
 // secretExists reads the metadata of a Secret an Agent names, and nothing else
 // of it. The agent reads its credentials as mounted files and its model's key
 // from its environment, so no part of this operator — its cache included —
@@ -377,6 +411,12 @@ func (r *AgentReconciler) agentsNamingSecret(ctx context.Context, secret client.
 
 	var requests []reconcile.Request
 	for i := range agents.Items {
+		if identity := agents.Items[i].Spec.Identity; identity != nil &&
+			agentname.RecoveryRequestSecret(identity.GRN) == secret.GetName() {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&agents.Items[i])})
+
+			continue
+		}
 		for _, required := range secretsRequiredBy(&agents.Items[i]) {
 			if required.name == secret.GetName() {
 				requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&agents.Items[i])})

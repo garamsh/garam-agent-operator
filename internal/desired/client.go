@@ -23,6 +23,7 @@ const (
 	routeStatus              = "status"
 	routeCertificateRequests = "certificate_requests"
 	routePlacements          = "placements"
+	routeRecoveryRequests    = "recovery_requests"
 )
 
 // requestMargin is how long past a long poll's wait a request may take before
@@ -60,6 +61,21 @@ type (
 		Configuration wireConfiguration `json:"configuration"`
 		Origin        string            `json:"origin"`
 		Stopped       bool              `json:"stopped"`
+		Recovery      *wireRecovery     `json:"recovery"`
+	}
+	wireRecovery struct {
+		RequestID string `json:"requestId"`
+		Epoch     string `json:"epoch"`
+	}
+	wireRecovered struct {
+		Agent             string `json:"agent"`
+		RecoveryRequestID string `json:"recoveryRequestId"`
+		Epoch             string `json:"epoch"`
+		Stage             string `json:"stage"`
+		Lineage           string `json:"lineage"`
+		CertificatePEM    string `json:"certificatePem"`
+		IssuerPEM         string `json:"issuerPem"`
+		ServerRootPEM     string `json:"serverRootPem"`
 	}
 	wireProfile struct {
 		Name             string                      `json:"name"`
@@ -165,8 +181,9 @@ func (c *Client) Desired(ctx context.Context, after string, wait time.Duration) 
 				},
 				Ego: agent.Configuration.Ego, Tools: agent.Configuration.Tools,
 			},
-			Origin:  agent.Origin,
-			Stopped: agent.Stopped,
+			Origin:   agent.Origin,
+			Stopped:  agent.Stopped,
+			Recovery: recoveryOf(agent.Recovery),
 		})
 	}
 
@@ -228,6 +245,54 @@ func (c *Client) RequestCertificate(ctx context.Context, agent, requestID, epoch
 	}, nil
 }
 
+// PrepareRecovery sends the certificate request persisted for agent's open
+// recovery (ADR 0057, ADR 0059). The control service answers 202 while the
+// recovery waits for its finalize, and 200 with the recovered credential once
+// garam answered it: Recovered is nil before that. A 4xx answer is a
+// *RefusalError.
+func (c *Client) PrepareRecovery(ctx context.Context, agent string, request PendingRequest) (Recovered, error) {
+	body, err := json.Marshal(wireCertificateRequest{
+		RequestID: request.ID, Epoch: request.Epoch, CertificateRequestPEM: string(request.CSRPEM),
+	})
+	if err != nil {
+		return Recovered{}, fmt.Errorf("render the recovery request of %s: %w", agent, err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, requestMargin)
+	defer cancel()
+	call, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"https://"+c.address+"/v1/operators/self/agents/"+url.PathEscape(agent)+"/recovery-requests",
+		bytes.NewReader(body))
+	if err != nil {
+		return Recovered{}, fmt.Errorf("build the recovery request of %s: %w", agent, err)
+	}
+	call.Header.Set("Content-Type", "application/json")
+
+	var answer wireRecovered
+	status, err := c.send(call, routeRecoveryRequests, &answer)
+	if err != nil {
+		return Recovered{}, err
+	}
+	recovered := Recovered{Agent: answer.Agent, RequestID: answer.RecoveryRequestID, Epoch: answer.Epoch}
+	if status == http.StatusOK {
+		recovered.Lineage, recovered.CertificatePEM = answer.Lineage, []byte(answer.CertificatePEM)
+		if answer.IssuerPEM != "" && answer.ServerRootPEM != "" {
+			recovered.IssuerPEM, recovered.ServerRootPEM = []byte(answer.IssuerPEM), []byte(answer.ServerRootPEM)
+		}
+	}
+
+	return recovered, nil
+}
+
+// recoveryOf is the open recovery an answer names, nil where it names none.
+func recoveryOf(r *wireRecovery) *OpenRecovery {
+	if r == nil {
+		return nil
+	}
+
+	return &OpenRecovery{RequestID: r.RequestID, Epoch: r.Epoch}
+}
+
 // RegisterPlacement registers a managed agent's placement with the control
 // service (#212, #218), and reports whether it was new: 201 registers it, and
 // 200 answers a repeat or a refresh under a renewed leaf, never a new
@@ -286,7 +351,8 @@ func (c *Client) send(request *http.Request, route string, answer any) (int, err
 
 		return response.StatusCode, refusal
 	}
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated &&
+		response.StatusCode != http.StatusAccepted {
 		return response.StatusCode, fmt.Errorf("the control service's %s route answered %d", route, response.StatusCode)
 	}
 	if answer == nil {

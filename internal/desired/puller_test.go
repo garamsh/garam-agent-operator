@@ -284,3 +284,55 @@ func TestPullerReportsNothingForARevisionItDidNotRender(t *testing.T) {
 	g.Eventually(feed.reported).Should(Equal([]string{agentB + ` {"observedRevision":"1","renderedRevision":"1"}`}))
 	g.Consistently(feed.reported, 200*time.Millisecond).Should(HaveLen(1))
 }
+
+// recoveryOffers records every set of open recoveries the puller offers.
+type recoveryOffers struct {
+	mu     sync.Mutex
+	offers []map[string]OpenRecovery
+}
+
+func (r *recoveryOffers) Offer(open map[string]OpenRecovery) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.offers = append(r.offers, open)
+}
+
+func (r *recoveryOffers) all() []map[string]OpenRecovery {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]map[string]OpenRecovery(nil), r.offers...)
+}
+
+func TestPullerOffersEachAnswersOpenRecoveriesWhole(t *testing.T) {
+	g := NewWithT(t)
+	offers := &recoveryOffers{}
+	open := feedReply{status: http.StatusOK, body: `{"cursor":"1","agents":[` +
+		`{"agent":"` + agentA + `","revision":"1","epoch":"7","recovery":{"requestId":"rec-1","epoch":"7"}},` +
+		`{"agent":"` + agentB + `","revision":"1","epoch":"7"}]}`}
+	feed := &feedDouble{script: []feedReply{open, answer("2", agentA+"@1", agentB+"@1")}, done: make(chan struct{})}
+	server := httptest.NewTLSServer(feed)
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	puller := NewPuller(NewClient(server.Listener.Addr().String(), &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}),
+		&recordingRenderer{})
+	puller.OfferRecoveriesTo(offers)
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		_ = puller.Start(ctx)
+		close(stopped)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		close(feed.done)
+		<-stopped
+		server.Close()
+	})
+
+	// The second answer names no recovery: the one the first named is no longer open.
+	g.Eventually(offers.all).Should(Equal([]map[string]OpenRecovery{
+		{agentA: {RequestID: "rec-1", Epoch: "7"}},
+		{},
+	}))
+}

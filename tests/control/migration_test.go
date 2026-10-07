@@ -30,7 +30,7 @@ const (
 // latestVersion is the newest migration the binary embeds, and organizationsVersion the migration
 // that reads the earlier rows' organizations.
 const (
-	latestVersion        = 3
+	latestVersion        = 4
 	organizationsVersion = 2
 )
 

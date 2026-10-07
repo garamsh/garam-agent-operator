@@ -40,6 +40,17 @@ type Agent struct {
 	// Stopped is true while the control service's stop holds the agent: its
 	// runtime is kept stopped, with no replacement (ADR 0057).
 	Stopped bool
+
+	// Recovery is the agent's open credential recovery, nil where none is open:
+	// this operator prepares its certificate request (ADR 0057, ADR 0059).
+	Recovery *OpenRecovery
+}
+
+// OpenRecovery is what an open recovery's certificate request is made under:
+// the recovery's request id on garam, and the epoch it was opened at.
+type OpenRecovery struct {
+	RequestID string
+	Epoch     string
 }
 
 // OriginCutover is the origin of an agent garam recorded as switched from the

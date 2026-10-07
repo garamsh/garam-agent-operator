@@ -49,6 +49,8 @@ type recoveryAnswer struct {
 	BodySHA256        *string `json:"bodySha256"`
 	Lineage           *string `json:"lineage,omitempty"`
 	CertificatePEM    *string `json:"certificatePem,omitempty"`
+	IssuerPEM         string  `json:"issuerPem,omitempty"`
+	ServerRootPEM     string  `json:"serverRootPem,omitempty"`
 }
 
 func recoveryAnswerOf(r definition.Recovery) recoveryAnswer {
@@ -63,6 +65,7 @@ func recoveryAnswerOf(r definition.Recovery) recoveryAnswer {
 	}
 	if r.Recovered != nil {
 		a.Lineage, a.CertificatePEM = &r.Recovered.Lineage, &r.Recovered.CertificatePEM
+		a.IssuerPEM, a.ServerRootPEM = r.Recovered.IssuerPEM, r.Recovered.ServerRootPEM
 	}
 	return a
 }

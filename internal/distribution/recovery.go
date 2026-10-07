@@ -20,6 +20,10 @@ type recoveryResponse struct {
 	Stage             string `json:"stage"`
 	Lineage           string `json:"lineage,omitempty"`
 	CertificatePEM    string `json:"certificatePem,omitempty"`
+	// IssuerPEM and ServerRootPEM are the chain garam answered the recovery with, absent for one a
+	// garam before f54b9e8 answered (ADR 0062).
+	IssuerPEM     string `json:"issuerPem,omitempty"`
+	ServerRootPEM string `json:"serverRootPem,omitempty"`
 }
 
 // prepareRecovery stores the certificate request a controller made for the agent's open recovery
@@ -62,6 +66,7 @@ func (s *server) prepareRecovery(w http.ResponseWriter, r *http.Request) {
 	if stored.Recovered != nil {
 		status = http.StatusOK
 		answer.Lineage, answer.CertificatePEM = stored.Recovered.Lineage, stored.Recovered.CertificatePEM
+		answer.IssuerPEM, answer.ServerRootPEM = stored.Recovered.IssuerPEM, stored.Recovered.ServerRootPEM
 	}
 	writeJSON(w, status, answer)
 }

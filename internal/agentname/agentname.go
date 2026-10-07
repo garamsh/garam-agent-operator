@@ -14,6 +14,7 @@ import (
 const (
 	credentialsSecretSuffix       = "-credentials"
 	credentialRequestSecretSuffix = "-credential-request"
+	recoveryRequestSecretSuffix   = "-recovery-request"
 )
 
 // Agent is what the Agent built for a GRN is called. It is the digest of the
@@ -37,6 +38,29 @@ func CredentialsSecret(grn string) string {
 func CredentialRequestSecret(grn string) string {
 	return Agent(grn) + credentialRequestSecretSuffix
 }
+
+// RecoveryRequestSecret is what the Secret persisting a managed agent's recovery
+// certificate request is called, until the recovered credential is placed
+// (ADR 0059).
+func RecoveryRequestSecret(grn string) string {
+	return Agent(grn) + recoveryRequestSecretSuffix
+}
+
+// The names the recoverer writes onto an agent's Secrets and the workload's
+// controller reads off them (ADR 0059). Both are the manager's, in different
+// domains, so the names sit below both.
+const (
+	// CredentialLineageAnnotation records on an agent's credential Secret the
+	// lineage garam recovered it under. It is absent on a first credential, and
+	// the workload's Pod template carries it, so a recovered credential moves
+	// the Pod and one never recovered moves nothing.
+	CredentialLineageAnnotation = "agent.garam.sh/credential-lineage"
+
+	// RecoveryRefusedAnnotation records on an agent's recovery request Secret
+	// why the recovered certificate was not placed. Its value is a condition
+	// reason.
+	RecoveryRefusedAnnotation = "agent.garam.sh/recovery-refused"
+)
 
 // The names the workload's controller writes onto an agent's objects and the
 // placement registrar reads off them. Both are the manager's, in different
