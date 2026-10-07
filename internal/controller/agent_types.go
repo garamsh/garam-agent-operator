@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"time"
 
 	"sigs.k8s.io/yaml"
 
@@ -94,6 +95,12 @@ type agentTypeDescriptor struct {
 
 	// execUserVariable names the uid the workspace runs exec children under.
 	execUserVariable string
+
+	// terminationGrace is how long the Pod's containers are given between
+	// SIGTERM and the kubelet's SIGKILL: what the agent's drain needs to finish
+	// the turn in flight, commit it and close its store, so that the writer
+	// fence reads a clean exit (ADR 0042, ADR 0064).
+	terminationGrace time.Duration
 }
 
 // agentTypeSherlock is the descriptor for type=sherlock (and the unset default).
@@ -184,7 +191,35 @@ var agentTypeSherlock = agentTypeDescriptor{
 	// isolated exec otherwise
 	// (sherlock@9b0e399:internal/workspace/shell/process_linux.go:131).
 	execUserVariable: "SHERLOCK_EXEC_UID",
+
+	terminationGrace: sherlockTerminationGrace,
 }
+
+// sherlockTerminationGrace is one full step of a turn, which sherlock's drain
+// lets finish before it closes its store (ADR 0064). Its first three terms are
+// sherlock's defaults, which bind only while this operator renders neither a
+// model timeout nor an exec ceiling.
+const (
+	// sherlock's model.timeout, per chat request
+	// (sherlock@b3c05c2:internal/config/config.go:43).
+	sherlockModelTimeout = 60 * time.Second
+
+	// sherlock's workspace exec-timeout, per command
+	// (sherlock@b3c05c2:internal/config/workspace.go:22).
+	sherlockExecTimeout = 30 * time.Second
+
+	// What shell_exec allows the workspace beyond the command's own bound
+	// (sherlock@b3c05c2:tools/shell_exec/shell_exec.go:35-39).
+	sherlockToolDispatchMargin = 5 * time.Second
+
+	// The commit and the store's close, measured under a second, and the
+	// adapter sidecar's teardown, which the kubelet starts once the agent and
+	// its workspace have exited, inside the same grace period.
+	sherlockCloseMargin = 5 * time.Second
+
+	sherlockTerminationGrace = sherlockModelTimeout + sherlockExecTimeout +
+		sherlockToolDispatchMargin + sherlockCloseMargin
+)
 
 // agentArguments is what the Pod builder passes the agent on its command line.
 // An empty field is not passed.

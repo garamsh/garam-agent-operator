@@ -1,6 +1,6 @@
 # ADR 0042: Fence each agent Pod on positive evidence that its writers stopped, and mint an adapter-only placement token per placement
 
-> Status: accepted; "never started" extended to writers the kubelet never created in a Pod it made terminal by ADR-0061
+> Status: accepted; "never started" extended to writers the kubelet never created in a Pod it made terminal by ADR-0061; the grace period it left unset stated by ADR-0064
 > Date: 2026-10-05
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

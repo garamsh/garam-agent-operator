@@ -1501,3 +1501,53 @@ func toolTreeIn(pod corev1.PodSpec) []string {
 
 	return found
 }
+
+var _ = Describe("Agent termination grace", func() {
+	It("gives every Pod 100 seconds from SIGTERM, one full step of sherlock's drain", func() {
+		name := "grace-on-the-template"
+		createSecret(credentialsSecretName(name))
+		createAgent(newAgent(name))
+
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(statefulSetFor(name).Spec.Template.Spec.TerminationGracePeriodSeconds).
+			To(HaveValue(Equal(int64(100))))
+	})
+
+	// The grace period is derived from sherlock's defaults for a model request's
+	// timeout and a workspace command's ceiling. They bind only while this
+	// operator renders neither, so a workload that starts rendering one fails
+	// here, and the grace period has to follow it (ADR 0064).
+	It("renders neither the model timeout nor the exec ceiling the grace period is derived from", func() {
+		name := "grace-defaults"
+		createSecret(credentialsSecretName(name))
+		createSecret(modelKeySecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Model = newModel(name)
+		createAgent(agent)
+
+		_, err := reconcileAgentWithWorkspace(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		pod := statefulSetFor(name).Spec.Template.Spec
+		written := map[string]any{}
+		Expect(yaml.Unmarshal([]byte(environmentOf(initContainerOf(pod, configContainerName))[configContentVariable]),
+			&written)).To(Succeed())
+		By("the control: the model section is written, so its keys are read")
+		Expect(written).To(HaveKeyWithValue("model", HaveKey("provider")))
+		Expect(written["model"]).NotTo(HaveKey("timeout"))
+
+		for _, container := range []corev1.Container{
+			containerOf(pod, agentContainerName),
+			containerOf(pod, workspaceContainerName),
+		} {
+			By("the control: the " + container.Name + " container is given sherlock's settings, so its names are read")
+			Expect(environmentOf(container)).To(HaveKey(HavePrefix("SHERLOCK_")))
+			Expect(environmentOf(container)).NotTo(HaveKey(HaveSuffix("TIMEOUT")), container.Name)
+			for _, arg := range slices.Concat(container.Command, container.Args) {
+				Expect(arg).NotTo(ContainSubstring("timeout"), container.Name)
+			}
+		}
+	})
+})
