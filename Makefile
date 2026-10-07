@@ -106,7 +106,7 @@ setup-test-e2e: kind ## Set up a Kind cluster for e2e tests if it does not exist
 .PHONY: test-e2e-control
 test-e2e-control: garam-e2e ## Run the control service's e2e tests: the built binary against PostgreSQL and garam at GARAM_REVISION.
 	@echo "test-e2e-control: garam at $(GARAM_REVISION), from $$(cat "$(GARAM_DIR)/provenance")"
-	GARAM_BIN_DIR="$(GARAM_DIR)" GARAM_MIGRATIONS_DIR="$(GARAM_DIR)/migrations" \
+	GARAM_BIN_DIR="$(GARAM_DIR)" GARAM_MIGRATIONS_DIR="$(GARAM_DIR)/_migrations" \
 		go test -tags=e2e ./tests/control/ -v -count=1
 
 # How long `go test` may run the Kind suite, every phase included. Without it
@@ -437,12 +437,13 @@ $(LOCALBIN):
 # The garam the control e2e suite runs against, at GARAM_REVISION, in a
 # directory named for it: `garam`, the test-principal fixture that prepares its
 # database (tests/testprincipal/README.md §Invocation at that commit), and its
-# `migrations/`. They are copied out of garam's private test image in ECR, in
-# account 486152169996, pinned by digest, and never run from it (#271). The
-# image carries the commit it was built from as its
-# org.opencontainers.image.revision label, and garam-e2e refuses an image whose
-# label is not GARAM_REVISION. Reading it needs an ECR login that can pull from
-# that repository: CI's, through the role test-e2e.yml assumes, or a local
+# migrations, as `_migrations/`: the leading underscore keeps the go tool's
+# `./...` out of garam's migration tests there. They are copied out of garam's
+# private test image in ECR, in account 486152169996, pinned by digest, and
+# never run from it (#271). The image carries the commit it was built from as
+# its org.opencontainers.image.revision label, and garam-e2e refuses an image
+# whose label is not GARAM_REVISION. Reading it needs an ECR login that can pull
+# from that repository: CI's, through the role test-e2e.yml assumes, or a local
 # `aws ecr get-login-password | docker login`.
 #
 # GARAM_TEST_REPOSITORY and GARAM_TEST_IMAGE_DIGEST stay empty until garam
@@ -478,14 +479,14 @@ $(GARAM_DIR)/garam:
 	rm -rf "$(GARAM_DIR)" "$(GARAM_DIR).partial" && mkdir -p "$(GARAM_DIR).partial"; \
 	container=$$($(CONTAINER_TOOL) create "$$ref" /garam) || exit 1; \
 	status=0; \
-	for path in /garam /testprincipal /migrations; do \
-		$(CONTAINER_TOOL) cp "$$container:$$path" "$(GARAM_DIR).partial$$path" || status=1; \
+	for pair in /garam:garam /testprincipal:testprincipal /migrations:_migrations; do \
+		$(CONTAINER_TOOL) cp "$$container:$${pair%%:*}" "$(GARAM_DIR).partial/$${pair#*:}" || status=1; \
 	done; \
 	$(CONTAINER_TOOL) rm "$$container" >/dev/null; \
 	[ "$$status" -eq 0 ] || { echo "garam-e2e: could not copy garam's files out of $$ref" >&2; exit 1; }; \
 	echo "image $$ref" > "$(GARAM_DIR).partial/provenance"; \
 	mv "$(GARAM_DIR).partial" "$(GARAM_DIR)"; \
-	echo "garam-e2e: garam, testprincipal and migrations/ at $(GARAM_REVISION), from $$ref"
+	echo "garam-e2e: garam, testprincipal and _migrations/ at $(GARAM_REVISION), from $$ref"
 
 # The fallback for when garam's test image cannot be pulled: the same files built
 # from garamsh/garam's source at GARAM_REVISION, which needs git credentials that
@@ -499,7 +500,7 @@ garam-e2e-from-source: ## Build garam, its test-principal fixture and its migrat
 	git -C "$(GARAM_DIR).partial/src" fetch --quiet --depth 1 "$(GARAM_REPOSITORY)" $(GARAM_REVISION)
 	git -C "$(GARAM_DIR).partial/src" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
 	cd "$(GARAM_DIR).partial/src" && go build -o ../testprincipal ./tests/testprincipal && go build -o ../garam ./cmd/garam
-	cp -R "$(GARAM_DIR).partial/src/migrations" "$(GARAM_DIR).partial/migrations"
+	cp -R "$(GARAM_DIR).partial/src/migrations" "$(GARAM_DIR).partial/_migrations"
 	echo "source $(GARAM_REPOSITORY)@$(GARAM_REVISION)" > "$(GARAM_DIR).partial/provenance"
 	mv "$(GARAM_DIR).partial" "$(GARAM_DIR)"
 
