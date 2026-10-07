@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -90,7 +91,8 @@ type AgentReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
-// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;create;patch
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get
 
 // Reconcile drives the workload an Agent describes toward the Agent's spec, and
@@ -129,7 +131,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcileWorkload(ctx, &agent); err != nil {
+	if err := r.reconcileWorkload(ctx, &agent, podGone); err != nil {
 		return ctrl.Result{}, err
 	}
 	setSuspendedFromPod(&agent, podGone)
@@ -205,7 +207,7 @@ func fenceResult(unverified bool) ctrl.Result {
 // The workload's readiness is read off the StatefulSet this reconcile already
 // holds, so it costs no second read and is reported on a spec this controller
 // cannot act on as readily as on one it can.
-func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1alpha1.Agent) error {
+func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1alpha1.Agent, podGone bool) error {
 	descriptor, ok := resolveAgentType(agent.Spec.Type)
 	if !ok {
 		// The kubebuilder validation refused an unknown type at admission, so
@@ -255,7 +257,23 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		}
 	}
 
-	statefulSet, err := r.reconcileStatefulSet(ctx, agent, descriptor)
+	// The claim the memory is on, and any move of it, decide the workload's
+	// state volume and whether it may run (ADR 0065).
+	plan, err := r.reconcileMove(ctx, agent, podGone, descriptor)
+	if err != nil {
+		return err
+	}
+
+	statefulSet, err := r.reconcileStatefulSet(ctx, agent, descriptor, plan)
+	if errors.Is(err, errReplacingForMove) {
+		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonWorkloadReplacing,
+			fmt.Sprintf("StatefulSet %q is being replaced to mount claim %q, which the agent's memory moved to; its claims are kept",
+				agent.Name, plan.claim))
+		setAvailable(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonWorkloadNotObserved,
+			"The workload was not reconciled, so its readiness was not observed. The Synced condition says why")
+
+		return nil
+	}
 	if errors.Is(err, errReplacing) {
 		// The old StatefulSet's deletion is an event on a StatefulSet this Agent
 		// owns, so it brings this Agent back to create the next one.
@@ -273,7 +291,10 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 	}
 
 	workspaceSize := workspaceStorageSize(agent)
-	if claimed := claimedStorageSize(statefulSet, stateVolumeName); claimed.Cmp(agent.Spec.StorageSize) != 0 {
+	// A claim a move put the memory on is sized and classed by the move, so the
+	// spec's state storage describes only a claim the template still makes.
+	stateTemplated := claimTemplate(statefulSet, stateVolumeName) != nil
+	if claimed := claimedStorageSize(statefulSet, stateVolumeName); stateTemplated && claimed.Cmp(agent.Spec.StorageSize) != 0 {
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageSizeImmutable,
 			fmt.Sprintf("The volume was claimed at %s and spec.storageSize now asks for %s, which a StatefulSet's claim template cannot be changed to",
 				claimed.String(), agent.Spec.StorageSize.String()))
@@ -282,7 +303,7 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageSizeImmutable,
 			fmt.Sprintf("The workspace's volume was claimed at %s and the spec now asks for %s, which a StatefulSet's claim template cannot be changed to",
 				claimed.String(), workspaceSize.String()))
-	} else if claimedClass := claimedStorageClass(statefulSet); !ptr.Equal(claimedClass, agent.Spec.StorageClassName) {
+	} else if claimedClass := claimedStorageClass(statefulSet); stateTemplated && !ptr.Equal(claimedClass, agent.Spec.StorageClassName) {
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageClassImmutable,
 			fmt.Sprintf("The volume was claimed from storage class %s and spec.storageClassName now asks for %s, which a StatefulSet's claim template cannot be changed to",
 				describeStorageClass(claimedClass), describeStorageClass(agent.Spec.StorageClassName)))
@@ -379,6 +400,7 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentv1alpha1.Agent{}).
 		Owns(&appsv1.StatefulSet{}).
+		Owns(&batchv1.Job{}).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.agentsNamingSecret), builder.OnlyMetadata).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(agentOfPod)).
 		Named("agent").

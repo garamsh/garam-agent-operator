@@ -304,10 +304,14 @@ func seedWorkspaceCommand(from, to, marker string) []string {
 // to reconcile until the old one is gone.
 var errReplacing = errors.New("the statefulset is being replaced")
 
+// errReplacingForMove reports that the StatefulSet is being replaced because
+// the agent's memory moved off the claim its template makes (ADR 0065).
+var errReplacingForMove = errors.New("the statefulset is being replaced for a memory move")
+
 // replicasFor is the number of replicas the Agent's workload runs: one, or none
 // while it is suspended or stopped.
-func replicasFor(agent *agentv1alpha1.Agent) int32 {
-	if heldStopped(agent) {
+func replicasFor(agent *agentv1alpha1.Agent, plan statePlan) int32 {
+	if heldStopped(agent) || plan.hold {
 		return 0
 	}
 
@@ -326,13 +330,16 @@ func heldStopped(agent *agentv1alpha1.Agent) bool {
 // the cluster now holds it. A StatefulSet whose workspace shares the state claim
 // is replaced first, which returns errReplacing until the old one is gone.
 func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agentv1alpha1.Agent,
-	descriptor agentTypeDescriptor) (*appsv1.StatefulSet, error) {
+	descriptor agentTypeDescriptor, plan statePlan) (*appsv1.StatefulSet, error) {
 	statefulSet := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: agent.Namespace},
 	}
 
 	seed, err := r.replaceSharedShape(ctx, agent, statefulSet)
 	if err != nil {
+		return nil, err
+	}
+	if plan, err = r.replaceStateTemplate(ctx, agent, statefulSet, plan); err != nil {
 		return nil, err
 	}
 
@@ -347,7 +354,7 @@ func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agent
 		}
 		applyLineage(statefulSet, lineage)
 
-		return r.applyAgent(agent, statefulSet, descriptor)
+		return r.applyAgent(agent, statefulSet, descriptor, plan)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create or update statefulset: %w", err)
@@ -455,6 +462,42 @@ func (r *AgentReconciler) replaceSharedShape(ctx context.Context, agent *agentv1
 	return stateClaimed && !workspaceClaimed, nil
 }
 
+// replaceStateTemplate deletes a StatefulSet whose own claim template still
+// makes the state claim, once the agent's memory is on a claim it mounts by
+// name: a claim template cannot be removed from a StatefulSet. Only a move
+// names such a claim, and only with no Pod left, so the deletion orphans
+// nothing that runs; its claims are kept either way. A StatefulSet that already
+// lost the template mounts even its own claim by name, which is where a refused
+// move puts the memory back.
+func (r *AgentReconciler) replaceStateTemplate(ctx context.Context, agent *agentv1alpha1.Agent,
+	statefulSet *appsv1.StatefulSet, plan statePlan) (statePlan, error) {
+	existing := &appsv1.StatefulSet{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(statefulSet), existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			return plan, nil
+		}
+
+		return plan, fmt.Errorf("get statefulset: %w", err)
+	}
+	templated := claimTemplate(existing, stateVolumeName) != nil
+	if plan.claim == "" && !templated {
+		plan.claim = stateClaimName(agent)
+	}
+	if plan.claim == "" || !templated {
+		return plan, nil
+	}
+
+	uid := existing.UID
+	if err := r.Delete(ctx, existing, client.PropagationPolicy(metav1.DeletePropagationOrphan),
+		client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
+		return plan, fmt.Errorf("delete the statefulset whose template makes the claim the memory moved off: %w", err)
+	}
+	logf.FromContext(ctx).Info("Replacing the StatefulSet to mount the claim the agent's memory moved to",
+		"statefulSet", existing.Name, "claim", plan.claim)
+
+	return plan, errReplacingForMove
+}
+
 // claimExists reports whether the claim the StatefulSet makes from the template
 // called template exists for the Agent's Pod. It reads uncached, as the fence
 // reads claims.
@@ -543,22 +586,27 @@ func describeStorageClass(class *string) string {
 // reaches the workload. Every path and variable name that belongs to the agent
 // binary is read off descriptor.
 func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
-	descriptor agentTypeDescriptor) error {
+	descriptor agentTypeDescriptor, plan statePlan) error {
 	if statefulSet.CreationTimestamp.IsZero() {
 		labels := workloadLabels(agent)
 		statefulSet.Labels = labels
 		statefulSet.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		statefulSet.Spec.Template.Labels = labels
 		statefulSet.Spec.VolumeClaimTemplates = []corev1.PersistentVolumeClaim{
-			claim(stateVolumeName, agent.Spec.StorageSize, agent),
 			claim(workspaceVolumeName, workspaceStorageSize(agent), agent),
+		}
+		// A claim a move put the memory on is mounted by name instead (ADR 0065).
+		if plan.claim == "" {
+			statefulSet.Spec.VolumeClaimTemplates = append([]corev1.PersistentVolumeClaim{
+				claim(stateVolumeName, agent.Spec.StorageSize, agent),
+			}, statefulSet.Spec.VolumeClaimTemplates...)
 		}
 	}
 
 	// The agent's state is a single-writer store, so a second replica is never
 	// correct. A suspended agent has none, and its Pod is released by its writer
 	// fence (ADR 0046).
-	statefulSet.Spec.Replicas = ptr.To(replicasFor(agent))
+	statefulSet.Spec.Replicas = ptr.To(replicasFor(agent, plan))
 
 	// Every Pod the StatefulSet creates carries the writer fence, so a deleted
 	// one is held until its writers are seen to stop (ADR 0042).
@@ -601,6 +649,10 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 			},
 		},
 	}}
+	if plan.claim != "" {
+		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes,
+			claimVolume(stateVolumeName, plan.claim, false))
+	}
 
 	// The placement token reaches the adapter by the credential's route: the
 	// same init container copies it out of its Secret into a memory volume the
@@ -664,7 +716,9 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	// Written on every pass, so that an operator that stops naming an image
 	// stops pointing the agent at what the Pod no longer carries.
 	container.Env = []corev1.EnvVar{{Name: descriptor.memoryPathVariable, Value: descriptor.memoryPath()}}
-	container.Args = descriptor.renderArgs(r.agentArgumentsFor(agent, descriptor))
+	args := r.agentArgumentsFor(agent, descriptor)
+	args.requireStore = plan.requireStore
+	container.Args = descriptor.renderArgs(args)
 
 	// The key reaches the agent's container and no other, from the Secret the
 	// spec names. sherlock reads a key from a variable only

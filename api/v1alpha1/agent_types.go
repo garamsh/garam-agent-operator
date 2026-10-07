@@ -72,6 +72,16 @@ type AgentSpec struct {
 	// +optional
 	Suspended bool `json:"suspended,omitempty"`
 
+	// memoryMove moves the agent's memory to a new volume through a verified
+	// copy: the agent is stopped, its memory is copied once its writer is seen
+	// to have stopped cleanly, the copy is verified against the source, and the
+	// agent starts again on the copy, which it must accept before it serves.
+	// The source volume is never written or deleted. It is a person's to set:
+	// this operator never writes it. Clearing it after the move changes
+	// nothing, and a new id moves the memory again from where it is then.
+	// +optional
+	MemoryMove *MemoryMoveSpec `json:"memoryMove,omitempty"`
+
 	// stopped is the control service's stop of the agent without a
 	// replacement: its workload is scaled to no replica as for suspended, and
 	// its Pod is released only once its writers are seen to stop. It is
@@ -178,6 +188,31 @@ const (
 	// DesiredSourceControl is the control service's desired feed.
 	DesiredSourceControl DesiredSource = "Control"
 )
+
+// MemoryMoveSpec names one move of an agent's memory and the volume it moves
+// to. A move is settled by its id, so its target is fixed once it is set.
+// +kubebuilder:validation:XValidation:rule="self.id != oldSelf.id || self == oldSelf",message="a memory move's target cannot change under the same id; name a new id"
+type MemoryMoveSpec struct {
+	// id names this move. The volume the memory moves to is the claim
+	// <agent>-state-<id>, and an id whose move was refused is never used
+	// again.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=40
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	ID string `json:"id"`
+
+	// storageClassName is the StorageClass the new volume is provisioned from.
+	// Unset means the cluster's default StorageClass.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	StorageClassName *string `json:"storageClassName,omitempty"`
+
+	// storageSize is the size of the new volume.
+	// +required
+	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="storageSize must be greater than zero"
+	StorageSize resource.Quantity `json:"storageSize"`
+}
 
 // ModelSpec is the chat model an Agent answers with. Every field is required,
 // because a field left out would fall back to the agent's own default for it —
@@ -563,6 +598,64 @@ const (
 	ReasonSharedClaim = "SharedClaim"
 )
 
+// ConditionMemoryMove is the condition type reporting where a move of the
+// agent's memory stands (ADR 0065). It is True only once the agent accepted the
+// copy; every step before, and every refusal, is False with its reason.
+const ConditionMemoryMove = "MemoryMove"
+
+// Reasons for the MemoryMove condition.
+const (
+	// ReasonNoMove is set while the spec asks for no move.
+	ReasonNoMove = "NoMove"
+
+	// ReasonMoveStopping is set while the agent's Pod is stopped for the move.
+	ReasonMoveStopping = "Stopping"
+
+	// ReasonMoveCopying is set while the memory is copied to the new volume.
+	ReasonMoveCopying = "Copying"
+
+	// ReasonMoveVerifying is set while the copy is compared with its source.
+	ReasonMoveVerifying = "Verifying"
+
+	// ReasonMoveStarting is set once the agent's workload names the new volume,
+	// until the agent accepts the copy.
+	ReasonMoveStarting = "Starting"
+
+	// ReasonMoveAccepted is set once the agent started on the copy and served.
+	ReasonMoveAccepted = "Accepted"
+
+	// ReasonCopyImageUnset refuses a move where this operator names no image
+	// to copy with.
+	ReasonCopyImageUnset = "CopyImageUnset"
+
+	// ReasonMoveSharedClaim refuses a move of an agent whose workspace shares
+	// its state claim (ADR 0047).
+	ReasonMoveSharedClaim = "SharedClaim"
+
+	// ReasonWriterNotDrained refuses a move whose source's last writer was not
+	// seen to exit 0 after its drain.
+	ReasonWriterNotDrained = "WriterNotDrained"
+
+	// ReasonTargetForeign refuses a move whose target claim exists and is not
+	// one this move created.
+	ReasonTargetForeign = "TargetForeign"
+
+	// ReasonSourceChanged refuses a move whose source is not the claim, or not
+	// the state, it was copied from.
+	ReasonSourceChanged = "SourceChanged"
+
+	// ReasonCopyFailed refuses a move whose copy did not complete.
+	ReasonCopyFailed = "CopyFailed"
+
+	// ReasonVerificationFailed refuses a move whose copy does not match its
+	// source.
+	ReasonVerificationFailed = "VerificationFailed"
+
+	// ReasonAgentRefusedStore refuses a move whose agent exited before it
+	// served on the copy.
+	ReasonAgentRefusedStore = "AgentRefusedStore"
+)
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 52",message="metadata.name must be 52 characters or fewer, because the Pods of this Agent's workload carry the name with a suffix of up to 11 characters in a label, and a label value stops at 63"
@@ -571,6 +664,7 @@ const (
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
 // +kubebuilder:printcolumn:name="Isolated",type=string,JSONPath=`.status.conditions[?(@.type=="StateIsolated")].status`
 // +kubebuilder:printcolumn:name="Suspended",type=string,JSONPath=`.status.conditions[?(@.type=="Suspended")].status`
+// +kubebuilder:printcolumn:name="Moved",type=string,JSONPath=`.status.conditions[?(@.type=="MemoryMove")].reason`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Agent is the Schema for the agents API

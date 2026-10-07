@@ -236,6 +236,10 @@ type agentArguments struct {
 
 	// assignmentEpoch is the assignment epoch the agent is told it runs at.
 	assignmentEpoch string
+
+	// requireStore tells the agent to refuse a memory store it cannot open
+	// rather than create one, which is how it accepts a moved copy (ADR 0065).
+	requireStore bool
 }
 
 // sherlock's subcommand and the flags renderSherlockArgs passes it.
@@ -245,6 +249,7 @@ const (
 	sherlockEgoFileFlag         = "--ego-file"
 	sherlockInstructionsFlag    = "--instructions-file"
 	sherlockAssignmentEpochFlag = "--assignment-epoch"
+	sherlockRequireStoreFlag    = "--require-store"
 )
 
 // renderSherlockArgs is sherlock's command line for args.
@@ -267,6 +272,11 @@ func renderSherlockArgs(args agentArguments) []string {
 	}
 	if args.assignmentEpoch != "" {
 		rendered = append(rendered, sherlockAssignmentEpochFlag, args.assignmentEpoch)
+	}
+	// Read off the flag alone, from v0.2.0
+	// (sherlock@b3c05c2:internal/config/config.go:85-90,186-191).
+	if args.requireStore {
+		rendered = append(rendered, sherlockRequireStoreFlag)
 	}
 
 	return rendered
