@@ -437,23 +437,26 @@ $(LOCALBIN):
 # The garam the control e2e suite runs against, at GARAM_REVISION, in a
 # directory named for it: `garam`, the test-principal fixture that prepares its
 # database (tests/testprincipal/README.md §Invocation at that commit), and its
-# `migrations/`. They are copied out of garam's private test image,
-# ghcr.io/garamsh/garam-test, pinned by digest, and never run from it (#271).
-# The image carries the commit it was built from as its
+# `migrations/`. They are copied out of garam's private test image in ECR, in
+# account 486152169996, pinned by digest, and never run from it (#271). The
+# image carries the commit it was built from as its
 # org.opencontainers.image.revision label, and garam-e2e refuses an image whose
-# label is not GARAM_REVISION. Reading it needs a ghcr.io login that can read the
-# package: CI's GITHUB_TOKEN with packages: read, or a token with read:packages.
+# label is not GARAM_REVISION. Reading it needs an ECR login that can pull from
+# that repository: CI's, through the role test-e2e.yml assumes, or a local
+# `aws ecr get-login-password | docker login`.
 #
-# Pinning (#271): GARAM_REVISION and GARAM_TEST_IMAGE_DIGEST move together, in one
-# pull request, by hand; no Dependabot ecosystem reads a Makefile variable. That
-# pull request asks garam's PM to move the `pinned-garam-agent-operator` tag to
-# the new commit (garamsh/garam#1213), writes here the digest they confirm, and
-# is merged only once that digest is confirmed. garam keeps its 8 newest `dev`
-# versions and the pinned one, so only the current pin is sure to stay
-# pullable.
-GARAM_REVISION ?= 7d67c8827abe7de771845b55baa7ee3dbac6e2b6
-GARAM_TEST_IMAGE ?= ghcr.io/garamsh/garam-test
-GARAM_TEST_IMAGE_DIGEST ?= sha256:70072268853060cc82ce412075b6b704ae5a95200f620cf0c3842d0f9e0e68b9
+# GARAM_TEST_REPOSITORY and GARAM_TEST_IMAGE_DIGEST stay empty until garam
+# publishes the image to ECR, and garam-e2e refuses to run while either is.
+#
+# Pinning (#271): GARAM_REVISION, GARAM_TEST_REPOSITORY and
+# GARAM_TEST_IMAGE_DIGEST move together, in one pull request, by hand; no
+# Dependabot ecosystem reads a Makefile variable. That pull request writes here
+# the commit and digest garam's PM confirms, and is merged only once they are
+# confirmed.
+GARAM_REVISION ?= f54b9e8cda824dc06df86513e68b49556f120eef
+GARAM_TEST_REGISTRY ?= 486152169996.dkr.ecr.ap-northeast-2.amazonaws.com
+GARAM_TEST_REPOSITORY ?=
+GARAM_TEST_IMAGE_DIGEST ?=
 GARAM_REPOSITORY ?= https://github.com/garamsh/garam.git
 GARAM_DIR = $(LOCALBIN)/garam-$(GARAM_REVISION)
 
@@ -463,8 +466,11 @@ garam-e2e: $(GARAM_DIR)/garam ## Copy garam, its test-principal fixture and its 
 # Copied into a scratch directory that takes GARAM_DIR's name only once every
 # file is in, so an interrupted copy never leaves the target looking made.
 $(GARAM_DIR)/garam:
-	@ref="$(GARAM_TEST_IMAGE)@$(GARAM_TEST_IMAGE_DIGEST)"; \
-	$(CONTAINER_TOOL) pull --quiet "$$ref" >/dev/null || { echo "garam-e2e: could not pull $$ref: log in to ghcr.io with read access to the package, or run make garam-e2e-from-source" >&2; exit 1; }; \
+	@if [ -z "$(GARAM_TEST_REPOSITORY)" ] || [ -z "$(GARAM_TEST_IMAGE_DIGEST)" ]; then \
+		echo "garam-e2e: the ECR digest of garam's test image is not yet published, so GARAM_TEST_REPOSITORY or GARAM_TEST_IMAGE_DIGEST is unset: run make garam-e2e-from-source" >&2; exit 1; \
+	fi; \
+	ref="$(GARAM_TEST_REGISTRY)/$(GARAM_TEST_REPOSITORY)@$(GARAM_TEST_IMAGE_DIGEST)"; \
+	$(CONTAINER_TOOL) pull --quiet "$$ref" >/dev/null || { echo "garam-e2e: could not pull $$ref: log in to $(GARAM_TEST_REGISTRY) with pull access to the repository, or run make garam-e2e-from-source" >&2; exit 1; }; \
 	revision=$$($(CONTAINER_TOOL) image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$$ref"); \
 	if [ "$$revision" != "$(GARAM_REVISION)" ]; then \
 		echo "garam-e2e: $$ref is labelled revision '$$revision', but GARAM_REVISION is '$(GARAM_REVISION)': move the two together" >&2; exit 1; \

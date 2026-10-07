@@ -14,10 +14,10 @@ jobs:
   test-e2e:
     permissions:
       contents: read
-      # Pulls garam's private test image, which `make garam-e2e` copies garam,
-      # its test-principal fixture and its migrations out of (#271). The package
-      # grants this repository's Actions read access in its own settings.
-      packages: read
+      # The federated credential `make garam-e2e` pulls garam's private test
+      # image from ECR with, which it copies garam, its test-principal fixture
+      # and its migrations out of (#271).
+      id-token: write
     name: Run on Ubuntu
     runs-on: ubuntu-latest
     steps:
@@ -35,19 +35,18 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The ECR login `make garam-e2e` pulls with, through the role release.yml
+      # assumes (garamsh/infra#292). The pull grant is infra's to add to it.
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::486152169996:role/garam-agent-operator-github-actions
+          aws-region: ap-northeast-2
+
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
       # `make test-e2e` installs kind itself, at the version the Makefile pins, so
       # this job holds no kind version of its own. helm/kind-action would put that
       # version and the cluster back here, where a contributor's command cannot
       # reach either.
-      # The login `make garam-e2e` pulls ghcr.io/garamsh/garam-test with, as this
-      # run's GITHUB_TOKEN. The action logs out again at the end of the job, so
-      # no credential outlives it.
-      - name: Log in to ghcr.io
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Run the e2e tests
         run: make test-e2e
