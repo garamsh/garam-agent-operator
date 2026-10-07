@@ -75,7 +75,13 @@ type agentAnswer struct {
 // postAgent sends body to the agent's route, as its adapter does.
 func postAgent(t *testing.T, a placedAgent, pair tls.Certificate, route, body string) agentAnswer {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, attachedURL+"/v1/agents/"+a.grn+"/"+route, strings.NewReader(body))
+	return postAgentAt(t, attachedURL, a, pair, route, body)
+}
+
+// postAgentAt is postAgent to the binary whose routes are at base.
+func postAgentAt(t *testing.T, base string, a placedAgent, pair tls.Certificate, route, body string) agentAnswer {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, base+"/v1/agents/"+a.grn+"/"+route, strings.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Garam-Contract-Version", executionContract)
 	if route == "activations" {

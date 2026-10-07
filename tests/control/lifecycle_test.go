@@ -29,11 +29,17 @@ func lifecycleRoute(agent, route string) string {
 // nil, and returns the status and the answer.
 func consoleSend(t *testing.T, path, authority string, body []byte) (int, map[string]any) {
 	t.Helper()
+	return consoleSendAt(t, attachedURL, path, authority, body)
+}
+
+// consoleSendAt is consoleSend to the binary whose console routes are at base.
+func consoleSendAt(t *testing.T, base, path, authority string, body []byte) (int, map[string]any) {
+	t.Helper()
 	method := http.MethodPost
 	if body == nil {
 		method = http.MethodGet
 	}
-	req, err := http.NewRequest(method, attachedURL+path, bytes.NewReader(body))
+	req, err := http.NewRequest(method, base+path, bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Garam-Operation "+authority)
 	resp, err := apiClient.Do(req)
@@ -58,17 +64,29 @@ func mint(t *testing.T, operation, agent, requestID string, body []byte) string 
 // operation, requestID and body.
 func sendMinted(t *testing.T, agent, route, operation, requestID string, body []byte) (int, map[string]any) {
 	t.Helper()
-	return consoleSend(t, lifecycleRoute(agent, route), mint(t, operation, agent, requestID, body), body)
+	return sendMintedAt(t, attachedURL, agent, route, operation, requestID, body)
+}
+
+// sendMintedAt is sendMinted to the binary whose console routes are at base.
+func sendMintedAt(t *testing.T, base, agent, route, operation, requestID string, body []byte) (int, map[string]any) {
+	t.Helper()
+	return consoleSendAt(t, base, lifecycleRoute(agent, route), mint(t, operation, agent, requestID, body), body)
 }
 
 // readRecovery reads agent's recovery as an administrator does, under agent:execution-read bound to
 // the route.
 func readRecovery(t *testing.T, agent string) map[string]any {
 	t.Helper()
+	return readRecoveryAt(t, attachedURL, agent)
+}
+
+// readRecoveryAt is readRecovery from the binary whose console routes are at base.
+func readRecoveryAt(t *testing.T, base, agent string) map[string]any {
+	t.Helper()
 	path := lifecycleRoute(agent, "/recovery")
 	read, _, err := real.mintTargeted("agent:execution-read", agent, name(t, "read"), sha(""), path)
 	require.NoError(t, err)
-	status, out := consoleSend(t, path, read, nil)
+	status, out := consoleSendAt(t, base, path, read, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	return out
 }
