@@ -97,7 +97,8 @@ func askToMove(name, id string) {
 
 // moveReason is the reason of the Agent's MemoryMove condition.
 func moveReason(name string) (string, error) {
-	return kubectlMove(kubectlGet, agentResource, name, "-o", `jsonpath={.status.conditions[?(@.type=="MemoryMove")].reason}`)
+	return kubectlMove(kubectlGet, agentResource, name, "-o",
+		`jsonpath={.status.conditions[?(@.type=="MemoryMove")].reason}`)
 }
 
 var _ = Describe("Memory move", Ordered, func() {
@@ -125,9 +126,8 @@ var _ = Describe("Memory move", Ordered, func() {
 			return
 		}
 		for _, args := range [][]string{
-			{kubectlGet, agentResource, "-o", "yaml"},
+			{kubectlGet, "agent,pvc", "-o", "yaml"},
 			{kubectlGet, "pvc,jobs,pods", "-o", "wide"},
-			{kubectlGet, "pvc", "-o", "yaml"},
 			{"logs", "-l", "app.kubernetes.io/name=agent-memory-move", "--tail=50"},
 			{kubectlGet, "events", "--sort-by=.lastTimestamp"},
 		} {
