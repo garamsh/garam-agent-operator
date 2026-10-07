@@ -19,6 +19,13 @@ import (
 // move made.
 const moveNamespace = "memory-move-e2e"
 
+// kubectlGet and agentResource are kubectl's verb and the Agent's resource,
+// named once for every command this file runs.
+const (
+	kubectlGet    = "get"
+	agentResource = "agent"
+)
+
 // moveCredentials is the credentials Secret both moved Agents name.
 const moveCredentials = "move-credentials"
 
@@ -67,7 +74,7 @@ func waitForMovedPod(name string) {
 	GinkgoHelper()
 
 	Eventually(func(g Gomega) {
-		ready, err := kubectlMove("get", "pod", name+"-0", "-o",
+		ready, err := kubectlMove(kubectlGet, "pod", name+"-0", "-o",
 			`jsonpath={.status.containerStatuses[?(@.name=="agent")].ready}`)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(ready).To(Equal("true"))
@@ -76,21 +83,21 @@ func waitForMovedPod(name string) {
 
 // inMovedAgent runs a shell command in the Agent's agent container.
 func inMovedAgent(name, script string) (string, error) {
-	return kubectlMove("exec", name+"-0", "-c", "agent", "--", "sh", "-c", script)
+	return kubectlMove("exec", name+"-0", "-c", agentResource, "--", "sh", "-c", script)
 }
 
 // askToMove sets the Agent's memory move.
 func askToMove(name, id string) {
 	GinkgoHelper()
 
-	_, err := kubectlMove("patch", "agent", name, "--type=merge", "-p",
+	_, err := kubectlMove("patch", agentResource, name, "--type=merge", "-p",
 		fmt.Sprintf(`{"spec":{"memoryMove":{"id":%q,"storageSize":"64Mi"}}}`, id))
 	Expect(err).NotTo(HaveOccurred())
 }
 
 // moveReason is the reason of the Agent's MemoryMove condition.
 func moveReason(name string) (string, error) {
-	return kubectlMove("get", "agent", name, "-o", `jsonpath={.status.conditions[?(@.type=="MemoryMove")].reason}`)
+	return kubectlMove(kubectlGet, agentResource, name, "-o", `jsonpath={.status.conditions[?(@.type=="MemoryMove")].reason}`)
 }
 
 var _ = Describe("Memory move", Ordered, func() {
@@ -108,7 +115,7 @@ var _ = Describe("Memory move", Ordered, func() {
 	AfterAll(func() {
 		By("deleting the moved Agents while the manager runs, then their namespace")
 		for _, name := range []string{"move-kept", "move-refused"} {
-			_, _ = kubectlMove("delete", "agent", name, "--ignore-not-found", "--timeout=3m")
+			_, _ = kubectlMove("delete", agentResource, name, "--ignore-not-found", "--timeout=3m")
 		}
 		_, _ = utils.Run(exec.Command("kubectl", "delete", "ns", moveNamespace, "--ignore-not-found", "--timeout=3m"))
 	})
@@ -118,11 +125,11 @@ var _ = Describe("Memory move", Ordered, func() {
 			return
 		}
 		for _, args := range [][]string{
-			{"get", "agent", "-o", "yaml"},
-			{"get", "pvc,jobs,pods", "-o", "wide"},
-			{"get", "pvc", "-o", "yaml"},
+			{kubectlGet, agentResource, "-o", "yaml"},
+			{kubectlGet, "pvc,jobs,pods", "-o", "wide"},
+			{kubectlGet, "pvc", "-o", "yaml"},
 			{"logs", "-l", "app.kubernetes.io/name=agent-memory-move", "--tail=50"},
-			{"get", "events", "--sort-by=.lastTimestamp"},
+			{kubectlGet, "events", "--sort-by=.lastTimestamp"},
 		} {
 			if output, err := kubectlMove(args...); err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "%s:\n%s\n", strings.Join(args, " "), output)
@@ -144,11 +151,11 @@ var _ = Describe("Memory move", Ordered, func() {
 		}, 6*time.Minute, 2*time.Second).Should(Succeed())
 
 		By("reading the same bytes on the claim the agent now runs on")
-		claim, err := kubectlMove("get", "pod", name+"-0", "-o",
+		claim, err := kubectlMove(kubectlGet, "pod", name+"-0", "-o",
 			`jsonpath={.spec.volumes[?(@.name=="state")].persistentVolumeClaim.claimName}`)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(claim).To(Equal(name + "-state-one"))
-		args, err := kubectlMove("get", "pod", name+"-0", "-o", `jsonpath={.spec.containers[?(@.name=="agent")].args}`)
+		args, err := kubectlMove(kubectlGet, "pod", name+"-0", "-o", `jsonpath={.spec.containers[?(@.name=="agent")].args}`)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(args).To(ContainSubstring("--require-store"))
 		read, err := inMovedAgent(name, readMemory)
@@ -156,7 +163,7 @@ var _ = Describe("Memory move", Ordered, func() {
 		Expect(read).To(Equal(written))
 
 		By("keeping the claim the memory moved off, naming the claim it moved to")
-		movedTo, err := kubectlMove("get", "pvc", "state-"+name+"-0", "-o",
+		movedTo, err := kubectlMove(kubectlGet, "pvc", "state-"+name+"-0", "-o",
 			`jsonpath={.metadata.annotations.agent\.garam\.sh/moved-to}`)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(movedTo).To(Equal(name + "-state-one"))
@@ -178,24 +185,24 @@ var _ = Describe("Memory move", Ordered, func() {
 		}, 6*time.Minute, 2*time.Second).Should(Succeed())
 
 		By("leaving the agent stopped on its old claim, with no Pod")
-		replicas, err := kubectlMove("get", "statefulset", name, "-o", "jsonpath={.spec.replicas}")
+		replicas, err := kubectlMove(kubectlGet, "statefulset", name, "-o", "jsonpath={.spec.replicas}")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(replicas).To(Equal("0"))
 		Eventually(func(g Gomega) {
-			pods, err := kubectlMove("get", "pod", name+"-0", "--ignore-not-found", "-o", "name")
+			pods, err := kubectlMove(kubectlGet, "pod", name+"-0", "--ignore-not-found", "-o", "name")
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(pods).To(BeEmpty())
 		}, 2*time.Minute, time.Second).Should(Succeed())
-		annotations, err := kubectlMove("get", "pvc", "state-"+name+"-0", "-o", "jsonpath={.metadata.annotations}")
+		annotations, err := kubectlMove(kubectlGet, "pvc", "state-"+name+"-0", "-o", "jsonpath={.metadata.annotations}")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(annotations).NotTo(ContainSubstring("moved-to"))
-		phase, err := kubectlMove("get", "pvc", name+"-state-one", "-o",
+		phase, err := kubectlMove(kubectlGet, "pvc", name+"-state-one", "-o",
 			`jsonpath={.metadata.annotations.agent\.garam\.sh/move-phase}`)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(phase).To(Equal("refused"))
 
 		By("starting it again on the untouched old claim once the move is cleared")
-		_, err = kubectlMove("patch", "agent", name, "--type=json", "-p", `[{"op":"remove","path":"/spec/memoryMove"}]`)
+		_, err = kubectlMove("patch", agentResource, name, "--type=json", "-p", `[{"op":"remove","path":"/spec/memoryMove"}]`)
 		Expect(err).NotTo(HaveOccurred())
 		waitForMovedPod(name)
 		read, err := inMovedAgent(name, readMemory)

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path"
 	"strings"
 
@@ -71,8 +72,12 @@ const (
 	moveSourceMountPath = "/run/garam/move/source"
 	moveTargetMountPath = "/run/garam/move/target"
 	moveContainerName   = "move"
-	moveSourceVolume    = "source"
-	moveTargetVolume    = "target"
+
+	// The two steps a move runs a Job for.
+	moveStepCopy     = "copy"
+	moveStepVerify   = "verify"
+	moveSourceVolume = "source"
+	moveTargetVolume = "target"
 )
 
 // moveManifestScript prints the digest of the stored state under a memory
@@ -470,7 +475,7 @@ func (r *AgentReconciler) sourceUnchanged(ctx context.Context, agent *agentv1alp
 // runCopy runs the copy Job and records its outcome.
 func (r *AgentReconciler) runCopy(ctx context.Context, agent *agentv1alpha1.Agent,
 	target *corev1.PersistentVolumeClaim, descriptor agentTypeDescriptor) error {
-	outcome, err := r.ensureMoveJob(ctx, agent, target, descriptor, "copy", moveCopyStartedAnnotation)
+	outcome, err := r.ensureMoveJob(ctx, agent, target, descriptor, moveStepCopy, moveCopyStartedAnnotation)
 	if err != nil {
 		return err
 	}
@@ -500,7 +505,7 @@ func (r *AgentReconciler) runCopy(ctx context.Context, agent *agentv1alpha1.Agen
 // must be one value, and the copy must hold nothing else.
 func (r *AgentReconciler) runVerify(ctx context.Context, agent *agentv1alpha1.Agent,
 	target *corev1.PersistentVolumeClaim, descriptor agentTypeDescriptor) error {
-	outcome, err := r.ensureMoveJob(ctx, agent, target, descriptor, "verify", moveCheckStartedAnnotation)
+	outcome, err := r.ensureMoveJob(ctx, agent, target, descriptor, moveStepVerify, moveCheckStartedAnnotation)
 	if err != nil {
 		return err
 	}
@@ -749,7 +754,7 @@ func (r *AgentReconciler) jobOutcome(ctx context.Context, job *batchv1.Job) (job
 func (r *AgentReconciler) moveJob(agent *agentv1alpha1.Agent, target *corev1.PersistentVolumeClaim,
 	descriptor agentTypeDescriptor, name, step string) *batchv1.Job {
 	script := moveCopyScript
-	if step != "copy" {
+	if step != moveStepCopy {
 		script = moveVerifyScript
 	}
 	labels := map[string]string{
@@ -782,12 +787,12 @@ func (r *AgentReconciler) moveJob(agent *agentv1alpha1.Agent, target *corev1.Per
 						SecurityContext: containerSecurityContext(),
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: moveSourceVolume, MountPath: moveSourceMountPath, ReadOnly: true},
-							{Name: moveTargetVolume, MountPath: moveTargetMountPath, ReadOnly: step != "copy"},
+							{Name: moveTargetVolume, MountPath: moveTargetMountPath, ReadOnly: step != moveStepCopy},
 						},
 					}},
 					Volumes: []corev1.Volume{
 						claimVolume(moveSourceVolume, target.Annotations[moveSourceAnnotation], true),
-						claimVolume(moveTargetVolume, target.Name, step != "copy"),
+						claimVolume(moveTargetVolume, target.Name, step != moveStepCopy),
 					},
 				},
 			},
@@ -805,7 +810,7 @@ func claimVolume(name, claim string, readOnly bool) corev1.Volume {
 // reportedDigests reads the key=value fields a move's Job reports.
 func reportedDigests(message string) map[string]string {
 	fields := map[string]string{}
-	for _, field := range strings.Fields(message) {
+	for field := range strings.FieldsSeq(message) {
 		if key, value, ok := strings.Cut(field, "="); ok {
 			fields[key] = value
 		}
@@ -819,9 +824,7 @@ func (r *AgentReconciler) recordMovePhase(ctx context.Context, agent *agentv1alp
 	target *corev1.PersistentVolumeClaim, phase string, extra map[string]string, reason, message string) error {
 	marked := target.DeepCopy()
 	marked.Annotations[movePhaseAnnotation] = phase
-	for key, value := range extra {
-		marked.Annotations[key] = value
-	}
+	maps.Copy(marked.Annotations, extra)
 	if err := r.Patch(ctx, marked, client.MergeFrom(target)); err != nil {
 		return fmt.Errorf("record move phase %q on claim %q: %w", phase, target.Name, err)
 	}
