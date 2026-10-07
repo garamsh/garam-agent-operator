@@ -195,20 +195,10 @@ var agentTypeSherlock = agentTypeDescriptor{
 	terminationGrace: sherlockTerminationGrace,
 }
 
-// sherlock's drain, at v0.2.0, lets the turn in flight run to completion,
-// commits it, and closes its memory store, releasing the writer lock last; it
-// waits for the turn without a bound of its own
-// (sherlock@b3c05c2:internal/gateway/queue.go:211-224, httpserver.go:38-57,
-// internal/memory/sqlite/sqlite.go:143-153). Measured on Kind against v0.2.0
-// (#282): an idle agent exits within the second of SIGTERM, and a turn's own
-// commit takes milliseconds, so what the drain waits for is the step in flight.
-// sherlockTerminationGrace covers one full step: a model request at its timeout,
-// then a workspace command at its ceiling with the tool's dispatch margin. A
-// turn running longer than one step can still be cut (ADR 0064).
-//
-// The first three are sherlock's defaults, and they bind here only because
-// this operator renders neither a model timeout nor an exec ceiling. One that
-// starts rendering either changes the step, and this sum has to follow it.
+// sherlockTerminationGrace is one full step of a turn, which sherlock's drain
+// lets finish before it closes its store (ADR 0064). Its first three terms are
+// sherlock's defaults, which bind only while this operator renders neither a
+// model timeout nor an exec ceiling.
 const (
 	// sherlock's model.timeout, per chat request
 	// (sherlock@b3c05c2:internal/config/config.go:43).
