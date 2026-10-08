@@ -1,6 +1,6 @@
 # ADR 0033: Publish the control service as a second image, to a repository of its own, under the rules every image here follows
 
-> Status: accepted; the tags superseded by ADR-0051
+> Status: accepted; the tags superseded by ADR-0051; one repository per image, for development builds, superseded by ADR-0066
 > Date: 2026-10-04
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
