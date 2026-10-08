@@ -18,6 +18,11 @@ jobs:
       # image from ECR with, which it copies garam, its test-principal fixture
       # and its migrations out of (#271).
       id-token: write
+    # The pull role trusts this job's subject only under this environment
+    # (`<subject prefix>:environment:promotion-e2e`). The OIDC subject claim
+    # keys stay the repository default, because customizing them would change
+    # the release tag's subject too.
+    environment: promotion-e2e
     name: Run on Ubuntu
     runs-on: ubuntu-latest
     steps:
@@ -35,11 +40,22 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The ECR login `make garam-e2e` pulls with, through the role release.yml
-      # assumes (garamsh/infra#292). The pull grant is infra's to add to it.
+      # Prints the `sub` claim this job presents, to confirm it against infra's
+      # trust condition on the pull role; removed once confirmed. The token is
+      # piped straight into jq and never printed or stored.
+      - name: Show the OIDC subject
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" |
+            jq -r '.value | split(".")[1] | gsub("-"; "+") | gsub("_"; "/")
+              | . + ("=" * ((4 - length % 4) % 4)) | @base64d | fromjson | .sub'
+
+      # The ECR login `make garam-e2e` pulls with, through the pull role
+      # (garamsh/infra#292 and the change after it that grants the pull).
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: arn:aws:iam::486152169996:role/garam-agent-operator-github-actions
+          role-to-assume: arn:aws:iam::486152169996:role/garamsh-garam-agent-operator-github-actions-pull
           aws-region: ap-northeast-2
 
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
