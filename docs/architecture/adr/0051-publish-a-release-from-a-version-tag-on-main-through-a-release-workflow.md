@@ -91,3 +91,9 @@ The workflow also has these properties:
   - each image's `org.opencontainers.image.revision` label equals `git rev-parse vX.Y.Z`.
 - **Development images keep the hand procedure,** so a development build still rests on its pusher's tree being clean. Immutability still bounds that to one push per name.
 - **A multi-architecture image is not published.** A second architecture is a new decision, not a flag.
+
+## Errata
+
+### 2026-10-08 — the push role is `garamsh-garam-agent-operator-github-actions`
+
+Decision names the push role `arn:aws:iam::486152169996:role/garam-agent-operator-github-actions`, and its third step assumes `garam-agent-operator-github-actions`. infra applied an owner-approved naming scheme that puts the forge owner in a role's name: infra-a5 reported the applied names `garamsh-garam-github-actions` and `garamsh-sherlock-github-actions` on 2026-10-08 (#320). That scheme names this repository's push role `arn:aws:iam::486152169996:role/garamsh-garam-agent-operator-github-actions`, which `release.yml` and `delivery.md` now name. The role is still to be applied under `garamsh/infra#292`. The decision, the subject the role is to trust, and the rule that no release tag is pushed before the role exists all stand.

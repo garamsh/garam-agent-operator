@@ -13,7 +13,7 @@ name: release
 #
 # The trigger is the release tag and nothing else. A tag filter is a glob and
 # cannot spell vX.Y.Z, so `v*` is as narrow as the trigger goes. It is also exactly
-# the ref the push role admits: arn:aws:iam::486152169996:role/garam-agent-operator-github-actions
+# the ref the push role admits: arn:aws:iam::486152169996:role/garamsh-garam-agent-operator-github-actions
 # trusts the subject
 # `repo:garamsh@307152666/garam-agent-operator@1335647420:ref:refs/tags/v*`
 # (garamsh/infra#292, #293), so a run on any other ref gets no credential. What
@@ -86,7 +86,7 @@ jobs:
       # build that fails, on either image, fails before anything can be pushed.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: arn:aws:iam::486152169996:role/garam-agent-operator-github-actions
+          role-to-assume: arn:aws:iam::486152169996:role/garamsh-garam-agent-operator-github-actions
           aws-region: ap-northeast-2
 
       - id: ecr
