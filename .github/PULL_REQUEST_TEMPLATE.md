@@ -10,6 +10,10 @@
 
 <!-- Commands run locally and their results. Run the project's single entry point for the whole check set: state its result, and any other command you ran. For a test written or changed, which tests were seen to fail with the behaviour removed. -->
 
+## Deployer impact
+
+<!-- Per stack-kubebuilder.md §5. List each RBAC verb, manager flag, CRD field, or change to the Pods the manager builds that this change adds, removes, or alters, and the ADR or step that needs it. Write None when there is none. -->
+
 ## Conventions consulted
 
 <!-- The docs/convention/ files you actually read and applied. -->

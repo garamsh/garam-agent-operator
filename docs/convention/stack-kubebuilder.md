@@ -198,6 +198,12 @@ Rules:
   about — nothing else in the refusal will.
 - A marker's effect is verified by reading the regenerated file, not by
   assuming the marker parsed.
+- **What a deployer must review or set travels with the change that makes it.**
+  A pull request that changes the generated RBAC, a manager flag, a CRD field,
+  or the shape of the Pods the manager builds lists each one under the
+  template's *Deployer impact*, traced to the ADR or step that needs it, and
+  writes `None` otherwise. A deployer pins a revision, and a change they have to
+  act on must not reach them only through a message somebody remembered to send.
 
 ## 6. Naming
 
