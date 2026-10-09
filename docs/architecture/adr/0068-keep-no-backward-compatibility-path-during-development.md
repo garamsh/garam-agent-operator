@@ -74,7 +74,9 @@ ADR 0047 also added the `StateIsolated` condition, and the `Isolated` column of 
 
 ### 2026-10-10 — the lab's claim held no memory
 
-Context says the lab's `state-agent-75a5b4c54b12dca4-0` "holds eleven days of an agent's memory". It did not. gitops fingerprinted the store read-only before the migration: every table held 0 rows, and `memory.db` was 57,344 bytes holding the schema only (#340). The decision to keep the existing state claim by name stands. It keeps whatever memory a claim holds, and this one held none.
+Context says the lab's `state-agent-75a5b4c54b12dca4-0` "holds eleven days of an agent's memory". It did not. gitops fingerprinted the store read-only before the migration: every table held 0 rows, and `memory.db` was 57,344 bytes holding the schema only (#340). gitops also measured why (#340). The lab's manager ran without `--agent-adapter-image`, so `adapterBuilt` (`internal/controller/agent_statefulset.go:864-870` at `fe5c70f`) was false and the agent's Pod carried no adapter; the manager's startup log said "Building agents with no adapter: agent-adapter-image or garam-address is unset, so garam delivers them no message" (`cmd/main.go:276` there). No Service exposed the agent's gateway either. No message could ever reach the agent, so an empty store was expected, not a dropped write.
+
+The decision to keep the existing state claim by name stands. It keeps whatever memory a claim holds, and this one held none.
 
 ### 2026-10-10 — the replacing StatefulSet did not roll the adopted Pod
 
