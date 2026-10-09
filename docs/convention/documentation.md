@@ -26,7 +26,7 @@ What makes documentation valid in this project. Applies to every Markdown docume
 These are documentation too.
 
 - **Facts only.** No rhetoric, no self-assessment, no inflated language ("perfect", "massive improvement"). State what changed, where, and why.
-- **A claim names a basis that could have contradicted it.** Name what established it — the command with its arguments, the repository and revision of a file read, the source consulted — precisely enough that a reader can repeat it. A basis that would read the same had the claim been false establishes nothing: an expression matching nothing shows an absence only where the same expression is shown to match what is present, and a run whose output nobody has read is not a basis at all.
+- **A claim names a basis that could have contradicted it.** Name what established it — the command with its arguments, the repository and revision of a file read, the source consulted — precisely enough that a reader can repeat it. A basis that would read the same had a part of the claim been false establishes nothing about that part: an expression matching nothing shows an absence only where the same expression is shown to match what is present, and a run whose output nobody has read is not a basis at all.
 - **Stay inside the template.** No extra sections beyond the template fields; leave no field empty — write `N/A` with a reason.
 - **One comment, one point.** A comment carries a single request, instruction, or question. Ground it by citing a path or a rule, not by arguing.
 
