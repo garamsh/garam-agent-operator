@@ -92,29 +92,6 @@ func syncedReason(name string) string {
 	return synced.Reason
 }
 
-// isolation is the status of the Agent's StateIsolated condition, and
-// isolationReason its reason.
-func isolation(name string) metav1.ConditionStatus {
-	GinkgoHelper()
-
-	return isolationCondition(name).Status
-}
-
-func isolationReason(name string) string {
-	GinkgoHelper()
-
-	return isolationCondition(name).Reason
-}
-
-func isolationCondition(name string) *metav1.Condition {
-	GinkgoHelper()
-
-	condition := meta.FindStatusCondition(readAgent(name).Status.Conditions, agentv1alpha1.ConditionStateIsolated)
-	Expect(condition).NotTo(BeNil())
-
-	return condition
-}
-
 // finishOrphaning does what the garbage collector does once it has orphaned a
 // StatefulSet's dependents: it takes the orphan finalizer off, and the
 // StatefulSet goes. envtest runs no garbage collector.
@@ -134,12 +111,12 @@ func finishOrphaning(name string) {
 func replaceSharedShapeOf(name string) {
 	GinkgoHelper()
 
-	_, err := reconcileAgentMigrating(name)
+	_, err := reconcileAgentWithWorkspace(name)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(syncedReason(name)).To(Equal(agentv1alpha1.ReasonWorkloadReplacing))
 	finishOrphaning(name)
 
-	_, err = reconcileAgentMigrating(name)
+	_, err = reconcileAgentWithWorkspace(name)
 	Expect(err).NotTo(HaveOccurred())
 }
 
@@ -173,10 +150,6 @@ var _ = Describe("Agent claims", func() {
 				Expect(container.VolumeMounts).NotTo(ContainElement(HaveField("Name", stateVolumeName)), container.Name)
 			}
 		}
-
-		By("seeding nothing on a new agent, which has no shared claim to seed from")
-		Expect(workload.Annotations).NotTo(HaveKey(seedAnnotation))
-		Expect(pod.InitContainers).NotTo(ContainElement(HaveField("Name", seedContainerName)))
 	})
 
 	It("refuses a workspace size of zero at admission, beside one greater than zero", func() {
@@ -226,7 +199,7 @@ var _ = Describe("Agent claims", func() {
 		Expect(syncedReason(unnamed)).To(Equal(agentv1alpha1.ReasonWorkloadReconciled))
 	})
 
-	It("replaces a StatefulSet whose workspace shares the state claim, keeping the claim, and seeds the workspace once from it", func() {
+	It("replaces a StatefulSet whose workspace shares the state claim, keeping that claim by its UID and copying nothing", func() {
 		name := "upgrades-its-claims"
 		createSecret(credentialsSecretName(name))
 		createAgent(newAgent(name))
@@ -237,7 +210,7 @@ var _ = Describe("Agent claims", func() {
 		old := statefulSetFor(name)
 
 		By("reconciling, which deletes the shared shape and leaves its Pod and claims to the garbage collector to orphan")
-		_, err = reconcileAgentMigrating(name)
+		_, err = reconcileAgentWithWorkspace(name)
 		Expect(err).NotTo(HaveOccurred())
 		deleting := statefulSetFor(name)
 		Expect(deleting.UID).To(Equal(old.UID))
@@ -247,14 +220,14 @@ var _ = Describe("Agent claims", func() {
 		expectClaimKept(claim)
 
 		By("reconciling while it is still deleting, which creates nothing")
-		_, err = reconcileAgentMigrating(name)
+		_, err = reconcileAgentWithWorkspace(name)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(statefulSetFor(name).UID).To(Equal(old.UID))
 		Expect(syncedReason(name)).To(Equal(agentv1alpha1.ReasonWorkloadReplacing))
 
 		By("creating the next once it is gone, with a reconciler built afresh as a restarted manager's would be")
 		finishOrphaning(name)
-		_, err = reconcileAgentMigrating(name)
+		_, err = reconcileAgentWithWorkspace(name)
 		Expect(err).NotTo(HaveOccurred())
 		next := statefulSetFor(name)
 		Expect(next.UID).NotTo(Equal(old.UID))
@@ -262,110 +235,29 @@ var _ = Describe("Agent claims", func() {
 		Expect(claimTemplate(next, stateVolumeName)).NotTo(BeNil())
 		expectClaimKept(claim)
 
-		By("seeding the workspace from the state claim, read-only, before the agent and the workspace start")
-		Expect(next.Annotations).To(HaveKeyWithValue(seedAnnotation, stateVolumeName))
-		seed := initContainerOf(next.Spec.Template.Spec, seedContainerName)
-		Expect(seed.Image).To(Equal(testCopyImage))
-		Expect(seed.VolumeMounts).To(ConsistOf(
-			corev1.VolumeMount{Name: stateVolumeName, MountPath: seedStateMountPath, ReadOnly: true},
-			corev1.VolumeMount{Name: workspaceVolumeName, MountPath: seedWorkspaceMountPath}))
-		Expect(seed.Command).To(Equal(seedWorkspaceCommand(seedStateMountPath+"/"+workspaceDirName,
-			seedWorkspaceMountPath+"/"+workspaceDirName, seedWorkspaceMountPath+"/"+seededMarker)))
-		Expect(seed.RestartPolicy).To(BeNil(), "the seed runs to completion before the agent starts")
+		By("the next StatefulSet's state template naming the kept claim, so the Pod mounts that claim by its name")
+		Expect(stateVolumeName + "-" + agentPodName(readAgent(name))).To(Equal(claim.Name))
 
-		By("reconciling again, which keeps the StatefulSet and its seed")
-		_, err = reconcileAgentMigrating(name)
+		By("the state claim mounted by the agent alone, and no container copying it onto the workspace's new claim")
+		pod := next.Spec.Template.Spec
+		Expect(claimTemplate(next, workspaceVolumeName)).NotTo(BeNil())
+		for _, container := range append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...) {
+			if container.Name != agentContainerName {
+				Expect(container.VolumeMounts).NotTo(ContainElement(HaveField("Name", stateVolumeName)), container.Name)
+			}
+		}
+
+		By("reconciling again, which keeps the StatefulSet")
+		_, err = reconcileAgentWithWorkspace(name)
 		Expect(err).NotTo(HaveOccurred())
 		kept := statefulSetFor(name)
 		Expect(kept.UID).To(Equal(next.UID))
 		Expect(kept.DeletionTimestamp).To(BeNil())
-		Expect(kept.Spec.Template.Spec.InitContainers).To(ContainElement(HaveField("Name", seedContainerName)))
-		Expect(syncedReason(name)).To(Equal(agentv1alpha1.ReasonWorkloadReconciled))
-	})
-
-	It("seeds nothing on a StatefulSet recreated where the workspace already has its claim", func() {
-		// With the switch off, as every reconcile in this spec runs: there is no
-		// shared set left to keep, so a recreated set is never made shared, and
-		// the seed starts only with the new Pod, after the old one is gone.
-		By("the control: a set recreated where only the state claim exists gets the separate shape and seeds")
-		upgraded := "recreated-shared"
-		createSecret(credentialsSecretName(upgraded))
-		createAgent(newAgent(upgraded))
-		createClaim(upgraded)
-		_, err := reconcileAgentWithWorkspace(upgraded)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(statefulSetFor(upgraded).Annotations).To(HaveKey(seedAnnotation))
-		Expect(claimTemplate(statefulSetFor(upgraded), workspaceVolumeName)).NotTo(BeNil())
-		Expect(isolation(upgraded)).To(Equal(metav1.ConditionTrue))
-
-		By("a set recreated where both claims exist, as deleting one of the separate shape by hand leaves them")
-		separate := "recreated-separate"
-		createSecret(credentialsSecretName(separate))
-		createAgent(newAgent(separate))
-		createClaim(separate)
-		workspaceClaimOf(separate)
-		_, err = reconcileAgentWithWorkspace(separate)
-		Expect(err).NotTo(HaveOccurred())
-		recreated := statefulSetFor(separate)
-		Expect(recreated.Annotations).NotTo(HaveKey(seedAnnotation))
-		Expect(recreated.Spec.Template.Spec.InitContainers).NotTo(ContainElement(HaveField("Name", seedContainerName)))
-	})
-
-	It("keeps a shared-shape StatefulSet in its shape while the migration is off, and reports it as not isolated", func() {
-		By("the control: a new Agent gets separate claims, and is reported isolated")
-		fresh := "kept-off-new-agent"
-		createSecret(credentialsSecretName(fresh))
-		createAgent(newAgent(fresh))
-		_, err := reconcileAgentWithWorkspace(fresh)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(claimTemplate(statefulSetFor(fresh), workspaceVolumeName)).NotTo(BeNil())
-		Expect(isolation(fresh)).To(Equal(metav1.ConditionTrue))
-		Expect(isolationReason(fresh)).To(Equal(agentv1alpha1.ReasonSeparateClaims))
-
-		name := "kept-off-shared"
-		createSecret(credentialsSecretName(name))
-		createAgent(newAgent(name))
-		_, err = reconcileAgentWithWorkspace(name)
-		Expect(err).NotTo(HaveOccurred())
-		sharedShape(name)
-		claim := createClaim(name)
-		old := statefulSetFor(name)
-
-		By("reconciling the shared shape with the migration off, twice")
-		for range 2 {
-			_, err = reconcileAgentWithWorkspace(name)
-			Expect(err).NotTo(HaveOccurred())
-		}
-		kept := statefulSetFor(name)
-		Expect(kept.UID).To(Equal(old.UID))
-		Expect(kept.DeletionTimestamp).To(BeNil())
-		Expect(kept.Finalizers).NotTo(ContainElement(metav1.FinalizerOrphanDependents))
-		Expect(kept.Spec.VolumeClaimTemplates).To(HaveLen(1))
-		Expect(containerOf(kept.Spec.Template.Spec, workspaceContainerName).VolumeMounts).To(ConsistOf(
-			corev1.VolumeMount{Name: stateVolumeName, MountPath: agentTypeSherlock.stateMountPath}))
-		Expect(kept.Annotations).NotTo(HaveKey(seedAnnotation))
-		Expect(kept.Spec.Template.Spec.InitContainers).NotTo(ContainElement(HaveField("Name", seedContainerName)))
 		expectClaimKept(claim)
-
-		By("reporting it synced, and not isolated")
-		Expect(syncedReason(name)).To(Equal(agentv1alpha1.ReasonWorkloadReconciled))
-		Expect(isolation(name)).To(Equal(metav1.ConditionFalse))
-		Expect(isolationReason(name)).To(Equal(agentv1alpha1.ReasonSharedClaim))
-
-		By("still carrying a spec change into it, in its shape")
-		edited := readAgent(name)
-		edited.Spec.Image = "example.com/sherlock:v2"
-		Expect(k8sClient.Update(ctx, edited)).To(Succeed())
-		_, err = reconcileAgentWithWorkspace(name)
-		Expect(err).NotTo(HaveOccurred())
-		updated := statefulSetFor(name)
-		Expect(containerOf(updated.Spec.Template.Spec, agentContainerName).Image).To(Equal("example.com/sherlock:v2"))
-		Expect(updated.UID).To(Equal(old.UID))
-		Expect(updated.Spec.VolumeClaimTemplates).To(HaveLen(1))
 		Expect(syncedReason(name)).To(Equal(agentv1alpha1.ReasonWorkloadReconciled))
 	})
 
-	It("replaces a shared-shape StatefulSet with no live Pod, as a suspended agent leaves it, once the migration is on", func() {
+	It("replaces a shared-shape StatefulSet with no live Pod, as a suspended agent leaves it", func() {
 		name := "migrates-stopped"
 		createSecret(credentialsSecretName(name))
 		createAgent(newAgent(name))
@@ -377,22 +269,20 @@ var _ = Describe("Agent claims", func() {
 		Expect(exists).To(BeFalse(), "no Pod runs, which is the stop this spec stands for")
 
 		By("reporting the replacement while it runs")
-		_, err = reconcileAgentMigrating(name)
+		_, err = reconcileAgentWithWorkspace(name)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(isolation(name)).To(Equal(metav1.ConditionFalse))
-		Expect(isolationReason(name)).To(Equal(agentv1alpha1.ReasonWorkloadReplacing))
+		Expect(syncedReason(name)).To(Equal(agentv1alpha1.ReasonWorkloadReplacing))
 		finishOrphaning(name)
 
-		By("creating the separate shape with its seed, on the same claim, and no Pod of the operator's own")
-		_, err = reconcileAgentMigrating(name)
+		By("creating the separate shape on the same state claim, and no Pod of the operator's own")
+		_, err = reconcileAgentWithWorkspace(name)
 		Expect(err).NotTo(HaveOccurred())
 		next := statefulSetFor(name)
 		Expect(claimTemplate(next, workspaceVolumeName)).NotTo(BeNil())
-		Expect(next.Annotations).To(HaveKeyWithValue(seedAnnotation, stateVolumeName))
 		expectClaimKept(claim)
 		_, exists = podFor(name)
 		Expect(exists).To(BeFalse())
-		Expect(isolation(name)).To(Equal(metav1.ConditionTrue))
+		Expect(syncedReason(name)).To(Equal(agentv1alpha1.ReasonWorkloadReconciled))
 	})
 
 	It("holds the shared shape's Pod across the replacement until its writers stop, on the claim it started on", func() {
@@ -418,7 +308,7 @@ var _ = Describe("Agent claims", func() {
 
 		By("the new StatefulSet rolling the Pod it adopted, which deletes it while both writers run")
 		deletePod(pod)
-		_, err = reconcileAgentMigrating(name)
+		_, err = reconcileAgentWithWorkspace(name)
 		Expect(err).NotTo(HaveOccurred())
 		expectHeld(name, agentv1alpha1.ReasonContainerRunning)
 		held, _ := podFor(name)
@@ -428,7 +318,7 @@ var _ = Describe("Agent claims", func() {
 		reportContainers(pod, map[string]corev1.ContainerState{
 			agentContainerName: terminatedState, workspaceContainerName: terminatedState,
 		})
-		_, err = reconcileAgentMigrating(name)
+		_, err = reconcileAgentWithWorkspace(name)
 		Expect(err).NotTo(HaveOccurred())
 		expectReleased(name, string(pod.UID))
 		Expect(readAgent(name).Status.WriterStopped.PVCUID).To(Equal(string(claim.UID)))

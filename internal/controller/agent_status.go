@@ -62,31 +62,6 @@ func setWriterFence(agent *agentv1alpha1.Agent, status metav1.ConditionStatus, r
 	})
 }
 
-// setStateIsolated records on the Agent which shape its workload runs in.
-func setStateIsolated(agent *agentv1alpha1.Agent, status metav1.ConditionStatus, reason, message string) {
-	meta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{
-		Type:               agentv1alpha1.ConditionStateIsolated,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: agent.Generation,
-	})
-}
-
-// setStateIsolatedFromWorkload reads the shape off the StatefulSet this
-// reconcile already holds.
-func setStateIsolatedFromWorkload(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet) {
-	if hasWorkspaceClaim(statefulSet) {
-		setStateIsolated(agent, metav1.ConditionTrue, agentv1alpha1.ReasonSeparateClaims,
-			fmt.Sprintf("StatefulSet %q claims the state and the workspace separately, and only the agent mounts the state", statefulSet.Name))
-
-		return
-	}
-	setStateIsolated(agent, metav1.ConditionFalse, agentv1alpha1.ReasonSharedClaim,
-		fmt.Sprintf("StatefulSet %q's workspace mounts the state claim, so the code the agent runs can reach its state; "+
-			"--agent-migrate-shared-claims replaces it with separate claims", statefulSet.Name))
-}
-
 // setAvailableFromWorkload reads the readiness of the StatefulSet this reconcile
 // already holds. The message bounds what a ready replica is worth: the workload
 // carries no readiness probe, so a container that started is ready whatever it

@@ -68,8 +68,7 @@ type agentTypeDescriptor struct {
 	// garamReplyInstruction tells the agent how to read a message garam's
 	// adapter delivers and how to address its reply, in the agent's own tool
 	// and channel names. Wherever the adapter is placed it is the instructions
-	// file, or, where this operator renders none, it is joined to the ego
-	// (ADR 0045).
+	// file, and the ego stays the spec's (ADR 0045, ADR 0068).
 	garamReplyInstruction string
 
 	// renderArgs are the agent container's arguments for what the Pod builder

@@ -24,9 +24,6 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Available")].status
       name: Available
       type: string
-    - jsonPath: .status.conditions[?(@.type=="StateIsolated")].status
-      name: Isolated
-      type: string
     - jsonPath: .status.conditions[?(@.type=="Suspended")].status
       name: Suspended
       type: string

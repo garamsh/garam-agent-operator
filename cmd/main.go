@@ -62,8 +62,7 @@ func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
-	var enableLeaderElection, agentAssignmentEpoch, agentInstructionsFile, agentMigrateSharedClaims bool
-	var agentAdapterControl bool
+	var enableLeaderElection bool
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
@@ -148,27 +147,6 @@ func main() {
 			"garam's own image, whose adapter subcommand carries messages between garam and the agent. "+
 			"It is built only where garam-address is set too. Unset builds agents' Pods carrying no adapter, "+
 			"which is an agent garam delivers no message to.")
-	flag.BoolVar(&agentInstructionsFile, "agent-instructions-file", false,
-		"Give every agent with garam's adapter garam's reply instruction as an operator instructions file, "+
-			"passed as --instructions-file, and leave its ego as its spec declares it. Off by default, which "+
-			"joins the instruction to the ego instead: set it only once the agent image this deployment runs "+
-			"accepts the flag (sherlock v0.1.0 or later), because an image that does not refuses to start on it.")
-	flag.BoolVar(&agentAdapterControl, "agent-adapter-control", false,
-		"Give the adapter of every agent the control service created the control service's settings, the "+
-			"placement token's file and the agent's outbox, so it activates through the control service rather "+
-			"than running unfenced. Off by default: set it only once the control service serves activation and "+
-			"agent-adapter-image is garam e81a1e0 or later, because an older adapter refuses to start without "+
-			"the setting this drops (ADR 0049). Requires control-address.")
-	flag.BoolVar(&agentMigrateSharedClaims, "agent-migrate-shared-claims", false,
-		"Replace every agent StatefulSet whose workspace shares the state claim with one claiming them "+
-			"separately, keeping the state claim and copying the workspace onto its own. Off by default: such "+
-			"a StatefulSet keeps its shape, and its Agent reports StateIsolated False, until a person has "+
-			"suspended the agent, copied its state and turned this on (ADR 0047). New agents always get "+
-			"separate claims.")
-	flag.BoolVar(&agentAssignmentEpoch, "agent-assignment-epoch", false,
-		"Pass every agent this operator constructed its assignment epoch on the command line, as "+
-			"--assignment-epoch. Off by default: set it only once the agent image this deployment runs "+
-			"accepts the flag, because an image that does not refuses to start on it.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -294,11 +272,6 @@ func main() {
 			"so garam delivers them no message")
 	}
 
-	if agentAdapterControl && controlAddress == "" {
-		setupLog.Error(errors.New("agent-adapter-control requires control-address"),
-			"Failed to configure agents' adapters")
-		os.Exit(1)
-	}
 	if err := (&controller.AgentReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
@@ -308,12 +281,8 @@ func main() {
 		AdapterImage:   agentAdapterImage,
 		GaramAddress:   garamAddress,
 
-		RenderAssignmentEpoch:  agentAssignmentEpoch,
-		RenderInstructionsFile: agentInstructionsFile,
-		MigrateSharedClaims:    agentMigrateSharedClaims,
-		AdapterControl:         agentAdapterControl,
-		ControlAddress:         controlAddress,
-		ControlRootFile:        controlTrustFile,
+		ControlAddress:  controlAddress,
+		ControlRootFile: controlTrustFile,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)

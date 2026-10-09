@@ -1,6 +1,6 @@
 # ADR 0047: Replace a shared-claim StatefulSet only where the migration is turned on, and report which agents still share
 
-> Status: accepted
+> Status: superseded by ADR-0068
 > Date: 2026-10-05
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
