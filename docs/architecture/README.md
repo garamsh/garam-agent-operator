@@ -117,3 +117,4 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0068-keep-no-backward-compatibility-path-during-development.md` | Keep no backward-compatibility path during development | accepted; the control service's upgrade path it kept removed by ADR-0069 |
 | `adr/0069-keep-no-upgrade-path-for-the-control-services-store-during-development.md` | Keep no upgrade path for the control service's store during development | accepted |
 | `adr/0070-promote-dev-to-main-by-fast-forward.md` | Promote `dev` to `main` by fast-forward | accepted |
+| `adr/0071-render-garams-issuer-into-a-managed-agents-config-and-let-the-agent-fetch-its-keys.md` | Render garam's issuer into a managed agent's config, and let the agent fetch its keys | accepted |
