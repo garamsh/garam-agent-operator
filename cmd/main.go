@@ -100,10 +100,10 @@ func main() {
 		"The file holding what garam's machine listener is verified against. This is not the organization "+
 			"issuer an operator's own certificate arrives with.")
 	flag.StringVar(&garamIssuer, "garam-issuer", "",
-		"garam's machine issuer, exactly its machine.issuer: an https origin with no trailing slash. Where it is "+
-			"set, every agent whose Pod carries the adapter accepts messages that issuer signs, fetching its keys "+
-			"from garam-address. Unset renders no issuer, and the agent's image must accept keys-ca-file before "+
-			"it is set (ADR 0071).")
+		"garam's machine issuer, exactly its machine.issuer, rendered byte for byte. Where it is set, every "+
+			"agent whose Pod carries the adapter accepts messages that issuer signs, fetching its keys from "+
+			"garam-address. Unset renders no issuer, and the agent's image must accept keys-ca-file before it is "+
+			"set (ADR 0071).")
 	flag.StringVar(&controlAddress, "control-address", "",
 		"The host and port of the control service's API listener, which this operator pulls the desired state "+
 			"of the agents it controls from. Unset pulls nothing from it.")
@@ -277,15 +277,9 @@ func main() {
 			"so garam delivers them no message")
 	}
 
-	if garamIssuer != "" {
-		if err := controller.ValidateIssuer(garamIssuer); err != nil {
-			setupLog.Error(err, "Failed to read garam-issuer")
-			os.Exit(1)
-		}
-		if agentAdapterImage == "" || garamAddress == "" {
-			setupLog.Info("Rendering no issuer: garam-issuer is set, but agents are built with no adapter to sign "+
-				"their messages", "issuer", garamIssuer)
-		}
+	if garamIssuer != "" && (agentAdapterImage == "" || garamAddress == "") {
+		setupLog.Info("Rendering no issuer: garam-issuer is set, but agents are built with no adapter to sign "+
+			"their messages", "issuer", garamIssuer)
 	}
 
 	if err := (&controller.AgentReconciler{

@@ -3,7 +3,6 @@ package controller
 import (
 	"os"
 	"path/filepath"
-	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -15,9 +14,10 @@ import (
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 )
 
-// testGaramIssuer is the issuer the specs give the manager: an origin other
-// than testGaramAddress, as garam's machine.issuer is in-cluster.
-const testGaramIssuer = "https://garam.example.com"
+// testGaramIssuer is the issuer the specs give the manager: the dev cluster's
+// machine.issuer (gitops#298), an origin other than testGaramAddress, as it is
+// in-cluster.
+const testGaramIssuer = "https://machine.dev.garam.sh"
 
 // reconcileAgentWithIssuer runs one reconcile for the named Agent, with this
 // operator placing garam's adapter where adapter is true, naming the control
@@ -92,6 +92,19 @@ var _ = Describe("Message issuer", func() {
 		}
 	})
 
+	It("renders the issuer byte for byte, normalising nothing sherlock compares exactly", func() {
+		// A value any URL normalisation would change: a trailing slash and an
+		// upper-case host.
+		const unnormalised = "https://Machine.Dev.Garam.sh/"
+		name := "issuer-verbatim"
+		agentFrom(name, agentv1alpha1.DesiredSourceGaram)
+		_, err := reconcileAgentWithIssuer(name, unnormalised, true)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(renderedConfig(statefulSetFor(name).Spec.Template.Spec)).To(HaveKeyWithValue("issuers",
+			ConsistOf(HaveKeyWithValue("issuer", unnormalised))))
+	})
+
 	It("renders no issuer where the manager names none, or where the agent's Pod carries no adapter", func() {
 		name := "issuer-absent"
 		agentFrom(name, agentv1alpha1.DesiredSourceGaram)
@@ -116,20 +129,3 @@ var _ = Describe("Message issuer", func() {
 		Expect(renderedConfig(pod)).NotTo(HaveKey("issuers"))
 	})
 })
-
-func TestValidateIssuer_AcceptsOnlyAnHTTPSOrigin(t *testing.T) {
-	for _, issuer := range []string{"https://garam.example.com", "https://garam.example.com:8443"} {
-		if err := ValidateIssuer(issuer); err != nil {
-			t.Errorf("ValidateIssuer(%q) = %v, want nil", issuer, err)
-		}
-	}
-	for _, issuer := range []string{
-		"", "garam.example.com", "http://garam.example.com", "https://garam.example.com/",
-		"https://garam.example.com/machine", "https://garam.example.com?x=1", "https://garam.example.com?",
-		"https://garam.example.com#", "https://user@garam.example.com", "https://",
-	} {
-		if err := ValidateIssuer(issuer); err == nil {
-			t.Errorf("ValidateIssuer(%q) = nil, want an error", issuer)
-		}
-	}
-}

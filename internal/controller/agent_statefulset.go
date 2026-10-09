@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path"
 	"slices"
@@ -943,7 +942,9 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 
 // issuerFor is garam's issuer, for an agent whose Pod carries the adapter that
 // signs its messages, and nil where the manager names no issuer or the adapter
-// is not placed (ADR 0071). The keys are fetched from the machine listener the
+// is not placed (ADR 0071). The issuer is the flag's value byte for byte:
+// sherlock compares a signature's iss with it exactly, so nothing here trims
+// or normalises it. The keys are fetched from the machine listener the
 // adapter is given, not from the issuer: in-cluster that address is a Service
 // name the issuer origin need not be. The fetch is verified against the garam
 // server root in the agent's own copy of its credential, which it already mounts.
@@ -957,25 +958,6 @@ func (r *AgentReconciler) issuerFor(agent *agentv1alpha1.Agent, descriptor agent
 		keysURL:    "https://" + r.GaramAddress + messageSigningKeysPath,
 		keysCAFile: descriptor.credentialsMountPath + "/" + garam.ServerRootKey,
 	}
-}
-
-// ValidateIssuer refuses an issuer that is not an https origin: a scheme and a
-// host, with no path, not even a trailing slash, and nothing else. Sherlock
-// compares a signature's iss with it exactly, so any other form is an issuer
-// no message garam signs carries (ADR 0071).
-func ValidateIssuer(issuer string) error {
-	parsed, err := url.Parse(issuer)
-	if err != nil {
-		return fmt.Errorf("garam-issuer %q is not a URL: %w", issuer, err)
-	}
-	// Re-serialising catches what parsing drops, such as an empty fragment.
-	if parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" ||
-		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.String() != issuer {
-		return fmt.Errorf("garam-issuer %q is not an https origin: garam's machine.issuer is https://<host>[:<port>] "+
-			"with no path, query or trailing slash", issuer)
-	}
-
-	return nil
 }
 
 // adapterFenced reports whether the agent's adapter activates through the
