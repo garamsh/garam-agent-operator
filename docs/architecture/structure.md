@@ -23,7 +23,9 @@ The kubebuilder scaffold writes the manager's code into paths it names, and the 
 - **A domain is reached only through what it declares public**: the exported identifiers of its root package, `internal/<domain>`. Its sub-packages (`internal/<domain>/<pkg>/`, the implementations of its dependency interfaces) are its inside. Reaching one from another domain is a defect, even where the compiler permits it.
 - **A domain may depend on a sibling, through that sibling's surface, in one direction only.** That is the side taken in ADR 0038. A reference two domains would make of each other means one of them is holding something that belongs to the other, or below both.
 - **A consumer depends on the producer's interface, not its concrete type.** A domain declares beside itself the behaviour it needs. The behaviour it offers is declared beside its producer. The compiler does not check this, so it is a review matter.
-- **The composition site is the exception.** A binary's composition site — `cmd/main.go` for the manager, `cmd/control/main.go` for the control service — constructs every domain's concrete implementations and passes them to the interfaces. It is the one place that reaches inside a domain.
+- **Each binary has one composition site** — `cmd/main.go` for the manager, `cmd/control/main.go` for the control service. It is the one place that constructs concrete implementations, and it decides which implementation each declared abstraction receives. It is also the one place that reaches inside a domain.
+- **Every other unit receives what it depends on and constructs none of it.**
+- **The composition site stays thin.** It constructs and passes; it decides nothing else.
 
 ### Shared code
 
