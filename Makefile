@@ -446,18 +446,20 @@ $(LOCALBIN):
 # from that repository: CI's, through the role test-e2e.yml assumes, or a local
 # `aws ecr get-login-password | docker login`.
 #
-# GARAM_TEST_REPOSITORY and GARAM_TEST_IMAGE_DIGEST stay empty until garam
-# publishes the image to ECR, and garam-e2e refuses to run while either is.
+# The image is bound by digest alone. Its tags, the commit's 12 hex digits and
+# pinned-garam-agent-operator, are informational; garam's lifecycle policy keeps
+# it while pinned-garam-agent-operator names it (garamsh/garam@d6874d2
+# tests/testprincipal/README.md §The test image).
 #
 # Pinning (#271): GARAM_REVISION, GARAM_TEST_REPOSITORY and
 # GARAM_TEST_IMAGE_DIGEST move together, in one pull request, by hand; no
 # Dependabot ecosystem reads a Makefile variable. That pull request writes here
 # the commit and digest garam's PM confirms, and is merged only once they are
 # confirmed.
-GARAM_REVISION ?= f54b9e8cda824dc06df86513e68b49556f120eef
+GARAM_REVISION ?= d6874d21faf3582ffe4e814643f5b15068333622
 GARAM_TEST_REGISTRY ?= 486152169996.dkr.ecr.ap-northeast-2.amazonaws.com
-GARAM_TEST_REPOSITORY ?=
-GARAM_TEST_IMAGE_DIGEST ?=
+GARAM_TEST_REPOSITORY ?= garam-dev/garam-test
+GARAM_TEST_IMAGE_DIGEST ?= sha256:7a8fc22f7abb7fc653241a1eb1d0779eab41e97f9f26419de9f0ba201f1dc328
 GARAM_REPOSITORY ?= https://github.com/garamsh/garam.git
 GARAM_DIR = $(LOCALBIN)/garam-$(GARAM_REVISION)
 
@@ -468,7 +470,7 @@ garam-e2e: $(GARAM_DIR)/garam ## Copy garam, its test-principal fixture and its 
 # file is in, so an interrupted copy never leaves the target looking made.
 $(GARAM_DIR)/garam:
 	@if [ -z "$(GARAM_TEST_REPOSITORY)" ] || [ -z "$(GARAM_TEST_IMAGE_DIGEST)" ]; then \
-		echo "garam-e2e: the ECR digest of garam's test image is not yet published, so GARAM_TEST_REPOSITORY or GARAM_TEST_IMAGE_DIGEST is unset: run make garam-e2e-from-source" >&2; exit 1; \
+		echo "garam-e2e: GARAM_TEST_REPOSITORY or GARAM_TEST_IMAGE_DIGEST is empty: set both, or run make garam-e2e-from-source" >&2; exit 1; \
 	fi; \
 	ref="$(GARAM_TEST_REGISTRY)/$(GARAM_TEST_REPOSITORY)@$(GARAM_TEST_IMAGE_DIGEST)"; \
 	$(CONTAINER_TOOL) pull --quiet "$$ref" >/dev/null || { echo "garam-e2e: could not pull $$ref: log in to $(GARAM_TEST_REGISTRY) with pull access to the repository, or run make garam-e2e-from-source" >&2; exit 1; }; \
