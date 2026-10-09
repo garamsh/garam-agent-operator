@@ -1,6 +1,6 @@
 # ADR 0066: Push development images to repositories under `garam-dev/`, and keep `garam/` for releases
 
-> Status: accepted
+> Status: accepted; partially superseded by ADR-0067: the development tags
 > Date: 2026-10-09
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
