@@ -17,6 +17,8 @@ Local checks and CI checks are the same checks, invoked by the same names. CI re
 
 ## One entry point per task
 
+This section states which names exist and what each owes, not the commands behind them.
+
 - **One name per task.** Each of lint, format, test, and build has exactly one name that a human and CI both invoke, once the project has a command for it. What implements that name — a task runner, a script, a package manifest entry — is the project's choice; the name is the contract, so it arrives with the command and not ahead of it.
 - **One name for the whole set.** A single name runs those names in order, so "run the checks" is one command locally and one step in CI.
 - **A change shows that the whole set ran before it landed.** Once the project has a pipeline, every change that can land on the default branch carries, on the change itself, the record of a run of the whole set against it made before it lands, and what made that run: a pipeline run whose result is attached to the change, or a run outside the pipeline recorded there by whoever made it. A pipeline run that starts only after the change has landed, or only for changes bound for another branch, is no such record for it.
@@ -40,6 +42,8 @@ For each of those steps:
 3. **Use it as its own documentation shows**. If no maintained component covers the step, a checked-in script is the fallback — not a license to hand-roll per-job.
 
 ## Verify a pinned dependency before adopting it
+
+This section states what to establish before pinning and what makes a reference a pin, not which reference a given artifact takes.
 
 Before pinning anything the pipeline pulls in — a published component, container image, or tool version — read its own documentation and determine:
 

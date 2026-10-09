@@ -16,6 +16,8 @@ Many runtime errors are bugs the type system could have caught. Catch those at c
 
 ## Type system
 
+This section states what strictness and which type shapes are required, not the setting or syntax that provides them.
+
 Enable the strictest mode your stack supports — strict nullability, no implicit escape to an "unknown/any/object" shape, no implicit conversions. Strictness catches more bugs at compile time than it costs in effort.
 
 - **No silent assertions.** An assertion, cast, or lint suppression that does not check its own result silences the type system without fixing the underlying mismatch. Find the root cause. Where a language leaves no other way to read a value — out of an untyped container, for one — assert in the form that branches on failure; the unchecked form is still not accepted.
@@ -23,6 +25,8 @@ Enable the strictest mode your stack supports — strict nullability, no implici
 - **Domain primitives over raw types.** Define `UserId`, `Money`, `Email` as distinct named types (newtypes, branded types, value objects) rather than as raw strings or numbers. They prevent passing the wrong value at the type level.
 
 ## Trust boundaries
+
+This section states where untrusted data is proved and what the boundary hands on, not the parser, validator or loader that does it.
 
 External data is untrusted. The boundary between outside and inside is where you prove what's true.
 
@@ -47,6 +51,8 @@ Prefer functions that handle every case explicitly.
 - **Where the input space is small and finite, prefer total functions** to partial ones.
 
 ## Errors reach a handler
+
+This section states which failure reaches which kind of place, not the form an error takes or the mechanism that maps it.
 
 - **Expected failure** (validation, lookup miss, network error) is declared where it is produced and reaches exactly one place obliged to handle it. Where the language can force that, the return type is the place: failure sits in the signature, and the caller cannot reach the value without it. Where the language cannot — no checked exceptions — one declared boundary handler is the place, registered once for that failure rather than written as a `catch` at each call site.
 - **Unexpected failure** (programmer bug, OOM, invariant violation): exceptions / panics are fine — they should crash visibly and be logged.

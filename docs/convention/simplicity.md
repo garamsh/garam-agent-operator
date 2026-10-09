@@ -10,6 +10,8 @@ Every line, file, and folder is one more the next reader holds and the next chan
 
 ## Rules
 
+These rules state what earns a division or an abstraction, not the count or size that marks the point.
+
 - **A division is a response, not a plan.** Start flat. Split a file, or introduce a folder, when the current shape already holds more than one thing — never because a division is expected later. An empty container is a claim the code does not support.
 - **No speculative abstraction.** Do not build for imagined future needs: no configuration options nobody asked for, no indirection layers for one caller. Add the abstraction when the second real case arrives — except a seam, a boundary declared so that a test or an alternative implementation can take the place of the real thing, which earns its keep on the first.
 - **An abstraction that hides nothing is complexity.** One standing between a caller and a single concrete thing, adding no meaning and no seam, is removed.
