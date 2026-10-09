@@ -80,3 +80,11 @@ ADR 0019's shape is extended and nothing is superseded. [ADR 0009](0009-construc
 **Overriding the container's `command` or `args`** to pass `--addr`, `--workspace` and `--exec-uid`. It would make this operator the author of another project's argument list and take `ENTRYPOINT` and `CMD` away from the image, which is ADR 0019's rejection and holds here for the same reason. Every one of these settings resolves from the environment under `GAGENT_<KEY>` (`gagent@9b0e399:internal/config/config.go:276-277`), which takes nothing from the image.
 
 **Giving the workspace the credential or the tool tree.** Neither is read by it, and each mount is one more reader of something that has readers for a reason.
+
+## Errata
+
+### 2026-10-10 — the non-root namespace needs two host requirements
+
+Context says a non-root workspace's `CLONE_NEWUSER | CLONE_NEWNET` clone "is creatable without privilege", and so "No capability is owed". The second half stands: no capability is owed. The first does not hold on its own. `sherlock@26418f6:docs/architecture/deployment.md:165-174` (#1052) records that the clone needs two host requirements: `user.max_user_namespaces` above `0` on the node, and a seccomp profile admitting the clone, since `RuntimeDefault` refuses it with `EPERM` at syscall entry (gitops, 2026-10-10). Without both, every isolated exec is refused. It still fails closed, as Context says.
+
+The decision stands: the workspace runs non-root with no capability. `agent.md` records the two host requirements, and #348 renders the profile on the workspace container.
