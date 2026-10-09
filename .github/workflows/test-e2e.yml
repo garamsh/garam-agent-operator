@@ -12,11 +12,9 @@ permissions: {}
 
 env:
   # The role `make garam-e2e` pulls garam's test image from ECR as. Its name,
-  # permissions and trust are garamsh/infra's: infra names it
-  # garam-agent-operator-github-actions-pull (garamsh/infra#311), and this value
-  # stays a placeholder until infra applies it and posts its ARN read back from the
-  # account on #317.
-  GARAM_TEST_PULL_ROLE: arn:aws:iam::486152169996:role/PLACEHOLDER-to-be-confirmed-by-garamsh-infra
+  # permissions and trust are garamsh/infra's (garamsh/infra#311); this ARN was
+  # read back from IAM on 2026-10-09, after the role was created.
+  GARAM_TEST_PULL_ROLE: arn:aws:iam::486152169996:role/garam-agent-operator-github-actions-pull
 
 jobs:
   test-e2e:
