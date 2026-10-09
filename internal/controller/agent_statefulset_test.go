@@ -823,7 +823,7 @@ var _ = Describe("Agent workload", func() {
 			testSecondTool: `sha256:bb" ; touch escaped ; echo "`,
 			testPinnedTool: testToolPin,
 		}
-		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}})
+		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}}, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		command := writeConfigCommand(dir, agentTypeSherlock, false, false, false)
@@ -853,7 +853,7 @@ var _ = Describe("Agent workload", func() {
 		// and every pass would rewrite the StatefulSet.
 		pins := map[string]string{"web_fetch": "sha256:cc", testPinnedTool: testToolPin, testSecondTool: testSecondPin}
 
-		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}})
+		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Tools: agentv1alpha1.ToolSet{Pins: pins}}, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(file).To(Equal("tools:\n  pins:\n" +
@@ -987,7 +987,7 @@ var _ = Describe("Agent workload", func() {
 		// An ego is free text a person writes. This one closes the quoting a
 		// command would carry it in.
 		ego := "We answer briefly.\n\" ; touch escaped ; echo \"\n"
-		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: newModel("writes-an-ego")})
+		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: newModel("writes-an-ego")}, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		command := writeConfigCommand(dir, agentTypeSherlock, true, false, false)
@@ -1010,7 +1010,7 @@ var _ = Describe("Agent workload", func() {
 	})
 
 	It("renders a model as sherlock's model section, and leaves out a pin section nobody declared", func() {
-		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: newModel("renders-a-model")})
+		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: newModel("renders-a-model")}, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(file).To(Equal("embedding:\n" +
@@ -1097,7 +1097,7 @@ var _ = Describe("Agent workload", func() {
 	It("renders an embeddings endpoint naming no key with no key variable, and the mock with no embedding section", func() {
 		keyless := newModel("renders-a-keyless-embedding")
 		keyless.Embedding.APIKeySecretRef = nil
-		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: keyless})
+		file, err := agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: keyless}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		written := sherlockConfig{}
 		Expect(yaml.Unmarshal([]byte(file), &written)).To(Succeed())
@@ -1107,7 +1107,7 @@ var _ = Describe("Agent workload", func() {
 
 		mock := newModel("renders-the-mock")
 		mock.Provider, mock.Embedding = testMockProvider, nil
-		file, err = agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: mock})
+		file, err = agentTypeSherlock.renderConfig(agentv1alpha1.AgentSpec{Model: mock}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(file).To(HavePrefix("model:\n"))
 		Expect(file).NotTo(ContainSubstring("embedding"))

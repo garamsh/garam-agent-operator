@@ -66,7 +66,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var garamAddress, garamCertificateFile, garamKeyFile, garamTrustFile string
+	var garamAddress, garamCertificateFile, garamKeyFile, garamTrustFile, garamIssuer string
 	var garamCredentialSecret, garamEnrollmentTokenFile string
 	var controlAddress, controlTrustFile string
 	var agentImage, agentStorageSize, agentCopyImage, agentWorkspaceImage, agentAdapterImage string
@@ -99,6 +99,11 @@ func main() {
 	flag.StringVar(&garamTrustFile, "garam-trust-file", "",
 		"The file holding what garam's machine listener is verified against. This is not the organization "+
 			"issuer an operator's own certificate arrives with.")
+	flag.StringVar(&garamIssuer, "garam-issuer", "",
+		"garam's machine issuer, exactly its machine.issuer, rendered byte for byte. Where it is set, every "+
+			"agent whose Pod carries the adapter accepts messages that issuer signs, fetching its keys from "+
+			"garam-address. Unset renders no issuer, and the agent's image must accept keys-ca-file before it is "+
+			"set (ADR 0071).")
 	flag.StringVar(&controlAddress, "control-address", "",
 		"The host and port of the control service's API listener, which this operator pulls the desired state "+
 			"of the agents it controls from. Unset pulls nothing from it.")
@@ -272,6 +277,11 @@ func main() {
 			"so garam delivers them no message")
 	}
 
+	if garamIssuer != "" && (agentAdapterImage == "" || garamAddress == "") {
+		setupLog.Info("Rendering no issuer: garam-issuer is set, but agents are built with no adapter to sign "+
+			"their messages", "issuer", garamIssuer)
+	}
+
 	if err := (&controller.AgentReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
@@ -280,6 +290,7 @@ func main() {
 		WorkspaceImage: agentWorkspaceImage,
 		AdapterImage:   agentAdapterImage,
 		GaramAddress:   garamAddress,
+		GaramIssuer:    garamIssuer,
 
 		ControlAddress:  controlAddress,
 		ControlRootFile: controlTrustFile,

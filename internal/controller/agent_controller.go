@@ -48,6 +48,11 @@ type AgentReconciler struct {
 	// adapter claims an agent's messages from.
 	GaramAddress string
 
+	// GaramIssuer is garam's machine issuer, the iss of the messages garam's
+	// adapter signs. Where it is set, every agent whose Pod carries the adapter
+	// accepts that issuer's signatures; empty renders no issuer (ADR 0071).
+	GaramIssuer string
+
 	// APIReader reads straight from the API server. The writer fence reads a
 	// Pod's node and its claim through it, so that the controller holds no
 	// informer over every node and claim in the cluster for a check it makes
