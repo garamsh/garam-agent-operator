@@ -465,6 +465,20 @@ const (
 	// is gone.
 	ReasonWorkloadReplacing = "WorkloadReplacing"
 
+	// ReasonWorkloadRolling is set while the agent's Pod runs a revision other
+	// than the StatefulSet's update revision, as a Pod a replacing StatefulSet
+	// adopted does, until that Pod is deleted through the writer fence and its
+	// successor runs the update revision (#340).
+	ReasonWorkloadRolling = "WorkloadRolling"
+
+	// ReasonRolloutNotObserved is set, on Synced as False and on Available as
+	// Unknown, while the agent's Pod exists and the StatefulSet's status has not
+	// observed its generation or names no update revision, so which revision the
+	// Pod should run is not known yet. A replacing StatefulSet is in this state
+	// beside the Pod it is about to adopt until its controller first writes
+	// status (#340).
+	ReasonRolloutNotObserved = "RolloutNotObserved"
+
 	// ReasonStorageSizeImmutable is set when the spec asks for a volume size the
 	// workload cannot be changed to.
 	ReasonStorageSizeImmutable = "StorageSizeImmutable"
@@ -492,6 +506,11 @@ const (
 
 	// ReasonReplicaNotReady is set when the workload reports no ready replica.
 	ReasonReplicaNotReady = "ReplicaNotReady"
+
+	// ReasonReplicaOutdated is set when the replica runs a revision other than
+	// the StatefulSet's update revision: ready or not, it is not the workload
+	// the spec asks for (#340).
+	ReasonReplicaOutdated = "ReplicaOutdated"
 
 	// ReasonWorkloadNotObserved is set when the controller stopped before
 	// reconciling a workload, so it read none and observed no readiness.

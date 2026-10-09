@@ -369,9 +369,10 @@ func applyLineage(statefulSet *appsv1.StatefulSet, lineage string) {
 // is copied onto it.
 //
 // The old Pod is the only writer of the state claim throughout. Orphaned, it
-// keeps running alone until the new StatefulSet adopts it by its labels and
-// deletes it to roll it, and its writer fence then holds it until its writers
-// are seen to stop (ADR 0042). The new Pod has the old one's name, so it cannot
+// keeps running alone until the new StatefulSet adopts it by its labels;
+// rollOutdatedPod then deletes it to roll it, since that StatefulSet can record
+// the rollout complete without doing so (#340), and its writer fence holds it
+// until its writers are seen to stop (ADR 0042). The new Pod has the old one's name, so it cannot
 // be created while the old one exists, and the state claim is the same claim by
 // name, so the fence reads the claim the old Pod started on.
 func (r *AgentReconciler) replaceSharedShape(ctx context.Context, statefulSet *appsv1.StatefulSet) error {
@@ -400,6 +401,72 @@ func (r *AgentReconciler) replaceSharedShape(ctx context.Context, statefulSet *a
 	}
 
 	return nil
+}
+
+// podRollout is what rollOutdatedPod found of the agent's Pod against its
+// StatefulSet's revision: nothing to report where reason is empty, otherwise
+// the reason the workload is not reconciled and a message saying why.
+type podRollout struct {
+	reason, message string
+}
+
+// rollOutdatedPod deletes the agent's Pod where it runs a revision other than
+// the StatefulSet's update revision, and reports it rolling. A StatefulSet that
+// replaced a shared-shape one adopts the old Pod and can record its rollout
+// complete with that Pod on the old revision, so it never rolls it (#340). The
+// delete is an ordinary one, which the writer fence's finalizer holds until the
+// Pod's writers are seen to stop; it is never forced. A Pod the StatefulSet does
+// not yet own is left for it to adopt, and only reported.
+//
+// Where a Pod exists and the StatefulSet's status has not observed its
+// generation, or names no update revision, which revision the Pod should run is
+// not known yet: nothing is deleted, and the rollout is reported not observed
+// rather than reconciled. A replacing StatefulSet sits in that state until its
+// controller first writes status, beside the Pod it is about to adopt. It
+// reports nothing only where no Pod exists or the Pod is on the update revision.
+func (r *AgentReconciler) rollOutdatedPod(ctx context.Context, statefulSet *appsv1.StatefulSet) (podRollout, error) {
+	pod := &corev1.Pod{}
+	name := statefulSet.Name + "-0"
+	if err := r.Get(ctx, client.ObjectKey{Namespace: statefulSet.Namespace, Name: name}, pod); err != nil {
+		if apierrors.IsNotFound(err) {
+			return podRollout{}, nil
+		}
+
+		return podRollout{}, fmt.Errorf("get the agent's pod: %w", err)
+	}
+	revision := pod.Labels[appsv1.ControllerRevisionHashLabelKey]
+	update := statefulSet.Status.UpdateRevision
+	if update == "" || statefulSet.Status.ObservedGeneration < statefulSet.Generation {
+		return podRollout{reason: agentv1alpha1.ReasonRolloutNotObserved, message: fmt.Sprintf(
+			"Pod %q runs revision %q and StatefulSet %q's status has not observed generation %d yet "+
+				"(observed %d, update revision %q), so which revision the Pod should run is not known",
+			pod.Name, revision, statefulSet.Name, statefulSet.Generation, statefulSet.Status.ObservedGeneration,
+			update)}, nil
+	}
+	if revision == update {
+		return podRollout{}, nil
+	}
+	rolling := func(why string) podRollout {
+		return podRollout{reason: agentv1alpha1.ReasonWorkloadRolling, message: fmt.Sprintf(
+			"Pod %q runs revision %q and StatefulSet %q is at %q; %s", pod.Name, revision, statefulSet.Name, update,
+			why)}
+	}
+	if pod.DeletionTimestamp != nil {
+		return rolling("the Pod is deleting, held by the writer fence until its writers stop"), nil
+	}
+	owner := metav1.GetControllerOf(pod)
+	if owner == nil || owner.UID != statefulSet.UID {
+		return rolling("the StatefulSet has not adopted the Pod yet"), nil
+	}
+
+	uid := pod.UID
+	if err := r.Delete(ctx, pod, client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
+		return podRollout{}, fmt.Errorf("delete the agent's pod to roll it onto the statefulset's revision: %w", err)
+	}
+	logf.FromContext(ctx).Info("Rolling the agent's Pod onto the StatefulSet's revision", "pod", pod.Name,
+		"revision", revision, "updateRevision", update)
+
+	return rolling("the Pod is deleted to roll it, and the writer fence holds it until its writers stop"), nil
 }
 
 // replaceStateTemplate deletes a StatefulSet whose own claim template still

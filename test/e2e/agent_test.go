@@ -457,12 +457,10 @@ var _ = Describe("Agent workload", Ordered, func() {
 			g.Expect(config).To(ContainSubstring(`revision: "1"`))
 		}, 2*time.Minute, time.Second).Should(Succeed())
 
-		// The StatefulSet replaces the Pod from the template it now holds; deleting
-		// it does not wait on a rollout, and the writer fence still gates the
-		// replacement on the old Pod's evidence.
-		By("replacing the Pod, which the StatefulSet recreates from its template")
-		_, err = kubectlIn("delete", "pod", migratedPod, "--wait=false")
-		Expect(err).NotTo(HaveOccurred())
+		// The Pod on the earlier revision is rolled onto the template the
+		// StatefulSet now holds, without a hand (#340), and the writer fence still
+		// gates its replacement on the old Pod's evidence.
+		By("rolling the Pod onto the StatefulSet's template")
 		Eventually(func(g Gomega) {
 			uid, err := uidOf("pod", migratedPod)
 			g.Expect(err).NotTo(HaveOccurred())
@@ -482,6 +480,10 @@ var _ = Describe("Agent workload", Ordered, func() {
 			To(Equal(credentialsSecret))
 
 		By("rendering the revision a configure released next, which the replaced Pod's config file carries")
+		// Read before the patch: the Pod is rolled as soon as the StatefulSet's
+		// revision moves, so after it the Pod may already be gone.
+		replaced, err := uidOf("pod", migratedPod)
+		Expect(err).NotTo(HaveOccurred())
 		_, err = kubectlIn("patch", "agent", migrated, "--type", "merge", "-p", `{"spec":{"revision":"2"}}`)
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(func(g Gomega) {
@@ -489,10 +491,6 @@ var _ = Describe("Agent workload", Ordered, func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring(`revision: "2"`))
 		}, 2*time.Minute, time.Second).Should(Succeed())
-		replaced, err := uidOf("pod", migratedPod)
-		Expect(err).NotTo(HaveOccurred())
-		_, err = kubectlIn("delete", "pod", migratedPod, "--wait=false")
-		Expect(err).NotTo(HaveOccurred())
 		Eventually(func(g Gomega) {
 			uid, err := uidOf("pod", migratedPod)
 			g.Expect(err).NotTo(HaveOccurred())

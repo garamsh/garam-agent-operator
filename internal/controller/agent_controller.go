@@ -71,7 +71,7 @@ type AgentReconciler struct {
 // +kubebuilder:rbac:groups=agent.garam.sh,resources=agents/status,verbs=patch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;create;patch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get
@@ -265,6 +265,16 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		return err
 	}
 
+	// A Pod on another revision than the StatefulSet's is rolled here, whatever
+	// else is reported, since the StatefulSet that adopted it may never do so. A
+	// held-stopped agent asks for no replica, so its Pod is not rolled but released.
+	var rollout podRollout
+	if !heldStopped(agent) {
+		if rollout, err = r.rollOutdatedPod(ctx, statefulSet); err != nil {
+			return err
+		}
+	}
+
 	workspaceSize := workspaceStorageSize(agent)
 	// A claim a move put the memory on is sized and classed by the move, so the
 	// spec's state storage describes only a claim the template still makes.
@@ -281,11 +291,24 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageClassImmutable,
 			fmt.Sprintf("The volume was claimed from storage class %s and spec.storageClassName now asks for %s, which a StatefulSet's claim template cannot be changed to",
 				describeStorageClass(claimedClass), describeStorageClass(agent.Spec.StorageClassName)))
+	} else if rollout.reason != "" {
+		setSynced(agent, metav1.ConditionFalse, rollout.reason, rollout.message)
 	} else {
 		setSynced(agent, metav1.ConditionTrue, agentv1alpha1.ReasonWorkloadReconciled,
 			fmt.Sprintf("StatefulSet %q carries what this Agent's spec asks for", statefulSet.Name))
 	}
 
+	switch rollout.reason {
+	case agentv1alpha1.ReasonWorkloadRolling:
+		setAvailable(agent, metav1.ConditionFalse, agentv1alpha1.ReasonReplicaOutdated, rollout.message)
+
+		return nil
+	case agentv1alpha1.ReasonRolloutNotObserved:
+		// The StatefulSet's replica counts are as stale as its revision.
+		setAvailable(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonRolloutNotObserved, rollout.message)
+
+		return nil
+	}
 	setAvailableFromWorkload(agent, statefulSet)
 
 	return nil
