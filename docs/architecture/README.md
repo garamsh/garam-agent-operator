@@ -24,8 +24,9 @@ Current architecture of the system and the decisions behind it. This file is the
 
 | Not taken | Template commit | Why it cannot be true here |
 |---|---|---|
-| §Structure's `structures/` bullet | `d2675ce`, `65523e6` | Describes a folder this repository does not have. |
+| §Structure's `structures/` bullet | `d2675ce`, `65523e6`, `548895a`, `133b60c` | Describes a folder this repository does not have. |
 | Rule 4's `structures/` sentence | `d2675ce` (`convention-driven-project#276`) | Same folder. |
+| §Rules every shape carries | `548895a`, `133b60c` | Bootstrap input: its own text says to copy its bullets into `structure.md` and then delete it. Its bullets are in `structure.md` §Surfaces and references, adapted to this project's two binaries. |
 
 Before a delta between this file and the template is called stale, read it against this list and against this project's merged pull requests for the path.
 

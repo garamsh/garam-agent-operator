@@ -60,7 +60,7 @@ Silence in the derived file is not evidence that a base rule survives. A derived
 Reading a convention file is enough to apply its rules. Where the Extends column gives it a base, it is that file and its base, and there reading stops.
 
 - **One file, one territory.** No artifact is governed by two files, unless one extends the other: the derived file decides the rules it holds and the base decides the rest. Where two files with no such relationship could both decide a case, one of them is holding the wrong rule.
-- **A rule appears once** — inside a file as much as across files. A section that restates earlier rules in the negative is a second site to keep in sync, not a summary. A derived file that repeats a base rule it does not change is that same defect: what it does not hold, it does not copy.
+- **A rule appears once** — inside a file as much as across files. A section that restates earlier rules in the negative is a second site to keep in sync, not a summary. A derived file — one the Extends column gives a base — that repeats a base rule it does not change is that same defect: what it does not hold, it does not copy.
 - **Two files' rules may share a reason.** That is not duplication. Each states its own reason; neither points at the other for it.
 - **A convention file does not send the reader to another convention file.** Where one file's territory ends and the next begins, a base included, is recorded in the tables above, not inside the files themselves.
 
