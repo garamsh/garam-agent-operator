@@ -27,7 +27,7 @@ No deployment runs the control service on data that must survive. gitops does no
 
 **The control service's store keeps no path from an earlier version of itself.**
 
-- **Migration 1 is the whole current schema.** The four earlier migrations are squashed into one `000001_schema.up.sql`. Its catalog equals what migrations 1 to 4 built, and so does `pg_dump --schema-only` of it.
+- **Migration 1 is the whole current schema.** The four earlier migrations are squashed into one `000001_schema.up.sql`. It builds what migrations 1 to 4 built: the same tables, columns, types, nullability, defaults, keys, constraint and index definitions, and the same `positions` row. Only some constraint names differ. Migration 2 created `creations`, `definitions`, `profiles` and `templates` beside their renamed predecessors, so their NOT NULL and CHECK constraints took suffixed names. The squashed migration gives them the names a fresh table gets. Nothing reads a constraint by name.
 - **The migration mechanism stays as ADR 0055 decided it,** so that a later change still goes forward as a new migration:
   - numbered, forward-only migrations, embedded and applied at start through `golang-migrate`'s `pgx/v5` driver;
   - the binary's own advisory lock, held from reading the schema to its last migration;
