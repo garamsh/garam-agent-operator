@@ -13,7 +13,7 @@ Test layers, mocking, and placement — what each layer proves, what to mock, an
 
 ## Three layers — different goals, different scopes
 
-The Test client column states only the shape each layer requires.
+This section states what each layer exercises and the shape it requires, not the concrete client, build or wiring.
 
 | Layer | Scope | Mocks | Test client | External systems |
 |---|---|---|---|---|
@@ -60,6 +60,8 @@ A test that cannot fail is not evidence. It passes on the day the behaviour is d
 - **Assert the property, not the absence of its consequence.** A field that is false and a field that is absent are different states, and most assertions cannot tell them apart. Only one of them is the property.
 
 ## Mocking strategy
+
+This section states what each layer mocks and what kind of substitute stands in for state, not the tool or mechanism that does it.
 
 - **Unit**: mock any module boundary you control.
 - **Integration**: external systems mocked or substituted; SUT itself is real.
