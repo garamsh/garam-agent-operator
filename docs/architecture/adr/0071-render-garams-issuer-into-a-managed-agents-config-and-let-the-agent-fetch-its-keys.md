@@ -34,7 +34,7 @@ This operator already gives the adapter garam's machine address (`--garam-addres
         keys-url: https://<--garam-address>/message-signing-keys
         keys-ca-file: /run/sherlock/credentials/server-root.pem
 
-- **`issuer`** is a new manager flag, `--garam-issuer`: exactly garam's `machine.issuer`, an https origin with no path and no trailing slash. The manager refuses any other form at start, because `sherlock` compares it exactly.
+- **`issuer`** is a new manager flag, `--garam-issuer`, rendered byte for byte: exactly garam's `machine.issuer`, which `sherlock` compares with a signature's `iss` exactly. Nothing trims a trailing slash, lowercases or normalises it, and nothing refuses a form, because any change makes the issuer one no signature names. The dev cluster's is `https://machine.dev.garam.sh` (`garamsh/gitops#298`).
 - **`keys-url`** is derived from `--garam-address`, the address the adapter reaches garam's machine listener at, and never from the issuer. In-cluster, that address can be a Service name while the issuer is a public origin.
 - **`keys-ca-file`** is `garam.ServerRootKey` in the copy of the agent's credential that the agent container already mounts at `/run/sherlock/credentials`. It is the file the adapter reads as its server root, from the same volume. No mount is added.
 - **Which agents.** Every agent whose Pod carries the adapter (`adapterBuilt`), on either source, since both sources run the adapter that signs. Rendering it for `Control`-source agents alone would leave a signing adapter in front of a `Garam`-source agent that refuses its messages.
@@ -57,3 +57,4 @@ Enrolment, certificate issuance, the placement token and mTLS are unchanged (gar
 - **`keys-url` built from the issuer.** The issuer is what a signature names, not where the agent's network reaches garam. In-cluster that can be another host.
 - **A second mount of the server root alone into the agent container.** The agent already mounts the copy holding it, so a second mount adds a volume and a path and buys nothing.
 - **Hard-coding the issuer.** It differs per deployment, and it is garam's chart value.
+- **Validating or normalising the flag's value.** A check of the origin's form, or trimming a trailing slash, would refuse or alter a value garam's chart sets, and only the exact value matches what garam signs.
