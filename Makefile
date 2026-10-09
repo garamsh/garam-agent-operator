@@ -105,7 +105,8 @@ setup-test-e2e: kind ## Set up a Kind cluster for e2e tests if it does not exist
 # starts on the Docker daemon DOCKER_HOST names; it needs no cluster.
 .PHONY: test-e2e-control
 test-e2e-control: garam-e2e ## Run the control service's e2e tests: the built binary against PostgreSQL and garam at GARAM_REVISION.
-	GARAM_BIN_DIR="$(GARAM_DIR)" GARAM_MIGRATIONS_DIR="$(GARAM_DIR)/src/migrations" \
+	@echo "test-e2e-control: garam at $(GARAM_REVISION), from $$(cat "$(GARAM_DIR)/provenance")"
+	GARAM_BIN_DIR="$(GARAM_DIR)" GARAM_MIGRATIONS_DIR="$(GARAM_DIR)/_migrations" \
 		go test -tags=e2e ./tests/control/ -v -count=1
 
 # How long `go test` may run the Kind suite, every phase included. Without it
@@ -433,25 +434,77 @@ LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
 	mkdir -p "$(LOCALBIN)"
 
-# The garam the control e2e suite runs against, built from garamsh/garam at
-# GARAM_REVISION into a directory named for it: `garam`, and the test-principal
-# fixture that prepares its database (tests/testprincipal/README.md §Invocation
-# at that commit). garamsh/garam is private, so the fetch needs git credentials
-# that can read it. The PM moves the pin by hand and reviews it at each
-# promotion to main; no Dependabot ecosystem reads a Makefile variable.
-GARAM_REVISION ?= f54b9e8cda824dc06df86513e68b49556f120eef
+# The garam the control e2e suite runs against, at GARAM_REVISION, in a
+# directory named for it: `garam`, the test-principal fixture that prepares its
+# database (tests/testprincipal/README.md §Invocation at that commit), and its
+# migrations, as `_migrations/`: the leading underscore keeps the go tool's
+# `./...` out of garam's migration tests there. They are copied out of garam's
+# private test image in ECR, in account 486152169996, pinned by digest, and
+# never run from it (#271). The image carries the commit it was built from as
+# its org.opencontainers.image.revision label, and garam-e2e refuses an image
+# whose label is not GARAM_REVISION. Reading it needs an ECR login that can pull
+# from that repository: CI's, through the role test-e2e.yml assumes, or a local
+# `aws ecr get-login-password | docker login`.
+#
+# The image is bound by digest alone. Its tags, the commit's 12 hex digits and
+# pinned-garam-agent-operator, are informational; garam's lifecycle policy keeps
+# it while pinned-garam-agent-operator names it (garamsh/garam@d6874d2
+# tests/testprincipal/README.md §The test image).
+#
+# Pinning (#271): GARAM_REVISION, GARAM_TEST_REPOSITORY and
+# GARAM_TEST_IMAGE_DIGEST move together, in one pull request, by hand; no
+# Dependabot ecosystem reads a Makefile variable. That pull request writes here
+# the commit and digest garam's PM confirms, and is merged only once they are
+# confirmed.
+GARAM_REVISION ?= d6874d21faf3582ffe4e814643f5b15068333622
+GARAM_TEST_REGISTRY ?= 486152169996.dkr.ecr.ap-northeast-2.amazonaws.com
+GARAM_TEST_REPOSITORY ?= garam-dev/garam-test
+GARAM_TEST_IMAGE_DIGEST ?= sha256:7a8fc22f7abb7fc653241a1eb1d0779eab41e97f9f26419de9f0ba201f1dc328
 GARAM_REPOSITORY ?= https://github.com/garamsh/garam.git
 GARAM_DIR = $(LOCALBIN)/garam-$(GARAM_REVISION)
 
 .PHONY: garam-e2e
-garam-e2e: $(GARAM_DIR)/garam ## Build garam and its test-principal fixture at GARAM_REVISION for the control e2e suite.
+garam-e2e: $(GARAM_DIR)/garam ## Copy garam, its test-principal fixture and its migrations at GARAM_REVISION out of garam's test image.
 
+# Copied into a scratch directory that takes GARAM_DIR's name only once every
+# file is in, so an interrupted copy never leaves the target looking made.
 $(GARAM_DIR)/garam:
-	rm -rf "$(GARAM_DIR)" && mkdir -p "$(GARAM_DIR)/src"
-	git -C "$(GARAM_DIR)/src" init --quiet
-	git -C "$(GARAM_DIR)/src" fetch --quiet --depth 1 "$(GARAM_REPOSITORY)" $(GARAM_REVISION)
-	git -C "$(GARAM_DIR)/src" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
-	cd "$(GARAM_DIR)/src" && go build -o ../testprincipal ./tests/testprincipal && go build -o ../garam ./cmd/garam
+	@if [ -z "$(GARAM_TEST_REPOSITORY)" ] || [ -z "$(GARAM_TEST_IMAGE_DIGEST)" ]; then \
+		echo "garam-e2e: GARAM_TEST_REPOSITORY or GARAM_TEST_IMAGE_DIGEST is empty: set both, or run make garam-e2e-from-source" >&2; exit 1; \
+	fi; \
+	ref="$(GARAM_TEST_REGISTRY)/$(GARAM_TEST_REPOSITORY)@$(GARAM_TEST_IMAGE_DIGEST)"; \
+	$(CONTAINER_TOOL) pull --quiet "$$ref" >/dev/null || { echo "garam-e2e: could not pull $$ref: log in to $(GARAM_TEST_REGISTRY) with pull access to the repository, or run make garam-e2e-from-source" >&2; exit 1; }; \
+	revision=$$($(CONTAINER_TOOL) image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$$ref"); \
+	if [ "$$revision" != "$(GARAM_REVISION)" ]; then \
+		echo "garam-e2e: $$ref is labelled revision '$$revision', but GARAM_REVISION is '$(GARAM_REVISION)': move the two together" >&2; exit 1; \
+	fi; \
+	rm -rf "$(GARAM_DIR)" "$(GARAM_DIR).partial" && mkdir -p "$(GARAM_DIR).partial"; \
+	container=$$($(CONTAINER_TOOL) create "$$ref" /garam) || exit 1; \
+	status=0; \
+	for pair in /garam:garam /testprincipal:testprincipal /migrations:_migrations; do \
+		$(CONTAINER_TOOL) cp "$$container:$${pair%%:*}" "$(GARAM_DIR).partial/$${pair#*:}" || status=1; \
+	done; \
+	$(CONTAINER_TOOL) rm "$$container" >/dev/null; \
+	[ "$$status" -eq 0 ] || { echo "garam-e2e: could not copy garam's files out of $$ref" >&2; exit 1; }; \
+	echo "image $$ref" > "$(GARAM_DIR).partial/provenance"; \
+	mv "$(GARAM_DIR).partial" "$(GARAM_DIR)"; \
+	echo "garam-e2e: garam, testprincipal and _migrations/ at $(GARAM_REVISION), from $$ref"
+
+# The fallback for when garam's test image cannot be pulled: the same files built
+# from garamsh/garam's source at GARAM_REVISION, which needs git credentials that
+# can read that private repository. CI does not run it, because its token reads
+# no other private repository (#271). It writes the layout garam-e2e does, so
+# `make garam-e2e-from-source test-e2e-control` runs the suite on it.
+.PHONY: garam-e2e-from-source
+garam-e2e-from-source: ## Build garam, its test-principal fixture and its migrations at GARAM_REVISION from source, where the test image cannot be pulled.
+	rm -rf "$(GARAM_DIR)" "$(GARAM_DIR).partial" && mkdir -p "$(GARAM_DIR).partial/src"
+	git -C "$(GARAM_DIR).partial/src" init --quiet
+	git -C "$(GARAM_DIR).partial/src" fetch --quiet --depth 1 "$(GARAM_REPOSITORY)" $(GARAM_REVISION)
+	git -C "$(GARAM_DIR).partial/src" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
+	cd "$(GARAM_DIR).partial/src" && go build -o ../testprincipal ./tests/testprincipal && go build -o ../garam ./cmd/garam
+	cp -R "$(GARAM_DIR).partial/src/migrations" "$(GARAM_DIR).partial/_migrations"
+	echo "source $(GARAM_REPOSITORY)@$(GARAM_REVISION)" > "$(GARAM_DIR).partial/provenance"
+	mv "$(GARAM_DIR).partial" "$(GARAM_DIR)"
 
 ## Tool Binaries
 # kubectl is not pinned the way the tools below are: k8s.io/kubernetes carries
