@@ -183,44 +183,6 @@ func reconcileAgentWithAdapter(name string) (reconcile.Result, error) {
 	})
 }
 
-// reconcileAgentMigrating runs one reconcile for the named Agent, with this
-// operator running agents' workspace from testWorkspaceImage and told to replace
-// a StatefulSet whose workspace shares the state claim.
-func reconcileAgentMigrating(name string) (reconcile.Result, error) {
-	return runReconcile(name, &AgentReconciler{
-		Client:              k8sClient,
-		Scheme:              k8sClient.Scheme(),
-		CopyImage:           testCopyImage,
-		WorkspaceImage:      testWorkspaceImage,
-		MigrateSharedClaims: true,
-	})
-}
-
-// reconcileAgentWithInstructions runs one reconcile for the named Agent, with
-// this operator placing garam's adapter and rendering garam's reply instruction
-// as an instructions file.
-func reconcileAgentWithInstructions(name string) (reconcile.Result, error) {
-	return runReconcile(name, &AgentReconciler{
-		Client:                 k8sClient,
-		Scheme:                 k8sClient.Scheme(),
-		CopyImage:              testCopyImage,
-		AdapterImage:           testAdapterImage,
-		GaramAddress:           testGaramAddress,
-		RenderInstructionsFile: true,
-	})
-}
-
-// reconcileAgentRenderingEpoch runs one reconcile for the named Agent, with this
-// operator passing agents their assignment epoch.
-func reconcileAgentRenderingEpoch(name string) (reconcile.Result, error) {
-	return runReconcile(name, &AgentReconciler{
-		Client:                k8sClient,
-		Scheme:                k8sClient.Scheme(),
-		CopyImage:             testCopyImage,
-		RenderAssignmentEpoch: true,
-	})
-}
-
 // runReconcile runs one reconcile for the named Agent through reconciler.
 func runReconcile(name string, reconciler *AgentReconciler) (reconcile.Result, error) {
 	// envtest's client reads straight from the API server, which is what the

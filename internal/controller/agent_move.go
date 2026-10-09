@@ -311,7 +311,7 @@ func (r *AgentReconciler) beginMove(ctx context.Context, agent *agentv1alpha1.Ag
 	} else if !hasWorkspaceClaim(statefulSet) {
 		return r.refuseBeforeRecord(agent, plan, moveRefusal{agentv1alpha1.ReasonMoveSharedClaim,
 			"The workspace shares the state claim, so the claim holds the workspace as well as the memory; " +
-				"it is moved only once the agent claims them separately (ADR 0047)"})
+				"it is moved only once the agent claims them separately, which this operator's replacement gives it (ADR 0068)"})
 	}
 
 	plan.hold = true

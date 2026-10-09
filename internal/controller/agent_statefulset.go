@@ -8,7 +8,6 @@ import (
 	"path"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -121,27 +120,6 @@ const (
 	// agent's state (ADR 0044).
 	workspaceVolumeName = "workspace"
 
-	// seedContainerName is the init container that copies an upgraded agent's
-	// workspace off its state claim onto its own, once. It is built only on a
-	// StatefulSet carrying seedAnnotation.
-	seedContainerName = "workspace-seed"
-
-	// seedAnnotation marks a StatefulSet created in place of one whose workspace
-	// shared the state claim, which is the only kind whose Pod seeds the
-	// workspace. Its value names the claim the seed copies from.
-	seedAnnotation = "agent.garam.sh/workspace-seed"
-
-	// seedStateMountPath and seedWorkspaceMountPath are where the seed container
-	// reads the state claim and writes the workspace claim. They are this
-	// operator's paths for its own script, so they are not the descriptor's.
-	seedStateMountPath     = "/run/garam/seed/state"
-	seedWorkspaceMountPath = "/run/garam/seed/workspace"
-
-	// seededMarker is the file the seed leaves at the root of the workspace
-	// claim once its copy is durable. It is beside the directory the workspace
-	// serves, not in it.
-	seededMarker = ".seeded"
-
 	// configContentVariable carries the file's whole text to the init container
 	// that writes it. It is this operator's name, set on that container and on no
 	// other, so nothing the agent spawns inherits a pin set — which is the custody
@@ -202,14 +180,11 @@ const (
 )
 
 // The settings garam's adapter reads, by the names garam@e81a1e0 gives them
-// (internal/cli/cli.go:182-191). GATEWAY_AGENT is garam@fdfb76d's, which that
-// adapter requires (internal/cli/delivery.go:90-91) and garam@e81a1e0 reads
-// nowhere.
+// (internal/cli/cli.go:182-191).
 const (
 	adapterAgentSetting          = "GARAM_ADAPTER_AGENT"
 	adapterMachineURLSetting     = "GARAM_ADAPTER_MACHINE_URL"
 	adapterGatewayURLSetting     = "GARAM_ADAPTER_GATEWAY_URL"
-	adapterGatewayAgentSetting   = "GARAM_ADAPTER_GATEWAY_AGENT"
 	adapterCertFileSetting       = "GARAM_ADAPTER_TLS_CERT_FILE"
 	adapterKeyFileSetting        = "GARAM_ADAPTER_TLS_KEY_FILE"
 	adapterServerRootSetting     = "GARAM_ADAPTER_SERVER_ROOT_FILE"
@@ -285,21 +260,6 @@ func writeFileCommand(file, variable string) string {
 	return fmt.Sprintf("mkdir -p %s && printf '%%s' \"$%s\" > %s", path.Dir(file), variable, file)
 }
 
-// seedWorkspaceCommand copies the workspace directory from, on the state claim,
-// into to, on the workspace claim, unless marker says it was already copied. It
-// copies and never moves, so the source stays where it was. The marker is
-// written only after a sync makes the copy durable, and synced itself, so a stop
-// at any point leaves either a copy that is done or a marker that is absent and a
-// copy that runs again. A state claim with no workspace directory is seeded with
-// nothing.
-func seedWorkspaceCommand(from, to, marker string) []string {
-	script := fmt.Sprintf("if [ ! -e %[3]s ]; then "+
-		"if [ -d %[1]s ]; then mkdir -p %[2]s && cp -a %[1]s/. %[2]s/; fi; "+
-		"sync && : > %[3]s && sync; fi", from, to, marker)
-
-	return shellCommand(script)
-}
-
 // errReplacing reports that the StatefulSet is being replaced, so there is none
 // to reconcile until the old one is gone.
 var errReplacing = errors.New("the statefulset is being replaced")
@@ -335,11 +295,11 @@ func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agent
 		ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: agent.Namespace},
 	}
 
-	seed, err := r.replaceSharedShape(ctx, agent, statefulSet)
-	if err != nil {
+	if err := r.replaceSharedShape(ctx, statefulSet); err != nil {
 		return nil, err
 	}
-	if plan, err = r.replaceStateTemplate(ctx, agent, statefulSet, plan); err != nil {
+	plan, err := r.replaceStateTemplate(ctx, agent, statefulSet, plan)
+	if err != nil {
 		return nil, err
 	}
 
@@ -349,9 +309,6 @@ func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agent
 	}
 
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, statefulSet, func() error {
-		if statefulSet.CreationTimestamp.IsZero() && seed {
-			statefulSet.Annotations = map[string]string{seedAnnotation: stateVolumeName}
-		}
 		applyLineage(statefulSet, lineage)
 
 		return r.applyAgent(agent, statefulSet, descriptor, plan)
@@ -401,12 +358,11 @@ func applyLineage(statefulSet *appsv1.StatefulSet, lineage string) {
 }
 
 // replaceSharedShape deletes a StatefulSet whose workspace shares the state
-// claim, leaving its Pod and its claims where they are, and reports whether the
-// one to be created in its place seeds the workspace. It deletes one only where
-// MigrateSharedClaims is set; otherwise the StatefulSet is kept in its shape
-// (ADR 0047). A claim template cannot be
-// changed after creation, so a second claim needs a second StatefulSet (ADR
-// 0044).
+// claim, leaving its Pod and its claims where they are. Every such StatefulSet
+// is replaced (ADR 0068). A claim template cannot be changed after creation, so
+// a second claim needs a second StatefulSet (ADR 0044). The next one keeps the
+// state claim, by its name, and gives the workspace a new, empty claim: nothing
+// is copied onto it.
 //
 // The old Pod is the only writer of the state claim throughout. Orphaned, it
 // keeps running alone until the new StatefulSet adopts it by its labels and
@@ -414,23 +370,12 @@ func applyLineage(statefulSet *appsv1.StatefulSet, lineage string) {
 // are seen to stop (ADR 0042). The new Pod has the old one's name, so it cannot
 // be created while the old one exists, and the state claim is the same claim by
 // name, so the fence reads the claim the old Pod started on.
-//
-// Whether to seed is read off the cluster rather than remembered, so a manager
-// stopped between the delete and the create decides it again the same way: a
-// StatefulSet created where the state claim exists and the workspace claim does
-// not is one replacing the shared shape. A new agent has neither, and a
-// StatefulSet deleted by hand from the separate shape leaves both.
-func (r *AgentReconciler) replaceSharedShape(ctx context.Context, agent *agentv1alpha1.Agent,
-	statefulSet *appsv1.StatefulSet) (seed bool, err error) {
+func (r *AgentReconciler) replaceSharedShape(ctx context.Context, statefulSet *appsv1.StatefulSet) error {
 	existing := &appsv1.StatefulSet{}
-	err = r.Get(ctx, client.ObjectKeyFromObject(statefulSet), existing)
+	err := r.Get(ctx, client.ObjectKeyFromObject(statefulSet), existing)
 	if err == nil {
-		// An existing StatefulSet decided its seed when it was created, and its
-		// annotation carries that decision; only a missing one is decided here.
-		// A shared-shape one is kept as it is unless this operator is told to
-		// replace it, and applyAgent then renders it in that shape (ADR 0047).
-		if hasWorkspaceClaim(existing) || !r.MigrateSharedClaims {
-			return false, nil
+		if hasWorkspaceClaim(existing) {
+			return nil
 		}
 		// A shared-shape StatefulSet still deleting is deleted again, which
 		// changes nothing, and is waited for the same way.
@@ -439,27 +384,18 @@ func (r *AgentReconciler) replaceSharedShape(ctx context.Context, agent *agentv1
 		err := r.Delete(ctx, existing, client.PropagationPolicy(metav1.DeletePropagationOrphan),
 			client.Preconditions{UID: &uid})
 		if err != nil && !apierrors.IsNotFound(err) {
-			return false, fmt.Errorf("delete the statefulset its workspace shares a claim in, leaving its pod: %w", err)
+			return fmt.Errorf("delete the statefulset its workspace shares a claim in, leaving its pod: %w", err)
 		}
 		logf.FromContext(ctx).Info("Replacing the StatefulSet to give the workspace a claim of its own",
 			"statefulSet", existing.Name)
 
-		return false, errReplacing
+		return errReplacing
 	}
 	if !apierrors.IsNotFound(err) {
-		return false, fmt.Errorf("get statefulset: %w", err)
+		return fmt.Errorf("get statefulset: %w", err)
 	}
 
-	stateClaimed, err := r.claimExists(ctx, agent, stateVolumeName)
-	if err != nil {
-		return false, err
-	}
-	workspaceClaimed, err := r.claimExists(ctx, agent, workspaceVolumeName)
-	if err != nil {
-		return false, err
-	}
-
-	return stateClaimed && !workspaceClaimed, nil
+	return nil
 }
 
 // replaceStateTemplate deletes a StatefulSet whose own claim template still
@@ -498,22 +434,6 @@ func (r *AgentReconciler) replaceStateTemplate(ctx context.Context, agent *agent
 	return plan, errReplacingForMove
 }
 
-// claimExists reports whether the claim the StatefulSet makes from the template
-// called template exists for the Agent's Pod. It reads uncached, as the fence
-// reads claims.
-func (r *AgentReconciler) claimExists(ctx context.Context, agent *agentv1alpha1.Agent, template string) (bool, error) {
-	name := template + "-" + agentPodName(agent)
-	err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: name}, &corev1.PersistentVolumeClaim{})
-	if apierrors.IsNotFound(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("get claim %q: %w", name, err)
-	}
-
-	return true, nil
-}
-
 // claimTemplate is the StatefulSet's claim template called name, nil where it
 // has none.
 func claimTemplate(statefulSet *appsv1.StatefulSet, name string) *corev1.PersistentVolumeClaim {
@@ -527,8 +447,8 @@ func claimTemplate(statefulSet *appsv1.StatefulSet, name string) *corev1.Persist
 }
 
 // hasWorkspaceClaim reports whether the StatefulSet claims the workspace
-// separately. One kept in the shared shape does not, so it has no workspace size
-// to compare and its workspace mounts the state claim (ADR 0047).
+// separately. Only a StatefulSet in the shared shape does not, and it is
+// replaced before anything else reads it (ADR 0044, ADR 0068).
 func hasWorkspaceClaim(statefulSet *appsv1.StatefulSet) bool {
 	return claimTemplate(statefulSet, workspaceVolumeName) != nil
 }
@@ -766,7 +686,6 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	if err := r.applyConfig(agent, statefulSet, container, descriptor, controlRoot); err != nil {
 		return err
 	}
-	applySeed(r.CopyImage, statefulSet)
 	r.applyOutbox(agent, statefulSet, descriptor)
 	// After the init containers that run to completion, which make what the
 	// adapter mounts: the outbox directory and the control root.
@@ -789,13 +708,9 @@ func (r *AgentReconciler) agentArgumentsFor(agent *agentv1alpha1.Agent,
 	args := agentArguments{agentID: agent.Name}
 	if identity := agent.Spec.Identity; identity != nil {
 		args.agentID = identity.GRN
-		// Only where the deployment's agent image accepts the flag: one that
-		// does not refuses to start on it.
-		if r.RenderAssignmentEpoch {
-			args.assignmentEpoch = identity.AssignmentEpoch
-		}
+		args.assignmentEpoch = identity.AssignmentEpoch
 	}
-	if r.egoFor(agent, descriptor) != "" {
+	if agent.Spec.Ego != "" {
 		args.egoFile = descriptor.egoFileIn(descriptor.configMountPath)
 	}
 	if r.instructionsFor(agent, descriptor) != "" {
@@ -811,32 +726,11 @@ func (r *AgentReconciler) agentArgumentsFor(agent *agentv1alpha1.Agent,
 // renders the file at all. The agent composes it between its ego and its own
 // contract and never in place of the ego (ADR 0045). Empty means no file.
 func (r *AgentReconciler) instructionsFor(agent *agentv1alpha1.Agent, descriptor agentTypeDescriptor) string {
-	if !r.RenderInstructionsFile || !r.adapterBuilt(agent) {
+	if !r.adapterBuilt(agent) {
 		return ""
 	}
 
 	return descriptor.garamReplyInstruction
-}
-
-// egoFor is the text of the ego file an Agent's agent is given: the ego its
-// spec declares, and nothing of this operator's where the reply instruction
-// goes to the instructions file. The spec holds what its author wrote; an empty
-// ego means no ego file, and the agent's image keeps its default ego.
-//
-// Where this operator renders no instructions file, because the deployment's
-// agent image predates the flag, the instruction is joined to the ego wherever
-// the adapter is placed, and where the spec declares no ego it is the whole
-// file and replaces the image's default ego (ADR 0041, kept behind ADR 0045's
-// switch).
-func (r *AgentReconciler) egoFor(agent *agentv1alpha1.Agent, descriptor agentTypeDescriptor) string {
-	if r.RenderInstructionsFile || !r.adapterBuilt(agent) {
-		return agent.Spec.Ego
-	}
-	if agent.Spec.Ego == "" {
-		return descriptor.garamReplyInstruction
-	}
-
-	return strings.TrimRight(agent.Spec.Ego, "\n") + "\n\n" + descriptor.garamReplyInstruction
 }
 
 // applyConfig builds the config file an Agent's declared tool set and model
@@ -859,7 +753,7 @@ func (r *AgentReconciler) egoFor(agent *agentv1alpha1.Agent, descriptor agentTyp
 func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
 	container *corev1.Container, descriptor agentTypeDescriptor, controlRoot []byte) error {
 	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
-	egoText := r.egoFor(agent, descriptor)
+	egoText := agent.Spec.Ego
 	ego := egoText != ""
 	instructionsText := r.instructionsFor(agent, descriptor)
 	instructions := instructionsText != ""
@@ -959,46 +853,7 @@ func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet, descri
 	// here: what the workspace runs is the agent's untrusted code. Nor is the
 	// credential's copy — the workspace reads no credential, and every container
 	// mounting it is one more that can.
-	//
-	// A StatefulSet kept in the shared shape has no workspace claim, and its
-	// workspace keeps the mount it had, on the state claim: its claim templates
-	// cannot change, and a mount naming a claim it lacks would be refused
-	// (ADR 0047). The Agent reports that shape as not isolated.
-	claim := workspaceVolumeName
-	if !hasWorkspaceClaim(statefulSet) {
-		claim = stateVolumeName
-	}
-	workspace.VolumeMounts = []corev1.VolumeMount{{Name: claim, MountPath: descriptor.stateMountPath}}
-}
-
-// applySeed builds, on a StatefulSet replacing the shared shape, the init
-// container that copies the workspace off the state claim onto the workspace's
-// own, and builds none on any other. It runs before the agent and the workspace
-// start, runs the operator's script alone and never anything the agent runs, and
-// reads the state claim read-only. It stays for the StatefulSet's life: after
-// the first copy the marker makes it a no-op, and taking it out would roll the
-// Pod a second time for nothing (ADR 0044).
-func applySeed(copyImage string, statefulSet *appsv1.StatefulSet) {
-	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
-	if statefulSet.Annotations[seedAnnotation] == "" {
-		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
-			return initContainer.Name == seedContainerName
-		})
-
-		return
-	}
-
-	seed := containerNamed(initContainers, seedContainerName)
-	seed.Image = copyImage
-	// Always, on the ground the credential's init container carries.
-	seed.ImagePullPolicy = corev1.PullAlways
-	seed.Command = seedWorkspaceCommand(seedStateMountPath+"/"+workspaceDirName,
-		seedWorkspaceMountPath+"/"+workspaceDirName, seedWorkspaceMountPath+"/"+seededMarker)
-	seed.SecurityContext = containerSecurityContext()
-	seed.VolumeMounts = []corev1.VolumeMount{
-		{Name: stateVolumeName, MountPath: seedStateMountPath, ReadOnly: true},
-		{Name: workspaceVolumeName, MountPath: seedWorkspaceMountPath},
-	}
+	workspace.VolumeMounts = []corev1.VolumeMount{{Name: workspaceVolumeName, MountPath: descriptor.stateMountPath}}
 }
 
 // adapterBuilt reports whether an Agent's Pod carries garam's adapter. It needs
@@ -1056,14 +911,11 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 	// never sees the memory store.
 	outbox := corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: descriptor.outboxDir()}
 	if !r.adapterFenced(agent) {
-		// Legacy and unfenced: garam@fdfb76d's adapter refuses to start without
-		// this (internal/cli/delivery.go:90-91), and garam@e81a1e0's reads it
-		// nowhere, so it is kept for every image this mode runs with (ADR 0049).
-		// The outbox is given here too, which the legacy mode forwards on its own
-		// and never with a control socket (garam@59fe68d:internal/cli/delivery.go:98-118,
-		// internal/cli/cli.go:91-94; ADR 0060).
+		// Legacy and unfenced, a Garam-source agent's: the outbox alone, which
+		// the legacy mode forwards on its own and never with a control socket
+		// (garam@59fe68d:internal/cli/delivery.go:98-118, internal/cli/cli.go:91-94;
+		// ADR 0060).
 		adapter.Env = append(adapter.Env,
-			corev1.EnvVar{Name: adapterGatewayAgentSetting, Value: grn},
 			corev1.EnvVar{Name: adapterOutboxDirSetting, Value: outboxMountPath})
 		adapter.VolumeMounts = append(adapter.VolumeMounts, outbox)
 
@@ -1084,12 +936,11 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 }
 
 // adapterFenced reports whether the agent's adapter activates through the
-// control service: only where the adapter is built, this operator is told to,
-// and the agent is the control service's, since only those register a
-// placement to activate (ADR 0049).
+// control service: wherever the adapter is built for an agent that is the
+// control service's, since only those register a placement to activate
+// (ADR 0049, ADR 0068).
 func (r *AgentReconciler) adapterFenced(agent *agentv1alpha1.Agent) bool {
-	return r.adapterBuilt(agent) && r.AdapterControl &&
-		agent.Spec.Identity.Source == agentv1alpha1.DesiredSourceControl
+	return r.adapterBuilt(agent) && agent.Spec.Identity.Source == agentv1alpha1.DesiredSourceControl
 }
 
 // controlRootFor is the control root to give the agent's adapter, nil where it

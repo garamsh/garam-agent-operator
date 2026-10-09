@@ -54,11 +54,9 @@ var _ = Describe("Agent status", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		agent := readAgent(name)
-		Expect(agent.Status.Conditions).To(HaveLen(5))
+		Expect(agent.Status.Conditions).To(HaveLen(4))
 		Expect(meta.FindStatusCondition(agent.Status.Conditions, agentv1alpha1.ConditionMemoryMove)).
 			To(HaveField("Reason", agentv1alpha1.ReasonNoMove))
-		Expect(meta.FindStatusCondition(agent.Status.Conditions, agentv1alpha1.ConditionStateIsolated)).
-			To(HaveField("Status", metav1.ConditionTrue))
 		Expect(agent.Status.ObservedGeneration).To(Equal(agent.Generation))
 		suspended := meta.FindStatusCondition(agent.Status.Conditions, agentv1alpha1.ConditionSuspended)
 		Expect(suspended).NotTo(BeNil())

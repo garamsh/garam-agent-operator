@@ -578,26 +578,6 @@ const (
 	ReasonPVCChanged = "PVCChanged"
 )
 
-// ConditionStateIsolated is the condition type reporting which shape the
-// agent's workload runs in: whether the agent's state and its workspace are on
-// separate claims, so the code the agent runs cannot reach its state (ADR 0044).
-// False lists an agent still in the shape where the workspace shares the state
-// claim, which this operator replaces only where it is told to (ADR 0047).
-const ConditionStateIsolated = "StateIsolated"
-
-// Reasons for the StateIsolated condition. WorkloadNotObserved and
-// WorkloadReplacing are shared with Synced.
-const (
-	// ReasonSeparateClaims is set when the workload claims the state and the
-	// workspace separately, and only the agent's container mounts the state.
-	ReasonSeparateClaims = "SeparateClaims"
-
-	// ReasonSharedClaim is set when the workload is in the shape where the
-	// workspace mounts the state claim, and this operator is not told to replace
-	// it.
-	ReasonSharedClaim = "SharedClaim"
-)
-
 // ConditionMemoryMove is the condition type reporting where a move of the
 // agent's memory stands (ADR 0065). It is True only once the agent accepted the
 // copy; every step before, and every refusal, is False with its reason.
@@ -628,8 +608,8 @@ const (
 	// to copy with.
 	ReasonCopyImageUnset = "CopyImageUnset"
 
-	// ReasonMoveSharedClaim refuses a move of an agent whose workspace shares
-	// its state claim (ADR 0047).
+	// ReasonMoveSharedClaim refuses a move of an agent whose workspace still
+	// shares its state claim, which the claim replacement removes (ADR 0068).
 	ReasonMoveSharedClaim = "SharedClaim"
 
 	// ReasonWriterNotDrained refuses a move whose source's last writer was not
@@ -662,7 +642,6 @@ const (
 // +kubebuilder:printcolumn:name="Synced",type=string,JSONPath=`.status.conditions[?(@.type=="Synced")].status`
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Synced")].reason`
 // +kubebuilder:printcolumn:name="Available",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
-// +kubebuilder:printcolumn:name="Isolated",type=string,JSONPath=`.status.conditions[?(@.type=="StateIsolated")].status`
 // +kubebuilder:printcolumn:name="Suspended",type=string,JSONPath=`.status.conditions[?(@.type=="Suspended")].status`
 // +kubebuilder:printcolumn:name="Moved",type=string,JSONPath=`.status.conditions[?(@.type=="MemoryMove")].reason`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

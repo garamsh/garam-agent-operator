@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +27,7 @@ const (
 // fencedSettings those it activates through the control service with.
 var (
 	legacySettings = []string{
-		adapterAgentSetting, adapterMachineURLSetting, adapterGatewayURLSetting, adapterGatewayAgentSetting,
+		adapterAgentSetting, adapterMachineURLSetting, adapterGatewayURLSetting,
 		adapterCertFileSetting, adapterKeyFileSetting, adapterServerRootSetting, adapterOutboxDirSetting,
 	}
 	fencedSettings = []string{
@@ -39,10 +38,10 @@ var (
 	}
 )
 
-// reconcileAgentWithAdapterControl runs one reconcile for the named Agent, with
-// this operator placing garam's adapter and a workspace, and giving the adapter
-// the control service's settings where control is set.
-func reconcileAgentWithAdapterControl(name string, control bool) (reconcile.Result, error) {
+// reconcileAgentWithControl runs one reconcile for the named Agent, with this
+// operator placing garam's adapter and a workspace, and naming the control
+// service a Control-source agent's adapter activates through.
+func reconcileAgentWithControl(name string) (reconcile.Result, error) {
 	GinkgoHelper()
 
 	rootFile := filepath.Join(GinkgoT().TempDir(), "control-root.pem")
@@ -55,7 +54,6 @@ func reconcileAgentWithAdapterControl(name string, control bool) (reconcile.Resu
 		WorkspaceImage:  testWorkspaceImage,
 		AdapterImage:    testAdapterImage,
 		GaramAddress:    testGaramAddress,
-		AdapterControl:  control,
 		ControlAddress:  testControlAddress,
 		ControlRootFile: rootFile,
 	})
@@ -82,20 +80,20 @@ func settingNames(container corev1.Container) []string {
 }
 
 var _ = Describe("Adapter control settings", func() {
-	It("keeps the adapter legacy with the switch off, and gives a managed agent's adapter every control setting with it on", func() {
-		By("the control: with the switch off, a managed agent's adapter is legacy")
-		off := "adapter-control-off"
-		agentFrom(off, agentv1alpha1.DesiredSourceControl)
-		_, err := reconcileAgentWithAdapterControl(off, false)
+	It("gives a managed agent's adapter every control setting, and keeps a Garam-source agent's adapter legacy", func() {
+		By("the control: a Garam-source agent's adapter is legacy, since it registers no placement")
+		claimed := "adapter-control-garam-source"
+		agentFrom(claimed, agentv1alpha1.DesiredSourceGaram)
+		_, err := reconcileAgentWithControl(claimed)
 		Expect(err).NotTo(HaveOccurred())
-		pod := statefulSetFor(off).Spec.Template.Spec
+		pod := statefulSetFor(claimed).Spec.Template.Spec
 		Expect(settingNames(initContainerOf(pod, adapterContainerName))).To(ConsistOf(legacySettings))
 		Expect(pod.Volumes).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
 
-		By("with the switch on, all ten settings, the gateway's agent dropped")
+		By("a Control-source agent's adapter, all ten settings")
 		on := "adapter-control-on"
 		agentFrom(on, agentv1alpha1.DesiredSourceControl)
-		_, err = reconcileAgentWithAdapterControl(on, true)
+		_, err = reconcileAgentWithControl(on)
 		Expect(err).NotTo(HaveOccurred())
 		pod = statefulSetFor(on).Spec.Template.Spec
 		adapter := initContainerOf(pod, adapterContainerName)
@@ -118,50 +116,40 @@ var _ = Describe("Adapter control settings", func() {
 		Expect(environmentOf(writer)).To(HaveKeyWithValue(controlRootContentVariable, testControlRoot))
 		Expect(writer.VolumeMounts).To(ContainElement(
 			corev1.VolumeMount{Name: controlRootVolumeName, MountPath: controlRootMountPath}))
-
-		By("a Garam-source agent staying legacy under the same switch, since it registers no placement")
-		claimed := "adapter-control-garam-source"
-		agentFrom(claimed, agentv1alpha1.DesiredSourceGaram)
-		_, err = reconcileAgentWithAdapterControl(claimed, true)
-		Expect(err).NotTo(HaveOccurred())
-		pod = statefulSetFor(claimed).Spec.Template.Spec
-		Expect(settingNames(initContainerOf(pod, adapterContainerName))).To(ConsistOf(legacySettings))
 	})
 
 	// #310, ADR 0060: a legacy adapter forwards the outbox when it is given one, and is refused a
 	// control socket without the control settings (garam@59fe68d:internal/cli/delivery.go:98-118).
-	It("gives a Garam-source agent's adapter its outbox, and none of the control settings, with the switch on or off", func() {
-		for _, control := range []bool{false, true} {
-			name := fmt.Sprintf("outbox-garam-source-%t", control)
-			agentFrom(name, agentv1alpha1.DesiredSourceGaram)
-			_, err := reconcileAgentWithAdapterControl(name, control)
-			Expect(err).NotTo(HaveOccurred())
-			pod := statefulSetFor(name).Spec.Template.Spec
-			adapter := initContainerOf(pod, adapterContainerName)
+	It("gives a Garam-source agent's adapter its outbox, and none of the control settings", func() {
+		name := "outbox-garam-source"
+		agentFrom(name, agentv1alpha1.DesiredSourceGaram)
+		_, err := reconcileAgentWithControl(name)
+		Expect(err).NotTo(HaveOccurred())
+		pod := statefulSetFor(name).Spec.Template.Spec
+		adapter := initContainerOf(pod, adapterContainerName)
 
-			By("the outbox's maker, before the adapter")
-			outboxAt := slices.IndexFunc(pod.InitContainers, func(c corev1.Container) bool { return c.Name == outboxContainerName })
-			adapterAt := slices.IndexFunc(pod.InitContainers, func(c corev1.Container) bool { return c.Name == adapterContainerName })
-			Expect(outboxAt).To(SatisfyAll(BeNumerically(">=", 0), BeNumerically("<", adapterAt)), "switch %t", control)
+		By("the outbox's maker, before the adapter")
+		outboxAt := slices.IndexFunc(pod.InitContainers, func(c corev1.Container) bool { return c.Name == outboxContainerName })
+		adapterAt := slices.IndexFunc(pod.InitContainers, func(c corev1.Container) bool { return c.Name == adapterContainerName })
+		Expect(outboxAt).To(SatisfyAll(BeNumerically(">=", 0), BeNumerically("<", adapterAt)))
 
-			By("the outbox mounted into the adapter at its subPath, and named in its settings")
-			Expect(adapter.VolumeMounts).To(ContainElement(
-				corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: agentTypeSherlock.outboxDir()}))
-			Expect(environmentOf(adapter)).To(HaveKeyWithValue(adapterOutboxDirSetting, outboxMountPath))
+		By("the outbox mounted into the adapter at its subPath, and named in its settings")
+		Expect(adapter.VolumeMounts).To(ContainElement(
+			corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: agentTypeSherlock.outboxDir()}))
+		Expect(environmentOf(adapter)).To(HaveKeyWithValue(adapterOutboxDirSetting, outboxMountPath))
 
-			By("none of the control settings, no control socket, and no control root")
-			Expect(settingNames(adapter)).To(ConsistOf(legacySettings), "switch %t", control)
-			Expect(settingNames(adapter)).NotTo(ContainElements(adapterControlURLSetting, adapterControlRootSetting,
-				adapterPlacementTokenSetting, "GARAM_ADAPTER_CONTROL_SOCKET"))
-			Expect(adapter.VolumeMounts).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
-			Expect(pod.Volumes).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
-		}
+		By("none of the control settings, no control socket, no gateway agent, and no control root")
+		Expect(settingNames(adapter)).To(ConsistOf(legacySettings))
+		Expect(settingNames(adapter)).NotTo(ContainElements(adapterControlURLSetting, adapterControlRootSetting,
+			adapterPlacementTokenSetting, "GARAM_ADAPTER_CONTROL_SOCKET", "GARAM_ADAPTER_GATEWAY_AGENT"))
+		Expect(adapter.VolumeMounts).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
+		Expect(pod.Volumes).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
 	})
 
 	It("mounts the agent's outbox into the adapter alone, and nothing else of the state claim", func() {
 		name := "outbox-adapter-only"
 		agentFrom(name, agentv1alpha1.DesiredSourceControl)
-		_, err := reconcileAgentWithAdapterControl(name, true)
+		_, err := reconcileAgentWithControl(name)
 		Expect(err).NotTo(HaveOccurred())
 		pod := statefulSetFor(name).Spec.Template.Spec
 
