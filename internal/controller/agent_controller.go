@@ -265,6 +265,13 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		return err
 	}
 
+	// A Pod on another revision than the StatefulSet's is rolled here, whatever
+	// else is reported, since the StatefulSet that adopted it may never do so.
+	outdated, err := r.rollOutdatedPod(ctx, statefulSet)
+	if err != nil {
+		return err
+	}
+
 	workspaceSize := workspaceStorageSize(agent)
 	// A claim a move put the memory on is sized and classed by the move, so the
 	// spec's state storage describes only a claim the template still makes.
@@ -281,11 +288,18 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageClassImmutable,
 			fmt.Sprintf("The volume was claimed from storage class %s and spec.storageClassName now asks for %s, which a StatefulSet's claim template cannot be changed to",
 				describeStorageClass(claimedClass), describeStorageClass(agent.Spec.StorageClassName)))
+	} else if outdated != "" {
+		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonWorkloadRolling, outdated)
 	} else {
 		setSynced(agent, metav1.ConditionTrue, agentv1alpha1.ReasonWorkloadReconciled,
 			fmt.Sprintf("StatefulSet %q carries what this Agent's spec asks for", statefulSet.Name))
 	}
 
+	if outdated != "" {
+		setAvailable(agent, metav1.ConditionFalse, agentv1alpha1.ReasonReplicaOutdated, outdated)
+
+		return nil
+	}
 	setAvailableFromWorkload(agent, statefulSet)
 
 	return nil

@@ -402,6 +402,52 @@ func (r *AgentReconciler) replaceSharedShape(ctx context.Context, statefulSet *a
 	return nil
 }
 
+// rollOutdatedPod deletes the agent's Pod where it runs a revision other than
+// the StatefulSet's update revision, and says so; it says nothing where the Pod
+// is on that revision, absent, or the StatefulSet's status not yet current. A
+// StatefulSet that replaced a shared-shape one adopts the old Pod and can record
+// its rollout complete with that Pod on the old revision, so it never rolls it
+// (#340). The delete is an ordinary one, which the writer fence's finalizer
+// holds until the Pod's writers are seen to stop; it is never forced. A Pod the
+// StatefulSet does not yet own is left for it to adopt, and only reported.
+func (r *AgentReconciler) rollOutdatedPod(ctx context.Context, statefulSet *appsv1.StatefulSet) (string, error) {
+	update := statefulSet.Status.UpdateRevision
+	if update == "" || statefulSet.Status.ObservedGeneration < statefulSet.Generation {
+		return "", nil
+	}
+	pod := &corev1.Pod{}
+	name := statefulSet.Name + "-0"
+	if err := r.Get(ctx, client.ObjectKey{Namespace: statefulSet.Namespace, Name: name}, pod); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", nil
+		}
+
+		return "", fmt.Errorf("get the agent's pod: %w", err)
+	}
+	revision := pod.Labels[appsv1.ControllerRevisionHashLabelKey]
+	if revision == update {
+		return "", nil
+	}
+	outdated := fmt.Sprintf("Pod %q runs revision %q and StatefulSet %q is at %q", pod.Name, revision,
+		statefulSet.Name, update)
+	if pod.DeletionTimestamp != nil {
+		return outdated + "; the Pod is deleting, held by the writer fence until its writers stop", nil
+	}
+	owner := metav1.GetControllerOf(pod)
+	if owner == nil || owner.UID != statefulSet.UID {
+		return outdated + "; the StatefulSet has not adopted the Pod yet", nil
+	}
+
+	uid := pod.UID
+	if err := r.Delete(ctx, pod, client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
+		return "", fmt.Errorf("delete the agent's pod to roll it onto the statefulset's revision: %w", err)
+	}
+	logf.FromContext(ctx).Info("Rolling the agent's Pod onto the StatefulSet's revision", "pod", pod.Name,
+		"revision", revision, "updateRevision", update)
+
+	return outdated + "; the Pod is deleted to roll it, and the writer fence holds it until its writers stop", nil
+}
+
 // replaceStateTemplate deletes a StatefulSet whose own claim template still
 // makes the state claim, once the agent's memory is on a claim it mounts by
 // name: a claim template cannot be removed from a StatefulSet. Only a move
