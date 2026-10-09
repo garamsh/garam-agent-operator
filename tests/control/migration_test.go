@@ -130,7 +130,7 @@ func TestMigration_CreatesAnEmptyDatabaseFromTheFirst(t *testing.T) {
 // migrations recorded that holds a table, as one a build before migrations made does (ADR 0069).
 func TestMigration_RefusesAnUnrecordedDatabaseThatHoldsTables(t *testing.T) {
 	url, db := newDatabase(t)
-	_, err := db.Exec(context.Background(), `CREATE TABLE profiles (name text PRIMARY KEY)`)
+	_, err := db.Exec(context.Background(), `CREATE TABLE hand_made (name text PRIMARY KEY)`)
 	require.NoError(t, err)
 
 	out := refusedOn(t, url)
@@ -139,10 +139,10 @@ func TestMigration_RefusesAnUnrecordedDatabaseThatHoldsTables(t *testing.T) {
 	assert.Contains(t, out, "the database has no schema_migrations table and holds 1 other tables")
 	assert.Contains(t, out, "Recreate it empty")
 	assert.False(t, exists(t, db, migrationsTable), "the refused database was written to")
-	assert.Equal(t, []string{"profiles"}, tables(t, db))
+	assert.Equal(t, []string{"hand_made"}, tables(t, db))
 
 	// Control: the same database, once its table is dropped, is migrated.
-	_, err = db.Exec(context.Background(), `DROP TABLE profiles`)
+	_, err = db.Exec(context.Background(), `DROP TABLE hand_made`)
 	require.NoError(t, err)
 	startMigrating(t, url)
 	version, dirty := schemaVersion(t, db)

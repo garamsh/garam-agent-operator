@@ -487,7 +487,6 @@ var (
 	// certificate request's outcome is unknown, so it stays pending and is sent again unchanged.
 	ErrIssuanceUndecided = errors.New("certificate issuance undecided")
 
-
 	// ErrInvalidProfile is returned for a profile publication with no name, a version below 1, or
 	// settings an agent's workload could not run with (ADR 0056).
 	ErrInvalidProfile = errors.New("the profile is not one an agent can run with")
