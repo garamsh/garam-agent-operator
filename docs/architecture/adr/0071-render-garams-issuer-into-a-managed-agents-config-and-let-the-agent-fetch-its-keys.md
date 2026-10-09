@@ -16,12 +16,14 @@ What `sherlock` accepts (`sherlock@v0.3.0:docs/architecture/deployment.md:104,19
   - `keys-url`, an https URL the agent fetches itself.
 - Changing the list is a restart.
 
-`v0.3.0`'s `keys-url` trusts the system roots alone, so it cannot verify garam's private root. The `sherlock` PM accepted `garamsh/sherlock#1008`, an optional per-issuer `keys-ca-file` valid only with `keys-url`:
+`v0.3.0`'s `keys-url` trusts the system roots alone, so it cannot verify garam's private root. The `sherlock` PM accepted `garamsh/sherlock#1008`, an optional per-issuer `keys-ca-file` valid only with `keys-url`, which `sherlock` `v0.4.0` (`sherlock@6054666`, `garamsh/sherlock#1014`; image `garam/sherlock-agent:0.4.0@sha256:91cd1d9ba112…`) is the first release to carry (`docs/architecture/deployment.md:114`, `internal/config/issuers.go:20-22` there):
 - a fetch trusts exactly that bundle;
 - the bundle is re-read at each fetch, so a rotated root needs no restart;
 - an unknown `kid` refetches the set at most once a minute.
 
-It ships in the `sherlock` release after `v0.3.0`, and `v0.3.0` refuses the key at startup.
+`v0.3.0` refuses the key at startup.
+
+The fetch sets only its roots from the bundle and no server name (`sherlock@6054666:internal/gateway/keyset.go:139`), so the host in `keys-url` is checked against the names in garam's machine-listener certificate, as the adapter's connection to the same address already is.
 
 This operator already gives the adapter garam's machine address (`--garam-address`) and the garam server root. The root is `garam.ServerRootKey` in the copy of the agent's credential, which both the adapter and the agent container mount.
 
@@ -46,14 +48,15 @@ Enrolment, certificate issuance, the placement token and mTLS are unchanged (gar
 ## Consequences
 
 - **The manager gains one flag,** which the deploying overlay owns (`configuration.md`).
-- **The flag is set only once the cluster's agents run the `sherlock` release after `v0.3.0`.** An agent on `v0.3.0` refuses `keys-ca-file` at startup, and so fails to start once the flag is set.
+- **The flag is set only once the cluster's agents run `sherlock` `v0.4.0` or later.** An agent on `v0.3.0` refuses `keys-ca-file` at startup, and so fails to start once the flag is set.
+- **The `--garam-address` host must be named by garam's machine-listener certificate,** as the adapter already requires. `keys-ca-file` replaces only the roots, and `sherlock` sets no server name, so an address the certificate does not name breaks the adapter and the issuer fetch together.
 - **The agent container reaches garam's machine listener over TLS** at a configured destination, which fits `sherlock` ADR 0013.
 - **`server-root.pem` must stay in the agent's credential copy.** Both the adapter's TLS to garam and `keys-ca-file` read it. When garam ADR-0100's O1 later removes the certificate files from that copy, the server root has to remain, or `keys-ca-file` must move to wherever the root then is, in the same change.
 - **Changing the issuer is a restart of every agent.** The entry is part of the config file, so a changed flag rolls each Pod once.
 
 ## Rejected alternatives
 
-- **`keys-file` with a key-copying loop.** The operator would fetch garam's set and re-render it into each agent's config within two hours of every change, on a timer. A first key, or a key retired at once, would need an immediate re-render (garam ADR-0101). `keys-ca-file` removes the need: the agent fetches the set itself under the root it is told, and refetches on an unknown `kid` (`garamsh/sherlock#1008`).
+- **`keys-file` with a key-copying loop.** The operator would fetch garam's set and re-render it into each agent's config within two hours of every change, on a timer. A first key, or a key retired at once, would need an immediate re-render (garam ADR-0101). `keys-ca-file` removes the need: the agent fetches the set itself under the root it is told, and refetches on an unknown `kid` (`garamsh/sherlock#1008`, released in `v0.4.0`).
 - **`keys-url` built from the issuer.** The issuer is what a signature names, not where the agent's network reaches garam. In-cluster that can be another host.
 - **A second mount of the server root alone into the agent container.** The agent already mounts the copy holding it, so a second mount adds a volume and a path and buys nothing.
 - **Hard-coding the issuer.** It differs per deployment, and it is garam's chart value.

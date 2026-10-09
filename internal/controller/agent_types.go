@@ -332,8 +332,9 @@ type messageIssuer struct {
 
 // sherlockConfigIssuer is one entry of sherlock's issuers list, which it reads
 // from the config file alone (sherlock@v0.3.0:docs/architecture/deployment.md:104).
-// keys-ca-file is sherlock's from garamsh/sherlock#1008, the release after
-// v0.3.0; v0.3.0 refuses it at startup.
+// keys-ca-file is sherlock's from v0.4.0
+// (sherlock@6054666:internal/config/issuers.go:20-22); v0.3.0 refuses it at
+// startup.
 type sherlockConfigIssuer struct {
 	Issuer     string `json:"issuer"`
 	KeysURL    string `json:"keys-url"`
