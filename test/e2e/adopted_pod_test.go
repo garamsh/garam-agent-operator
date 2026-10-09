@@ -27,7 +27,8 @@ const (
 // sharedShapeStatefulSet is the shape an operator before ADR 0044 built: the
 // workspace on the state claim, under its subPath, and no claim of its own. It
 // carries the selector this operator gives every agent's StatefulSet, so the
-// one that replaces it adopts its Pod.
+// one that replaces it adopts its Pod, and the writer fence's finalizer, as an
+// operator's template has carried since ADR 0042.
 var sharedShapeStatefulSet = fmt.Sprintf(`
 apiVersion: apps/v1
 kind: StatefulSet
@@ -46,6 +47,7 @@ spec:
       labels:
         app.kubernetes.io/name: agent
         app.kubernetes.io/instance: %[1]s
+      finalizers: ["agent.garam.sh/writer-stopped"]
     spec:
       containers:
         - name: agent
