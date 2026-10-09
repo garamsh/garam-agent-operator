@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -143,8 +144,21 @@ func setSuspendedFromPod(agent *agentv1alpha1.Agent, podGone bool) {
 	meta.SetStatusCondition(&agent.Status.Conditions, condition)
 }
 
+// conditionTypes are the condition types this operator writes on an Agent, and
+// the only ones writeStatus keeps: a type no longer listed here is removed from
+// every Agent on its next reconcile, so retiring one needs nothing else (#341).
+var conditionTypes = []string{
+	agentv1alpha1.ConditionSynced,
+	agentv1alpha1.ConditionAvailable,
+	agentv1alpha1.ConditionRecovery,
+	agentv1alpha1.ConditionSuspended,
+	agentv1alpha1.ConditionWriterFence,
+	agentv1alpha1.ConditionMemoryMove,
+}
+
 // writeStatus writes the status this reconcile observed, and only when it says
-// something the object does not already carry. held is the Agent as this
+// something the object does not already carry. It drops first every condition
+// of a type outside conditionTypes. held is the Agent as this
 // reconcile read it, so the comparison is against the status the API server
 // holds and not against a decision this reconcile made: Status is observed state
 // and never an input to what Reconcile does.
@@ -155,6 +169,9 @@ func setSuspendedFromPod(agent *agentv1alpha1.Agent, podGone bool) {
 // patch carries no resource version and names only the fields this reconcile
 // decided, which is what makes the two writers' disjoint fields disjoint writes.
 func (r *AgentReconciler) writeStatus(ctx context.Context, agent, held *agentv1alpha1.Agent) error {
+	agent.Status.Conditions = slices.DeleteFunc(agent.Status.Conditions, func(condition metav1.Condition) bool {
+		return !slices.Contains(conditionTypes, condition.Type)
+	})
 	if equality.Semantic.DeepEqual(held.Status, agent.Status) {
 		return nil
 	}
