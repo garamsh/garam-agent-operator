@@ -47,8 +47,9 @@ type agentTypeDescriptor struct {
 	configFile string
 
 	// renderConfig is the text of the config file an Agent's spec becomes, in
-	// the agent's own setting names.
-	renderConfig func(agentv1alpha1.AgentSpec) (string, error)
+	// the agent's own setting names, with the issuer whose signed messages the
+	// agent accepts where one is given (ADR 0071).
+	renderConfig func(agentv1alpha1.AgentSpec, *messageIssuer) (string, error)
 
 	// modelKeyVariable is the variable the agent's container is given the
 	// model's API key in, and the one its config file names for the key.
@@ -319,6 +320,24 @@ type sherlockConfig struct {
 	Tools     *sherlockConfigTools     `json:"tools,omitempty"`
 	Model     *sherlockConfigModel     `json:"model,omitempty"`
 	Embedding *sherlockConfigEmbedding `json:"embedding,omitempty"`
+	Issuers   []sherlockConfigIssuer   `json:"issuers,omitempty"`
+}
+
+// messageIssuer is an issuer of signed messages the agent accepts, and where
+// it fetches that issuer's keys and the root it verifies the fetch against
+// (ADR 0071).
+type messageIssuer struct {
+	issuer, keysURL, keysCAFile string
+}
+
+// sherlockConfigIssuer is one entry of sherlock's issuers list, which it reads
+// from the config file alone (sherlock@v0.3.0:docs/architecture/deployment.md:104).
+// keys-ca-file is sherlock's from garamsh/sherlock#1008, the release after
+// v0.3.0; v0.3.0 refuses it at startup.
+type sherlockConfigIssuer struct {
+	Issuer     string `json:"issuer"`
+	KeysURL    string `json:"keys-url"`
+	KeysCAFile string `json:"keys-ca-file"`
 }
 
 type sherlockConfigTools struct {
@@ -353,8 +372,13 @@ type sherlockConfigEmbedding struct {
 // what a file means is where somebody wrote the file's syntax by hand. Map keys
 // marshal in sorted order, so one declaration renders one text and an unchanged
 // Agent leaves the workload unchanged.
-func renderSherlockConfig(spec agentv1alpha1.AgentSpec) (string, error) {
+func renderSherlockConfig(spec agentv1alpha1.AgentSpec, issuer *messageIssuer) (string, error) {
 	config := sherlockConfig{Revision: spec.Revision}
+	if issuer != nil {
+		config.Issuers = []sherlockConfigIssuer{
+			{Issuer: issuer.issuer, KeysURL: issuer.keysURL, KeysCAFile: issuer.keysCAFile},
+		}
+	}
 	if len(spec.Tools.Pins) > 0 {
 		config.Tools = &sherlockConfigTools{Pins: spec.Tools.Pins}
 	}

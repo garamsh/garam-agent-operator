@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"slices"
@@ -193,6 +194,10 @@ const (
 	adapterPlacementTokenSetting = "GARAM_ADAPTER_PLACEMENT_TOKEN_FILE"
 	adapterOutboxDirSetting      = "GARAM_ADAPTER_OUTBOX_DIR"
 )
+
+// messageSigningKeysPath is the machine listener's route serving the keys garam
+// signs messages with (garam@5f178278:api/machine.yaml:776-783).
+const messageSigningKeysPath = "/message-signing-keys"
 
 // containerSecurityContext is what every container of the agent's Pod carries.
 // It holds the two fields PodSecurity restricted asks of a container and nothing
@@ -757,8 +762,9 @@ func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *a
 	ego := egoText != ""
 	instructionsText := r.instructionsFor(agent, descriptor)
 	instructions := instructionsText != ""
+	issuer := r.issuerFor(agent, descriptor)
 	if len(agent.Spec.Tools.Pins) == 0 && agent.Spec.Model == nil && agent.Spec.Revision == "" && !ego && !instructions &&
-		controlRoot == nil {
+		controlRoot == nil && issuer == nil {
 		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
 			return initContainer.Name == configContainerName
 		})
@@ -766,7 +772,7 @@ func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *a
 		return nil
 	}
 
-	file, err := descriptor.renderConfig(agent.Spec)
+	file, err := descriptor.renderConfig(agent.Spec, issuer)
 	if err != nil {
 		return err
 	}
@@ -933,6 +939,43 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 		corev1.EnvVar{Name: adapterOutboxDirSetting, Value: outboxMountPath})
 	adapter.VolumeMounts = append(adapter.VolumeMounts,
 		corev1.VolumeMount{Name: controlRootVolumeName, MountPath: controlRootMountPath, ReadOnly: true}, outbox)
+}
+
+// issuerFor is garam's issuer, for an agent whose Pod carries the adapter that
+// signs its messages, and nil where the manager names no issuer or the adapter
+// is not placed (ADR 0071). The keys are fetched from the machine listener the
+// adapter is given, not from the issuer: in-cluster that address is a Service
+// name the issuer origin need not be. The fetch is verified against the garam
+// server root in the agent's own copy of its credential, which it already mounts.
+func (r *AgentReconciler) issuerFor(agent *agentv1alpha1.Agent, descriptor agentTypeDescriptor) *messageIssuer {
+	if r.GaramIssuer == "" || !r.adapterBuilt(agent) {
+		return nil
+	}
+
+	return &messageIssuer{
+		issuer:     r.GaramIssuer,
+		keysURL:    "https://" + r.GaramAddress + messageSigningKeysPath,
+		keysCAFile: descriptor.credentialsMountPath + "/" + garam.ServerRootKey,
+	}
+}
+
+// ValidateIssuer refuses an issuer that is not an https origin: a scheme and a
+// host, with no path, not even a trailing slash, and nothing else. Sherlock
+// compares a signature's iss with it exactly, so any other form is an issuer
+// no message garam signs carries (ADR 0071).
+func ValidateIssuer(issuer string) error {
+	parsed, err := url.Parse(issuer)
+	if err != nil {
+		return fmt.Errorf("garam-issuer %q is not a URL: %w", issuer, err)
+	}
+	// Re-serialising catches what parsing drops, such as an empty fragment.
+	if parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.String() != issuer {
+		return fmt.Errorf("garam-issuer %q is not an https origin: garam's machine.issuer is https://<host>[:<port>] "+
+			"with no path, query or trailing slash", issuer)
+	}
+
+	return nil
 }
 
 // adapterFenced reports whether the agent's adapter activates through the
