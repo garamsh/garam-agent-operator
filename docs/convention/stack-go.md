@@ -74,13 +74,12 @@ line count crossed unnoticed.
   `update.go`); where several verbs serve one responsibility they
   share one file, named for the responsibility (`lifecycle.go` for
   create/activate/deactivate).
-- **A dependency interface's implementations go in
-  `internal/<domain>/<pkg>/` where a neighbouring package can
-  construct the aggregate**, so a driver import (`pgx`, a vendor SDK)
-  stays out of the domain package's import graph and its tests; where
-  unexported fields close the aggregate, only its own package can
-  construct one, so the implementation stays beside it and this rule
-  does not reach that domain.
+- **An implementation that imports a driver (`pgx`, a vendor SDK)
+  sits outside the domain package's import graph**, so the driver
+  stays out of that package and its tests; where unexported fields
+  close the aggregate, only its own package can construct one, so the
+  implementation stays beside it and this rule does not reach that
+  domain.
 
 **One file vs several** inside `internal/<domain>/<pkg>/`:
 
