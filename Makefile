@@ -332,8 +332,20 @@ build-images: ## Build the manager's and the control service's images to publish
 	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -t garam-agent-operator:$(REVISION) .
 	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/control.Dockerfile -t garam-agent-operator-control:$(REVISION) .
 
+# Refuses IMAGE_REF where a push would put it in a repository ADR 0066 or ADR 0067
+# forbids: under garam/, anything but a release from release.yml's run for its tag;
+# under garam-dev/, a dev- tag (#325). Every target that pushes runs it first, and
+# so does release.yml. It stops mistakes, not a determined pusher, since a local
+# shell can export GITHUB_WORKFLOW_REF; IAM stops the rest.
+.PHONY: verify-image-ref
+verify-image-ref: ## Refuse an IMAGE_REF a push would put under garam/ outside a release, or under garam-dev/ with a dev- tag.
+	go run ./hack/imageref "$(IMAGE_REF)"
+
+# Departs from the scaffold, and a regeneration restores the scaffold's form: it
+# runs verify-image-ref on IMG before pushing.
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
+	$(MAKE) verify-image-ref IMAGE_REF='$(IMG)'
 	$(CONTAINER_TOOL) push ${IMG}
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
@@ -350,9 +362,10 @@ PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 # a missing builder leaves none behind. `buildx create` keeps its prefix because it
 # fails when the builder exists, and `buildx use` fails when it does not. The build
 # passes the checked-out commit as REVISION, which Dockerfile writes into the
-# image's revision label.
+# image's revision label. It runs verify-image-ref on IMG before building anything.
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
+	$(MAKE) verify-image-ref IMAGE_REF='$(IMG)'
 	- $(CONTAINER_TOOL) buildx create --name garam-agent-operator-builder
 	$(CONTAINER_TOOL) buildx use garam-agent-operator-builder
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile

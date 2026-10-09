@@ -1,6 +1,6 @@
 # ADR 0051: Publish a release from a version tag on `main` through a release workflow, and every image as one linux/amd64 manifest
 
-> Status: accepted
+> Status: accepted; the development image's `dev-` tag superseded by ADR-0067
 > Date: 2026-10-06
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

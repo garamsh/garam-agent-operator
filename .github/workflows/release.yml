@@ -52,6 +52,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The Go toolchain `make verify-image-ref` runs on, before the push below.
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
       # A release is vX.Y.Z and the image tag is that without the `v`. This step
       # stands before any credential, so a tag the scheme does not name costs
       # nothing. The tag name reaches the shell through the environment, never
@@ -92,8 +97,9 @@ jobs:
       - id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
-      # The only irreversible step. Both images are renamed first, so a reference
-      # that cannot be formed fails before any upload begins. The local names are
+      # The only irreversible step. Both references pass the rule every push here
+      # passes (#325) and both images are renamed first, so a reference that cannot
+      # be formed or is refused fails before any upload begins. The local names are
       # the ones build-images writes; a rename there leaves `docker tag` with no
       # such image, which fails here rather than pushing something else.
       - env:
@@ -102,6 +108,7 @@ jobs:
         run: |
           set -euo pipefail
           for image in garam-agent-operator garam-agent-operator-control; do
+            make verify-image-ref IMAGE_REF="$REGISTRY/garam/$image:$VERSION"
             docker tag "$image:$GITHUB_SHA" "$REGISTRY/garam/$image:$VERSION"
           done
           for image in garam-agent-operator garam-agent-operator-control; do
