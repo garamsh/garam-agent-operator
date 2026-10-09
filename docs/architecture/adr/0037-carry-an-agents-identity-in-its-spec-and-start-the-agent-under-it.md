@@ -1,6 +1,6 @@
 # ADR 0037: Carry an agent's identity in its spec, and start the agent under it
 
-> Status: accepted
+> Status: accepted; the epoch's flag superseded by ADR-0068
 > Date: 2026-10-04
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
