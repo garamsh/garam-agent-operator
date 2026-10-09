@@ -140,6 +140,14 @@ func TestMigration_RefusesAnUnrecordedDatabaseThatHoldsTables(t *testing.T) {
 	assert.Contains(t, out, "Recreate it empty")
 	assert.False(t, exists(t, db, migrationsTable), "the refused database was written to")
 	assert.Equal(t, []string{"profiles"}, tables(t, db))
+
+	// Control: the same database, once its table is dropped, is migrated.
+	_, err = db.Exec(context.Background(), `DROP TABLE profiles`)
+	require.NoError(t, err)
+	startMigrating(t, url)
+	version, dirty := schemaVersion(t, db)
+	assert.Equal(t, latestVersion, version)
+	assert.False(t, dirty)
 }
 
 // TestMigration_RefusesADatabaseANewerBinaryMigrated refuses, untouched, a database at a version

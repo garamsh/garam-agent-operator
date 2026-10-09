@@ -181,6 +181,12 @@ func TestInitialCertificate_AnAgentWithNoCreationIsNotFound(t *testing.T) {
 	status, raw, err := requestCertificate(g.agent(), certificateRequestBody(name(t, "certificate"), g.assignment, csr))
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, status, string(raw))
+
+	// Control: an agent a creation names is issued its first certificate on the same route.
+	created, epoch := managedAgent(t)
+	status, raw, err = requestCertificate(created, certificateRequestBody(name(t, "created"), epoch, csr))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, status, string(raw))
 }
 
 // sendConcurrently sends body for agent from n requests at once.
