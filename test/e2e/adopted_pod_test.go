@@ -22,19 +22,31 @@ const (
 	adoptedAgent       = "adopted"
 	adoptedPod         = adoptedAgent + "-0"
 	adoptedCredentials = "adopted-credentials"
+
+	podResource         = "pod"
+	statefulSetResource = "statefulset"
 )
 
-// sharedShapeStatefulSet is the shape an operator before ADR 0044 built: the
-// workspace on the state claim, under its subPath, and no claim of its own. It
-// carries the selector this operator gives every agent's StatefulSet, so the
-// one that replaces it adopts its Pod, and the writer fence's finalizer, as an
-// operator's template has carried since ADR 0042.
-var sharedShapeStatefulSet = fmt.Sprintf(`
+// sharedShapeStatefulSet is the shape an operator before ADR 0044 built for the
+// Agent whose UID is agentUID: the workspace on the state claim, under its
+// subPath, and no claim of its own. It carries what that operator's carried and
+// the replacement relies on: the Agent as its controller, whose deletion event
+// wakes the Agent; this operator's selector, so the next StatefulSet adopts its
+// Pod; and the writer fence's finalizer on its template (ADR 0042).
+func sharedShapeStatefulSet(agentUID string) string {
+	return fmt.Sprintf(`
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: %[1]s
   namespace: %[2]s
+  ownerReferences:
+    - apiVersion: agent.garam.sh/v1alpha1
+      kind: Agent
+      name: %[1]s
+      uid: %[4]s
+      controller: true
+      blockOwnerDeletion: true
 spec:
   replicas: 1
   serviceName: ""
@@ -70,7 +82,8 @@ spec:
         resources:
           requests:
             storage: 64Mi
-`, adoptedAgent, adoptedNamespace, agentImage)
+`, adoptedAgent, adoptedNamespace, agentImage, agentUID)
+}
 
 func kubectlAdopted(args ...string) (string, error) {
 	return utils.Run(exec.Command("kubectl", append([]string{"-n", adoptedNamespace}, args...)...))
@@ -93,7 +106,7 @@ func scaleManager(replicas int) {
 		fmt.Sprintf("--replicas=%d", replicas)))
 	Expect(err).NotTo(HaveOccurred())
 	Eventually(func(g Gomega) {
-		ready, err := utils.Run(exec.Command("kubectl", "-n", namespace, "get", "deployment", deploymentName,
+		ready, err := utils.Run(exec.Command("kubectl", "-n", namespace, kubectlGet, "deployment", deploymentName,
 			"-o", "jsonpath={.status.replicas}/{.status.readyReplicas}"))
 		g.Expect(err).NotTo(HaveOccurred())
 		if replicas == 0 {
@@ -112,33 +125,31 @@ type adoptedPodState struct {
 	synced, syncedReason, available string
 }
 
-func readAdoptedState(g Gomega) adoptedPodState {
-	var state adoptedPodState
-	var err error
-	state.podUID, err = kubectlAdopted("get", "pod", adoptedPod, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}")
-	g.Expect(err).NotTo(HaveOccurred())
-	state.podOwner, err = kubectlAdopted("get", "pod", adoptedPod, "--ignore-not-found",
-		"-o", "jsonpath={.metadata.ownerReferences[0].uid}")
-	g.Expect(err).NotTo(HaveOccurred())
-	state.podRevision, err = kubectlAdopted("get", "pod", adoptedPod, "--ignore-not-found",
-		"-o", `jsonpath={.metadata.labels.controller-revision-hash}`)
-	g.Expect(err).NotTo(HaveOccurred())
-	state.setUID, err = kubectlAdopted("get", "statefulset", adoptedAgent, "--ignore-not-found",
-		"-o", "jsonpath={.metadata.uid}")
-	g.Expect(err).NotTo(HaveOccurred())
-	state.updateRevision, err = kubectlAdopted("get", "statefulset", adoptedAgent, "--ignore-not-found",
-		"-o", "jsonpath={.status.updateRevision}")
-	g.Expect(err).NotTo(HaveOccurred())
-	for field, condition := range map[*string]string{&state.synced: "Synced", &state.available: "Available"} {
-		*field, err = kubectlAdopted("get", "agent", adoptedAgent, "--ignore-not-found",
-			"-o", fmt.Sprintf(`jsonpath={.status.conditions[?(@.type=="%s")].status}`, condition))
-		g.Expect(err).NotTo(HaveOccurred())
-	}
-	state.syncedReason, err = kubectlAdopted("get", "agent", adoptedAgent, "--ignore-not-found",
-		"-o", `jsonpath={.status.conditions[?(@.type=="Synced")].reason}`)
+// readAdopted reads one field of one object in the namespace, empty where the
+// object is absent.
+func readAdopted(g Gomega, resource, name, path string) string {
+	value, err := kubectlAdopted(kubectlGet, resource, name, "--ignore-not-found", "-o", "jsonpath="+path)
 	g.Expect(err).NotTo(HaveOccurred())
 
-	return state
+	return value
+}
+
+func readAdoptedState(g Gomega) adoptedPodState {
+	condition := func(conditionType, field string) string {
+		return readAdopted(g, agentResource, adoptedAgent,
+			fmt.Sprintf(`{.status.conditions[?(@.type=="%s")].%s}`, conditionType, field))
+	}
+
+	return adoptedPodState{
+		podUID:         readAdopted(g, podResource, adoptedPod, "{.metadata.uid}"),
+		podOwner:       readAdopted(g, podResource, adoptedPod, "{.metadata.ownerReferences[0].uid}"),
+		podRevision:    readAdopted(g, podResource, adoptedPod, "{.metadata.labels.controller-revision-hash}"),
+		setUID:         readAdopted(g, statefulSetResource, adoptedAgent, "{.metadata.uid}"),
+		updateRevision: readAdopted(g, statefulSetResource, adoptedAgent, "{.status.updateRevision}"),
+		synced:         condition("Synced", "status"),
+		syncedReason:   condition("Synced", "reason"),
+		available:      condition("Available", "status"),
+	}
 }
 
 var _ = Describe("Adopted Pod", Ordered, func() {
@@ -153,7 +164,7 @@ var _ = Describe("Adopted Pod", Ordered, func() {
 		// The manager runs again before the Agent is deleted: only it releases
 		// the writer fence's finalizer (#287).
 		scaleManager(1)
-		_, _ = kubectlAdopted("delete", "agent", adoptedAgent, "--ignore-not-found", "--timeout=3m")
+		_, _ = kubectlAdopted("delete", agentResource, adoptedAgent, "--ignore-not-found", "--timeout=3m")
 		_, _ = utils.Run(exec.Command("kubectl", "delete", "ns", adoptedNamespace, "--ignore-not-found", "--timeout=2m"))
 	})
 
@@ -162,11 +173,8 @@ var _ = Describe("Adopted Pod", Ordered, func() {
 			return
 		}
 		for _, args := range [][]string{
-			{"get", "agent", adoptedAgent, "-o", "yaml"},
-			{"get", "statefulset", adoptedAgent, "-o", "yaml"},
-			{"get", "pod", adoptedPod, "-o", "yaml"},
-			{"get", "controllerrevisions", "-o", "wide"},
-			{"get", "events", "--sort-by=.lastTimestamp"},
+			{kubectlGet, "agent,statefulset,pod,controllerrevisions", "-o=yaml"},
+			{kubectlGet, "event", "--sort-by=.metadata.creationTimestamp"},
 		} {
 			if output, err := kubectlAdopted(args...); err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "%s:\n%s\n", strings.Join(args, " "), output)
@@ -177,25 +185,11 @@ var _ = Describe("Adopted Pod", Ordered, func() {
 	// #340: at 4c425a7, the StatefulSet that replaced a shared-shape one adopted
 	// its Pod, recorded the rollout complete, and left the Pod on the old
 	// revision while Synced and Available reported success.
-	It("rolls the Pod a replacing StatefulSet adopts onto its revision, and reports nothing reconciled until it has", func() {
+	It("rolls the Pod a replacing StatefulSet adopts onto its revision, reporting nothing reconciled until then", func() {
 		By("stopping the manager, so the shared shape is in place before it reconciles, as on an upgrade")
 		scaleManager(0)
 
-		By("running a shared-shape StatefulSet's Pod")
-		applyAdopted(sharedShapeStatefulSet)
-		Eventually(func(g Gomega) {
-			ready, err := kubectlAdopted("get", "pod", adoptedPod, "-o",
-				`jsonpath={.status.conditions[?(@.type=="Ready")].status}`)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(ready).To(Equal("True"))
-		}, 3*time.Minute, time.Second).Should(Succeed())
-		var before adoptedPodState
-		Eventually(func(g Gomega) {
-			before = readAdoptedState(g)
-			g.Expect(before.podRevision).NotTo(BeEmpty())
-		}, time.Minute, time.Second).Should(Succeed())
-
-		By("creating the Agent and starting the manager")
+		By("creating the Agent, which nothing reconciles yet")
 		applyAdopted(fmt.Sprintf(`
 apiVersion: agent.garam.sh/v1alpha1
 kind: Agent
@@ -206,6 +200,24 @@ spec:
   credentialsSecretName: %s
   storageSize: 64Mi
 `, adoptedAgent, agentImage, adoptedCredentials))
+		agentUID, err := kubectlAdopted(kubectlGet, agentResource, adoptedAgent, "-o", "jsonpath={.metadata.uid}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(agentUID).NotTo(BeEmpty())
+
+		By("running the Pod of a shared-shape StatefulSet the Agent owns")
+		applyAdopted(sharedShapeStatefulSet(agentUID))
+		Eventually(func(g Gomega) {
+			g.Expect(readAdopted(g, podResource, adoptedPod, `{.status.conditions[?(@.type=="Ready")].status}`)).
+				To(Equal("True"))
+		}, 3*time.Minute, time.Second).Should(Succeed())
+		var before adoptedPodState
+		Eventually(func(g Gomega) {
+			before = readAdoptedState(g)
+			g.Expect(before.podRevision).NotTo(BeEmpty())
+			g.Expect(before.setUID).NotTo(BeEmpty())
+		}, time.Minute, time.Second).Should(Succeed())
+
+		By("starting the manager")
 		scaleManager(1)
 
 		By("waiting for the replacing StatefulSet to exist")
@@ -241,8 +253,7 @@ spec:
 		}, 3*time.Minute, time.Second).Should(Succeed())
 
 		By("keeping the state claim the shared shape made")
-		claimOwner, err := kubectlAdopted("get", "pvc", "state-"+adoptedPod, "-o", "jsonpath={.metadata.name}")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(claimOwner).To(Equal("state-" + adoptedPod))
+		Expect(kubectlAdopted(kubectlGet, "pvc", "state-"+adoptedPod, "-o", "jsonpath={.metadata.name}")).
+			To(Equal("state-" + adoptedPod))
 	})
 })

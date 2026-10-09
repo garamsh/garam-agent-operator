@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"maps"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -43,9 +45,7 @@ func runningOnRevision(name, revision string, owned bool) *corev1.Pod {
 
 	pod := podOf(statefulSet, agentNamespace)
 	pod.Labels = map[string]string{appsv1.ControllerRevisionHashLabelKey: name + revision}
-	for key, value := range statefulSet.Spec.Template.Labels {
-		pod.Labels[key] = value
-	}
+	maps.Copy(pod.Labels, statefulSet.Spec.Template.Labels)
 	pod.Finalizers = statefulSet.Spec.Template.Finalizers
 	// Bound, as a running Pod is: the API server deletes an unbound one at once,
 	// whatever grace the delete asked for.
