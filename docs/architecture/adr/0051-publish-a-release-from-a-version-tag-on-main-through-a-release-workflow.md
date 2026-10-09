@@ -97,3 +97,11 @@ The workflow also has these properties:
 ### 2026-10-08 — the push role is `garamsh-garam-agent-operator-github-actions`
 
 Decision names the push role `arn:aws:iam::486152169996:role/garam-agent-operator-github-actions`, and its third step assumes `garam-agent-operator-github-actions`. infra applied an owner-approved naming scheme that puts the forge owner in a role's name: infra-a5 reported the applied names `garamsh-garam-github-actions` and `garamsh-sherlock-github-actions` on 2026-10-08 (#320). That scheme names this repository's push role `arn:aws:iam::486152169996:role/garamsh-garam-agent-operator-github-actions`, which `release.yml` and `delivery.md` now name. The role is still to be applied under `garamsh/infra#292`. The decision, the subject the role is to trust, and the rule that no release tag is pushed before the role exists all stand.
+
+### 2026-10-10 — the push role is `garam-agent-operator-github-actions` again, and it exists
+
+The 2026-10-08 entry above was wrong. `garamsh/infra#303` retired the `garamsh-` prefix, and `garamsh/infra#293` names a push role `<repository>-github-actions`, so the name `garamsh-garam-agent-operator-github-actions` was never applied. It returns `NoSuchEntity`.
+
+The role is the one Decision names, `arn:aws:iam::486152169996:role/garam-agent-operator-github-actions`. It was created at 2026-10-09T17:09:49Z (`garamsh/infra#292`, delivered by `#325`), and the PM read it back on 2026-10-10 (#320). Its trust admits only the subject `repo:garamsh@307152666/garam-agent-operator@1335647420:ref:refs/tags/v*`. `release.yml` and `delivery.md` name it again.
+
+The decision and the subject stand. The first `v*` tag is what proves the subject.
