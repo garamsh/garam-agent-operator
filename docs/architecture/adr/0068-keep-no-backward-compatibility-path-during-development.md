@@ -86,4 +86,4 @@ Decision restores ADR 0044's replacement, whose last step has the new StatefulSe
 - `Synced` and `Available` both reported success;
 - the Pod moved only after a manual suspend and resume (#340, lab, 2026-10-10).
 
-The operator now deletes a Pod whose revision is not the StatefulSet's update revision, through the writer fence and never forced. It reports `Synced` `False` (`WorkloadRolling`) and `Available` `False` (`ReplicaOutdated`) until a Pod on that revision runs. The decision stands.
+The operator now deletes a Pod whose revision is not the StatefulSet's update revision, through the writer fence and never forced. It reports `Synced` `False` (`WorkloadRolling`) and `Available` `False` (`ReplicaOutdated`) until a Pod on that revision runs. While the StatefulSet's status has not yet observed its generation, it reports `RolloutNotObserved`, and never the workload reconciled. The decision stands.
