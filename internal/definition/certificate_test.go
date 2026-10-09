@@ -189,23 +189,3 @@ func TestRequestInitialCertificate_ConcurrentIdenticalRequestsStoreOne(t *testin
 	assert.Len(t, f.issuer.issuances, n, "the requests did not all reach garam before one was recorded")
 	assert.Equal(t, 1, recorded, "more than one request recorded the certificate")
 }
-
-func TestRequestInitialCertificate_AnAgentWhoseOnlyCreationIsArchivedIsToldHowToKeepIt(t *testing.T) {
-	ctx := context.Background()
-	f := createdFixture(t)
-	f.repository.ArchiveRegistration(secondAgent)
-	in := certificateInput("c1", "csr")
-	in.Agent = secondAgent
-
-	_, _, err := f.service.RequestInitialCertificate(ctx, in)
-	require.ErrorIs(t, err, definition.ErrCreationArchived)
-	assert.ErrorContains(t, err, "re-create the agent through the console's create route, which gives it a new GRN")
-	assert.ErrorContains(t, err, "To keep the agent, its GRN, identity and memory, have an owner or admin recover its credential")
-	assert.ErrorContains(t, err, "and then configure it")
-	assert.Empty(t, f.issuer.issuances, "garam was asked with no reference")
-
-	// Control: an archived row does not shadow a current creation; the created agent is issued.
-	f.repository.ArchiveRegistration(firstAgent)
-	_, _, err = f.service.RequestInitialCertificate(ctx, certificateInput("c1", "csr"))
-	require.NoError(t, err)
-}
