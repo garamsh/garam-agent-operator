@@ -15,15 +15,6 @@ func (s *service) RequestInitialCertificate(
 	ctx context.Context, in InitialCertificateInput,
 ) (InitialCertificate, bool, error) {
 	creation, err := s.repository.CreationOf(ctx, in.Agent)
-	if errors.Is(err, ErrNotFound) {
-		archived, archiveErr := s.repository.ArchivedRegistration(ctx, in.Agent)
-		if archiveErr != nil {
-			return InitialCertificate{}, false, archiveErr
-		}
-		if archived {
-			return InitialCertificate{}, false, ErrCreationArchived
-		}
-	}
 	if err != nil {
 		return InitialCertificate{}, false, err
 	}

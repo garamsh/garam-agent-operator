@@ -41,8 +41,6 @@ type Memory struct {
 	recoveries map[definition.GRN][]definition.Recovery
 	stops      map[definition.RequestKey]definition.Stop
 	stopEnds   map[definition.RequestKey]definition.RequestKey
-	// archived holds each agent an archived earlier creation registered.
-	archived map[definition.GRN]bool
 }
 
 var _ definition.Repository = (*Memory)(nil)
@@ -75,16 +73,7 @@ func NewMemory() *Memory {
 		recoveries:   map[definition.GRN][]definition.Recovery{},
 		stops:        map[definition.RequestKey]definition.Stop{},
 		stopEnds:     map[definition.RequestKey]definition.RequestKey{},
-		archived:     map[definition.GRN]bool{},
 	}
-}
-
-// ArchiveRegistration records, as migration 2 does in PostgreSQL, that an earlier release
-// registered a creation of agent that is now archived (ADR 0058).
-func (m *Memory) ArchiveRegistration(agent definition.GRN) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.archived[agent] = true
 }
 
 func (m *Memory) PublishProfile(_ context.Context, org, name string, settings definition.ExecutionSettings) (definition.Profile, error) {
@@ -333,12 +322,6 @@ func (m *Memory) CreationOf(_ context.Context, agent definition.GRN) (definition
 		}
 	}
 	return definition.Creation{}, definition.ErrNotFound
-}
-
-func (m *Memory) ArchivedRegistration(_ context.Context, agent definition.GRN) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.archived[agent], nil
 }
 
 func (m *Memory) BeginInitialCertificate(

@@ -26,9 +26,6 @@ const (
 	kindRequestReused = "request_reused"
 	// kindInvalidRequest names the refusal of a placement registration that is not one.
 	kindInvalidRequest = "invalid_request"
-	// kindCreationArchived names the refusal of a first certificate for an agent whose only creation
-	// an earlier release registered, archived with no reference to ask garam under (ADR 0058).
-	kindCreationArchived = "creation_archived"
 	// kindGaramContractUnsupported names garam's answer under a contract this service does not
 	// take, or under none, apart from an undecided garam.
 	kindGaramContractUnsupported = "garam_contract_unsupported"
@@ -86,8 +83,6 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 	case errors.Is(err, errInvalidQuery), errors.Is(err, errInvalidStatusBody), errors.Is(err, definition.ErrInvalidStatus),
 		errors.Is(err, errInvalidCertificateBody):
 		writeMessage(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, definition.ErrCreationArchived):
-		writeJSON(w, http.StatusConflict, errorBody{Kind: kindCreationArchived, Message: err.Error()})
 	case errors.Is(err, definition.ErrNotFound):
 		writeMessage(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, errTooManyAgents):

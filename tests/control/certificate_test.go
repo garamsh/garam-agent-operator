@@ -167,6 +167,28 @@ WHERE agent = $1`
 	assert.Equal(t, http.StatusCreated, status, string(raw))
 }
 
+// TestInitialCertificate_AnAgentWithNoCreationIsNotFound answers 404 for an agent its controller
+// is assigned but that no creation names.
+func TestInitialCertificate_AnAgentWithNoCreationIsNotFound(t *testing.T) {
+	g := requireGaram(t)
+	profile := seedRevision(t, g)
+	// A configure records the latest revision for the controller garam assigned the agent to,
+	// which the route requires before it looks for a creation.
+	status, _ := configureKind(t, g, newConfigureRequest(name(t, "request"), profile, "configured", 1))
+	require.Equal(t, http.StatusOK, status)
+	_, csr := certificateRequestPEM(t)
+
+	status, raw, err := requestCertificate(g.agent(), certificateRequestBody(name(t, "certificate"), g.assignment, csr))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, status, string(raw))
+
+	// Control: an agent a creation names is issued its first certificate on the same route.
+	created, epoch := managedAgent(t)
+	status, raw, err = requestCertificate(created, certificateRequestBody(name(t, "created"), epoch, csr))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, status, string(raw))
+}
+
 // sendConcurrently sends body for agent from n requests at once.
 func sendConcurrently(t *testing.T, agent, body string, n int) ([]int, [][]byte) {
 	t.Helper()

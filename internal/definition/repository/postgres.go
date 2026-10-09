@@ -659,20 +659,6 @@ func (p *Postgres) CreationOf(ctx context.Context, agent definition.GRN) (defini
 	return scanCreation(p.pool.QueryRow(ctx, getCreation, key.Organization, key.RequestID), key)
 }
 
-func (p *Postgres) ArchivedRegistration(ctx context.Context, agent definition.GRN) (bool, error) {
-	var archived bool
-	err := p.pool.QueryRow(ctx, archivedRegistration, string(agent)).Scan(&archived)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == undefinedTable {
-		// No earlier creation moved, so migration 2 made no archive.
-		return false, nil
-	}
-	if err != nil {
-		return false, storeError("read the archived creations", err)
-	}
-	return archived, nil
-}
-
 func (p *Postgres) BeginInitialCertificate(
 	ctx context.Context, agent definition.GRN, r definition.CertificateRequest,
 ) (definition.InitialCertificate, error) {

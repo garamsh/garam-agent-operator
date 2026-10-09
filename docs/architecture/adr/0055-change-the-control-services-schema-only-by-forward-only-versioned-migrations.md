@@ -1,6 +1,6 @@
 # ADR 0055: Change the control service's schema only by forward-only versioned migrations, keeping every earlier row
 
-> Status: accepted
+> Status: accepted; the adoption of a database made before migrations, the archiving of earlier rows, and the refusal of an unknown shape by its difference superseded by ADR-0069
 > Date: 2026-10-07
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
