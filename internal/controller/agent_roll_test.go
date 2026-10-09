@@ -101,6 +101,49 @@ var _ = Describe("Adopted Pod roll", func() {
 		expectCondition(outdated, agentv1alpha1.ConditionAvailable, metav1.ConditionFalse, agentv1alpha1.ReasonReplicaOutdated)
 	})
 
+	// #344 review: a replacing StatefulSet's status is unwritten until its
+	// controller first observes it, and the Pod beside it read as reconciled.
+	It("reports a Pod's rollout not observed, never reconciled, while its StatefulSet's status is not current", func() {
+		name := "roll-unobserved"
+		adopted := runningOnRevision(name, oldRevisionSuffix, true)
+		setStatus := func(observed int64, update string) {
+			GinkgoHelper()
+			statefulSet := statefulSetFor(name)
+			statefulSet.Status.ObservedGeneration = observed
+			statefulSet.Status.UpdateRevision = update
+			statefulSet.Status.CurrentRevision = update
+			Expect(k8sClient.Status().Update(ctx, statefulSet)).To(Succeed())
+		}
+		expectNotObserved := func() {
+			GinkgoHelper()
+			_, err := reconcileAgent(name)
+			Expect(err).NotTo(HaveOccurred())
+			expectCondition(name, agentv1alpha1.ConditionSynced, metav1.ConditionFalse, agentv1alpha1.ReasonRolloutNotObserved)
+			Expect(conditionOf(name, agentv1alpha1.ConditionSynced).Message).To(ContainSubstring("not observed"))
+			expectCondition(name, agentv1alpha1.ConditionAvailable, metav1.ConditionUnknown,
+				agentv1alpha1.ReasonRolloutNotObserved)
+			pod, exists := podFor(name)
+			Expect(exists).To(BeTrue())
+			Expect(pod.UID).To(Equal(adopted.UID))
+			Expect(pod.DeletionTimestamp).To(BeNil(), "a Pod was deleted on a revision not yet known")
+		}
+		generation := statefulSetFor(name).Generation
+
+		By("a status that observed an earlier generation")
+		setStatus(generation-1, name+updateRevisionSuffix)
+		expectNotObserved()
+
+		By("the control: the same Pod, on the revision a current status names, is reconciled")
+		setStatus(generation, name+oldRevisionSuffix)
+		_, err := reconcileAgent(name)
+		Expect(err).NotTo(HaveOccurred())
+		expectCondition(name, agentv1alpha1.ConditionSynced, metav1.ConditionTrue, agentv1alpha1.ReasonWorkloadReconciled)
+
+		By("a status at the generation that names no update revision")
+		setStatus(generation, "")
+		expectNotObserved()
+	})
+
 	It("leaves a Pod on another revision its StatefulSet has not adopted yet, and reports it rolling", func() {
 		name := "roll-unadopted"
 		runningOnRevision(name, oldRevisionSuffix, false)

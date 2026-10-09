@@ -471,6 +471,14 @@ const (
 	// successor runs the update revision (#340).
 	ReasonWorkloadRolling = "WorkloadRolling"
 
+	// ReasonRolloutNotObserved is set, on Synced as False and on Available as
+	// Unknown, while the agent's Pod exists and the StatefulSet's status has not
+	// observed its generation or names no update revision, so which revision the
+	// Pod should run is not known yet. A replacing StatefulSet is in this state
+	// beside the Pod it is about to adopt until its controller first writes
+	// status (#340).
+	ReasonRolloutNotObserved = "RolloutNotObserved"
+
 	// ReasonStorageSizeImmutable is set when the spec asks for a volume size the
 	// workload cannot be changed to.
 	ReasonStorageSizeImmutable = "StorageSizeImmutable"

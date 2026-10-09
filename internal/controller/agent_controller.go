@@ -266,10 +266,13 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 	}
 
 	// A Pod on another revision than the StatefulSet's is rolled here, whatever
-	// else is reported, since the StatefulSet that adopted it may never do so.
-	outdated, err := r.rollOutdatedPod(ctx, statefulSet)
-	if err != nil {
-		return err
+	// else is reported, since the StatefulSet that adopted it may never do so. A
+	// held-stopped agent asks for no replica, so its Pod is not rolled but released.
+	var rollout podRollout
+	if !heldStopped(agent) {
+		if rollout, err = r.rollOutdatedPod(ctx, statefulSet); err != nil {
+			return err
+		}
 	}
 
 	workspaceSize := workspaceStorageSize(agent)
@@ -288,15 +291,21 @@ func (r *AgentReconciler) reconcileWorkload(ctx context.Context, agent *agentv1a
 		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonStorageClassImmutable,
 			fmt.Sprintf("The volume was claimed from storage class %s and spec.storageClassName now asks for %s, which a StatefulSet's claim template cannot be changed to",
 				describeStorageClass(claimedClass), describeStorageClass(agent.Spec.StorageClassName)))
-	} else if outdated != "" {
-		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonWorkloadRolling, outdated)
+	} else if rollout.reason != "" {
+		setSynced(agent, metav1.ConditionFalse, rollout.reason, rollout.message)
 	} else {
 		setSynced(agent, metav1.ConditionTrue, agentv1alpha1.ReasonWorkloadReconciled,
 			fmt.Sprintf("StatefulSet %q carries what this Agent's spec asks for", statefulSet.Name))
 	}
 
-	if outdated != "" {
-		setAvailable(agent, metav1.ConditionFalse, agentv1alpha1.ReasonReplicaOutdated, outdated)
+	switch rollout.reason {
+	case agentv1alpha1.ReasonWorkloadRolling:
+		setAvailable(agent, metav1.ConditionFalse, agentv1alpha1.ReasonReplicaOutdated, rollout.message)
+
+		return nil
+	case agentv1alpha1.ReasonRolloutNotObserved:
+		// The StatefulSet's replica counts are as stale as its revision.
+		setAvailable(agent, metav1.ConditionUnknown, agentv1alpha1.ReasonRolloutNotObserved, rollout.message)
 
 		return nil
 	}
