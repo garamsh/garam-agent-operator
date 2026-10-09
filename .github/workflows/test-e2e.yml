@@ -10,10 +10,24 @@ on:
 
 permissions: {}
 
+env:
+  # The role `make garam-e2e` pulls garam's test image from ECR as. Its name,
+  # permissions and trust are garamsh/infra's (garamsh/infra#311); this ARN was
+  # read back from IAM on 2026-10-09, after the role was created.
+  GARAM_TEST_PULL_ROLE: arn:aws:iam::486152169996:role/garam-agent-operator-github-actions-pull
+
 jobs:
   test-e2e:
     permissions:
       contents: read
+      # The federated credential `make garam-e2e` pulls garam's private test
+      # image from ECR with, which it copies garam, its test-principal fixture
+      # and its migrations out of (#271).
+      id-token: write
+    # infra's trust condition on the pull role names this environment. The OIDC
+    # subject claim keys stay the repository default, because customizing them
+    # would change the release tag's subject too.
+    environment: promotion-e2e
     name: Run on Ubuntu
     runs-on: ubuntu-latest
     steps:
@@ -30,6 +44,25 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
+
+      # Prints the `sub` claim this job presents, for infra to confirm against
+      # the pull role's trust condition; removed once infra confirms it. The
+      # token is piped straight into jq and never printed or stored.
+      - name: Show the OIDC subject
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" |
+            jq -r '.value | split(".")[1] | gsub("-"; "+") | gsub("_"; "/")
+              | . + ("=" * ((4 - length % 4) % 4)) | @base64d | fromjson | .sub'
+
+      # The ECR login `make garam-e2e` pulls with, as GARAM_TEST_PULL_ROLE.
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.GARAM_TEST_PULL_ROLE }}
+          aws-region: ap-northeast-2
+
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
       # `make test-e2e` installs kind itself, at the version the Makefile pins, so
       # this job holds no kind version of its own. helm/kind-action would put that
