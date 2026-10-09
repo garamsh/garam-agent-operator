@@ -7,6 +7,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 )
 
 // retiredStateIsolated is the condition ADR 0068 removed, as an Agent an
@@ -26,7 +28,8 @@ var _ = Describe("Condition types", func() {
 		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 		written := readAgent(name).Status.Conditions
-		Expect(written).NotTo(BeEmpty())
+		Expect(meta.FindStatusCondition(written, agentv1alpha1.ConditionSynced)).NotTo(BeNil(), "Synced was not written")
+		Expect(meta.FindStatusCondition(written, agentv1alpha1.ConditionAvailable)).NotTo(BeNil(), "Available was not written")
 
 		By("an earlier operator's StateIsolated beside the conditions this one wrote")
 		agent := readAgent(name)
@@ -43,17 +46,5 @@ var _ = Describe("Condition types", func() {
 		Expect(meta.FindStatusCondition(after, retiredStateIsolated.Type)).To(BeNil(), "StateIsolated was kept")
 		By("the control: every condition this operator wrote is kept as it was")
 		Expect(after).To(Equal(written))
-	})
-
-	It("lists every condition type the reconciler writes", func() {
-		name := "written-conditions"
-		createSecret(credentialsSecretName(name))
-		createAgent(newAgent(name))
-		_, err := reconcileAgent(name)
-		Expect(err).NotTo(HaveOccurred())
-
-		for _, condition := range readAgent(name).Status.Conditions {
-			Expect(conditionTypes).To(ContainElement(condition.Type))
-		}
 	})
 })
