@@ -49,7 +49,11 @@ What this project publishes, where its output lands in a cluster, and who owns e
   - prints `repository:X.Y.Z@sha256:<digest>` for each to the step summary, which is where a deployment's reference comes from.
 
   It has no concurrency group, so a queued release is never cancelled. A run whose second push fails leaves the version half-published, which only the next version repairs.
-- **The release workflow pushes as `arn:aws:iam::486152169996:role/garamsh-garam-agent-operator-github-actions`, which does not exist yet.** `garamsh/infra#292` requests it, `#293` names it, and its trust policy is to admit the subject `repo:garamsh@307152666/garam-agent-operator@1335647420:ref:refs/tags/v*` alone. The trigger is approved and the role is not applied. Until it is, a tag run fails at the credential step having pushed nothing, so no release tag is pushed before it exists.
+- **The release workflow pushes as `arn:aws:iam::486152169996:role/garam-agent-operator-github-actions`.** Its name, permissions and trust are `garamsh/infra`'s: `#292` requested it, `#293` names it, and `#325` applied it.
+  - **It exists.** It was created at 2026-10-09T17:09:49Z, and the PM read it back with `aws iam get-role` on 2026-10-10 (#320). The `garamsh-` name an earlier draft used was never applied (ADR 0051, Errata).
+  - **Its trust admits a `v*` tag and nothing else.** `StringLike` `sub` is `repo:garamsh@307152666/garam-agent-operator@1335647420:ref:refs/tags/v*`, with `aud` `sts.amazonaws.com`, so no branch and no pull request gets the credential. It may push to `garam/garam-agent-operator` and `garam/garam-agent-operator-control` only.
+  - **Unproven until the first release tag.** No token has reached the role yet. The first `v*` tag pushed on a commit whose `release.yml` names it is what proves the subject, and a mismatch refuses the assume rather than granting anything.
+  - **If that assume fails,** the CloudTrail `AssumeRoleWithWebIdentity` event, with its `errorCode` and the `sub` it presented, goes to `garamsh/infra`, rather than the workflow's error line.
 - **A development image is published by hand, in these steps.** Whoever does it holds a credential that can write the account. No contributor has one by virtue of contributing, and `docker` is not present on every contributor's machine.
   - Authenticate to ECR for account `486152169996` in `ap-northeast-2`.
   - Check out the commit being published and confirm the tree is unmodified. Nothing downstream will check this.
