@@ -369,9 +369,10 @@ func applyLineage(statefulSet *appsv1.StatefulSet, lineage string) {
 // is copied onto it.
 //
 // The old Pod is the only writer of the state claim throughout. Orphaned, it
-// keeps running alone until the new StatefulSet adopts it by its labels and
-// deletes it to roll it, and its writer fence then holds it until its writers
-// are seen to stop (ADR 0042). The new Pod has the old one's name, so it cannot
+// keeps running alone until the new StatefulSet adopts it by its labels;
+// rollOutdatedPod then deletes it to roll it, since that StatefulSet can record
+// the rollout complete without doing so (#340), and its writer fence holds it
+// until its writers are seen to stop (ADR 0042). The new Pod has the old one's name, so it cannot
 // be created while the old one exists, and the state claim is the same claim by
 // name, so the fence reads the claim the old Pod started on.
 func (r *AgentReconciler) replaceSharedShape(ctx context.Context, statefulSet *appsv1.StatefulSet) error {

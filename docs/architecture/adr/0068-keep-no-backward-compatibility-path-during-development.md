@@ -69,3 +69,19 @@ ADR 0047 also added the `StateIsolated` condition, and the `Isolated` column of 
 - **Turn each switch on by default and keep the flag.** It keeps the off branch, and its tests, for a deployment that the directive says not to keep.
 - **Keep the gated shared-claim migration for the lab's existing agents.** The owner chose to replace the lab wholesale instead (#327).
 - **Keep the seed, so the workspace keeps its files.** The owner chose an empty workspace (#327). The seed existed only for an agent an earlier operator built in the shared shape.
+
+## Errata
+
+### 2026-10-10 — the lab's claim held no memory
+
+Context says the lab's `state-agent-75a5b4c54b12dca4-0` "holds eleven days of an agent's memory". It did not. gitops fingerprinted the store read-only before the migration: every table held 0 rows, and `memory.db` was 57,344 bytes holding the schema only (#340). The decision to keep the existing state claim by name stands. It keeps whatever memory a claim holds, and this one held none.
+
+### 2026-10-10 — the replacing StatefulSet did not roll the adopted Pod
+
+Decision restores ADR 0044's replacement, whose last step has the new StatefulSet adopt the orphaned Pod and delete it to roll it. At manager `4c425a7` the adoption happened and the delete did not:
+- the new StatefulSet recorded `currentRevision == updateRevision`;
+- the Pod kept the old `controller-revision-hash`;
+- `Synced` and `Available` both reported success;
+- the Pod moved only after a manual suspend and resume (#340, lab, 2026-10-10).
+
+The operator now deletes a Pod whose revision is not the StatefulSet's update revision, through the writer fence and never forced. It reports `Synced` `False` (`WorkloadRolling`) and `Available` `False` (`ReplicaOutdated`) until a Pod on that revision runs. The decision stands.
