@@ -344,7 +344,7 @@ type AgentStatus struct {
 	// assignment is currently on, so a report this operator sends carries this
 	// value and is refused once the agent has been assigned again.
 	//
-	// It is recorded where garam's certificate route proved it and is never
+	// It is recorded where garam's mint proved it and is never
 	// refreshed afterwards. A value re-read later would be whatever epoch the
 	// assignment stands at, which is current whoever holds the agent by then, and
 	// a report carrying it could never be found stale.
