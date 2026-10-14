@@ -100,6 +100,27 @@ var _ = Describe("Token store", func() {
 		))
 	})
 
+	It("lists an agent whose epoch does not parse beside the others, so the others are still refreshed", func() {
+		malformed, sound := "grn:acme:default:agent:malformed", "grn:acme:default:agent:sound"
+		agentWith(malformed, &agentv1alpha1.AgentIdentity{GRN: malformed, AssignmentEpoch: "x", Source: agentv1alpha1.DesiredSourceGaram})
+		agentWith(sound, &agentv1alpha1.AgentIdentity{GRN: sound, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceGaram})
+
+		holders, err := constructor.NewTokens(k8sClient, scheme.Scheme, tokensNamespace).Holders(ctx)
+		Expect(err).NotTo(HaveOccurred(), "one agent's epoch failed the whole list")
+		Expect(holders).To(HaveLen(2))
+		for _, holder := range holders {
+			switch holder.Agent {
+			case garam.GRN(sound):
+				// Control: the sound agent is listed as it would be alone.
+				Expect(holder.Err).NotTo(HaveOccurred())
+				Expect(holder.Epoch).To(Equal(int64(7)))
+			case garam.GRN(malformed):
+				Expect(holder.Err).To(MatchError(garam.ErrEpochUnreadable))
+				Expect(holder.Err).To(MatchError(ContainSubstring(malformed)))
+			}
+		}
+	})
+
 	It("creates the credential owned by the agent's Agent, then replaces its tokens and refresh time in one write", func() {
 		grn := "grn:acme:default:agent:fenced"
 		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceControl})

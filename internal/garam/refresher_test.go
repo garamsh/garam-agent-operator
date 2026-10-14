@@ -382,3 +382,24 @@ func slicesCount(values []string, value string) int {
 	}
 	return n
 }
+
+// TestRefresherRefreshesEveryOtherAgentPastOneItCannotRead is a failure that
+// belongs to one agent staying that agent's: it is not minted for, and waits,
+// while the agent beside it is minted for and written.
+func TestRefresherRefreshesEveryOtherAgentPastOneItCannotRead(t *testing.T) {
+	g := NewWithT(t)
+	clock := mintedAt
+	stub := newMintStub(t, clock)
+	unreadable := garam.GRN("grn:acme:default:agent:unreadable")
+	store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{
+		{Agent: unreadable, Err: fmt.Errorf("read the epoch of %s: %w", unreadable, garam.ErrEpochUnreadable)},
+		{Agent: sampleAgent, Epoch: 4},
+	}}
+	refresher := refresherFor(t, stub, store, &clock)
+
+	refresher.Refresh(context.Background())
+	g.Expect(stub.mints()).NotTo(HaveKey(string(unreadable)))
+	g.Expect(store.written()).NotTo(HaveKey(unreadable))
+	// Control: the agent beside it is minted for and written.
+	g.Expect(store.written()).To(HaveKey(sampleAgent))
+}

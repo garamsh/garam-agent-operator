@@ -2,6 +2,7 @@ package garam
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -41,7 +42,16 @@ type TokenHolder struct {
 	// Version is the credential Secret's version when it was read, empty where
 	// it is absent. Store writes only over that version.
 	Version string
+
+	// Err is why this agent's holding could not be read, naming the agent, and
+	// nil where it was. It is this agent's alone: the refresher reports it and
+	// mints nothing for this agent, and every other agent is refreshed.
+	Err error
 }
+
+// ErrEpochUnreadable is an agent whose spec names an assignment epoch that is
+// not an integer. Nothing can be minted against it until the spec changes.
+var ErrEpochUnreadable = errors.New("the agent's spec names an assignment epoch that is not an integer")
 
 // Tokens is what one refresh mints for an agent.
 type Tokens struct {

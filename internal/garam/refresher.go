@@ -120,12 +120,17 @@ func (r *Refresher) Refresh(ctx context.Context) {
 	for _, holder := range holders {
 		listed[holder.Agent] = true
 		now := r.Now()
-		if now.Before(holder.Due) || now.Before(r.waiting[holder.Agent]) {
+		if holder.Err == nil && now.Before(holder.Due) || now.Before(r.waiting[holder.Agent]) {
 			continue
 		}
-		if err := r.refresh(ctx, holder); err != nil {
+		err := holder.Err
+		if err == nil {
+			err = r.refresh(ctx, holder)
+		}
+		if err != nil {
 			pause := failedWait
-			if errors.Is(err, ErrAgentNotHeld) || errors.Is(err, ErrMintEpochSuperseded) || errors.Is(err, ErrNoControlAudience) {
+			if errors.Is(err, ErrAgentNotHeld) || errors.Is(err, ErrMintEpochSuperseded) || errors.Is(err, ErrNoControlAudience) ||
+				errors.Is(err, ErrEpochUnreadable) {
 				pause = refusedWait
 			}
 			r.waiting[holder.Agent] = now.Add(pause)

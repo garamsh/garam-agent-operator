@@ -36,7 +36,8 @@ func NewTokens(c client.Client, scheme *runtime.Scheme, namespace string) *Token
 	return &Tokens{client: c, scheme: scheme, namespace: namespace}
 }
 
-// Holders implements garam.TokenStore.
+// Holders implements garam.TokenStore. A failure that belongs to one agent is
+// carried on that agent's holder, so every other agent is still listed.
 func (t *Tokens) Holders(ctx context.Context) ([]garam.TokenHolder, error) {
 	var agents agentv1alpha1.AgentList
 	if err := t.client.List(ctx, &agents, client.InNamespace(t.namespace)); err != nil {
@@ -55,13 +56,14 @@ func (t *Tokens) Holders(ctx context.Context) ([]garam.TokenHolder, error) {
 		if identity.AssignmentEpoch != "" {
 			epoch, err := strconv.ParseInt(identity.AssignmentEpoch, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("read the epoch of %s: %w", identity.GRN, err)
+				holder.Err = fmt.Errorf("read the epoch %q of %s: %w", identity.AssignmentEpoch, identity.GRN,
+					garam.ErrEpochUnreadable)
+				holders = append(holders, holder)
+				continue
 			}
 			holder.Epoch = epoch
 		}
-		if err := t.readDue(ctx, &holder); err != nil {
-			return nil, err
-		}
+		holder.Err = t.readDue(ctx, &holder)
 		holders = append(holders, holder)
 	}
 	return holders, nil
