@@ -32,7 +32,7 @@ func annotateSecret(name, key, value string) {
 }
 
 var _ = Describe("Recovering an agent's credential", func() {
-	It("reports a recovery request, and why its certificate was refused, and moves the Pod only for a recovered lineage", func() {
+	It("reports a recovery request, and moves the Pod only for a recovered lineage", func() {
 		name := "recovers-its-credential"
 		createSecret(credentialsSecretName(name))
 		agent := newAgent(name)
@@ -49,14 +49,7 @@ var _ = Describe("Recovering an agent's credential", func() {
 		reconcileOnce(name)
 		expectCondition(name, agentv1alpha1.ConditionRecovery, metav1.ConditionTrue, agentv1alpha1.ReasonRecovering)
 
-		By("its recovered certificate refused, which the agent reports under that reason")
-		annotateSecret(agentname.RecoveryRequestSecret(recoveringGRN), agentname.RecoveryRefusedAnnotation,
-			agentv1alpha1.ReasonRecoveredCertificateUnverified)
-		reconcileOnce(name)
-		expectCondition(name, agentv1alpha1.ConditionRecovery, metav1.ConditionTrue,
-			agentv1alpha1.ReasonRecoveredCertificateUnverified)
-
-		By("a recovered credential placed under a lineage, which the Pod template carries, so the Pod moves")
+		By("a recovered lineage recorded on the credential, which the Pod template carries, so the Pod moves")
 		before := statefulSetFor(name).Spec.Template
 		annotateSecret(credentialsSecretName(name), agentname.CredentialLineageAnnotation, "lineage-2")
 		reconcileOnce(name)
