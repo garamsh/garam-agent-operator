@@ -45,8 +45,11 @@ type AgentSpec struct {
 	Image string `json:"image"`
 
 	// credentialsSecretName is the name of a Secret in the Agent's namespace
-	// holding the agent's credential material. The Secret is created outside this
-	// operator, and its keys are mounted into the agent as files.
+	// holding the agent's credential material: the garam tokens its adapter reads
+	// and the garam server root. This operator writes it for an Agent it builds.
+	// Its keys are mounted as files: the tokens into garam's adapter alone, and
+	// the server root into the agent where it verifies garam's message signing
+	// keys.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	CredentialsSecretName string `json:"credentialsSecretName"`
