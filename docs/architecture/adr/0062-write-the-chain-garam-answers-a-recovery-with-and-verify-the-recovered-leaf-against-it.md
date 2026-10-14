@@ -1,6 +1,6 @@
 # ADR 0062: Write the chain garam answers a recovery with, and verify the recovered leaf against it
 
-> Status: accepted
+> Status: superseded by ADR-0073
 > Date: 2026-10-07
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

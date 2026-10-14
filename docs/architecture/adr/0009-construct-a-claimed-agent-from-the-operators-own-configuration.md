@@ -1,6 +1,6 @@
 # ADR 0009: Construct a claimed agent from the operator's own configuration, and place the credential the claim admits it to
 
-> Status: accepted
+> Status: accepted; the certificate route and the credential it places superseded by ADR-0073
 > Date: 2026-08-26
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

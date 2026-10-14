@@ -1,6 +1,6 @@
 # ADR 0072: Authenticate the manager and the control service to garam with their own private keys, and drop the operator certificate
 
-> Status: accepted
+> Status: accepted; decision 5, and the refusal of activation in decision 6, superseded by ADR-0073
 > Date: 2026-10-14
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

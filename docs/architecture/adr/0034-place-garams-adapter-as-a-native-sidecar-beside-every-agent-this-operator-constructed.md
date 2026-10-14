@@ -1,6 +1,6 @@
 # ADR 0034: Place garam's adapter as a native sidecar beside every agent this operator constructed, and own its placement only
 
-> Status: accepted
+> Status: accepted; the credential copy the adapter mounts, and its certificate and key settings, superseded by ADR-0073
 > Date: 2026-10-04
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
