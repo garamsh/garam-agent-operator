@@ -21,6 +21,8 @@ type Config struct {
 	MaxAgents int
 	// Logger receives one line per request that failed for a reason the caller cannot act on.
 	Logger *slog.Logger
+	// Now reads the clock a controller's contact and its image report are recorded at.
+	Now func() time.Time
 }
 
 type server struct {
@@ -29,21 +31,25 @@ type server struct {
 	pollInterval time.Duration
 	maxAgents    int
 	logger       *slog.Logger
+	now          func() time.Time
+	contacts     *contacts
 }
 
-// NewHandler returns the controller routes. Each needs the client certificate a controller
-// presents in its TLS handshake:
+// NewHandler returns the controller routes. Each needs the token a controller presents:
 //
 //	GET  /v1/operators/self/desired                the desired feed, long-polled
+//	PUT  /v1/operators/self/images                 a report of the images the controller runs
 //	POST /v1/operators/self/agents/{agent}/status  a report of what the controller observed and rendered
 //	POST /v1/operators/self/agents/{agent}/placements         a registration of the agent's placement
 //	POST /v1/operators/self/agents/{agent}/recovery-requests  the request of the agent's open recovery
 func NewHandler(c Config) http.Handler {
 	s := &server{
 		definitions: c.Definitions, prover: c.Prover, pollInterval: c.PollInterval, maxAgents: c.MaxAgents, logger: c.Logger,
+		now: c.Now, contacts: newContacts(c.Now),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/operators/self/desired", s.desired)
+	mux.HandleFunc("PUT /v1/operators/self/images", s.reportImages)
 	mux.HandleFunc("POST /v1/operators/self/agents/{agent}/status", s.status)
 	mux.HandleFunc("POST /v1/operators/self/agents/{agent}/placements", s.registerPlacement)
 	mux.HandleFunc("POST /v1/operators/self/agents/{agent}/recovery-requests", s.prepareRecovery)

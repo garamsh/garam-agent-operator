@@ -17,15 +17,15 @@ import (
 )
 
 // latestVersion is the newest migration the binary embeds.
-const latestVersion = 1
+const latestVersion = 2
 
 // migrationsTable is where the binary records the schema version.
 const migrationsTable = "schema_migrations"
 
-// schemaTables are the tables migration 1 creates.
+// schemaTables are the tables the migrations create.
 var schemaTables = []string{
 	"activation_requests", "agent_activations", "agent_status", "creations", "cutover_imports", "definitions",
-	"placements", "positions", "profiles", "publications", "recoveries", "requests",
+	"operators", "placements", "positions", "profiles", "publications", "recoveries", "requests",
 	"stops", "templates",
 }
 

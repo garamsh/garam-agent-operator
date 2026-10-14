@@ -22,6 +22,9 @@ const (
 	OperationTemplatePublish = "agent-template:publish"
 	OperationProfileRead     = "execution-profile:read"
 	OperationExecutionRead   = "agent:execution-read"
+	// OperationOperatorRead reads what the organization's controllers reported of themselves
+	// (garam@58712f7 api/machine.yaml OperationBinding, ADR 0074).
+	OperationOperatorRead = "operator:read"
 )
 
 // Binding is what an authority binds, as garam's introspection answers it.

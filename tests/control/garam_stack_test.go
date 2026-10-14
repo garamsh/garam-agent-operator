@@ -302,7 +302,8 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 		RequestID:   "e2e-delegation",
 		Controllers: []string{s.controllerGRN},
 		Operations: []string{"agent:create", "agent:configure", "agent:activate", "agent:recover", "agent:cutover",
-			"agent-template:read", "agent-template:publish", "execution-profile:read", "agent:execution-read"},
+			"agent-template:read", "agent-template:publish", "execution-profile:read", "agent:execution-read",
+			"operator:read"},
 		ExpiresAt: time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 	}
 	return step("write the hosted operator's delegation",

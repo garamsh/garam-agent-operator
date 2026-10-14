@@ -71,7 +71,7 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		// api/machine.yaml:26-31).
 		writeJSON(w, http.StatusServiceUnavailable, errorBody{Kind: kindGaramContractUnsupported, Message: err.Error()})
 	case errors.Is(err, errInvalidQuery), errors.Is(err, errInvalidStatusBody), errors.Is(err, definition.ErrInvalidStatus),
-		errors.Is(err, errInvalidRecoveryBody):
+		errors.Is(err, errInvalidRecoveryBody), errors.Is(err, errInvalidImagesBody), errors.Is(err, definition.ErrInvalidImages):
 		writeMessage(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, definition.ErrNotFound):
 		writeMessage(w, http.StatusNotFound, err.Error())

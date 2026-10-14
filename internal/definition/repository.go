@@ -1,6 +1,9 @@
 package definition
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Repository persists the control service's desired state.
 // Every method that returns a value returns a copy the caller may change freely.
@@ -142,4 +145,13 @@ type Repository interface {
 	RecordStart(ctx context.Context, agent GRN, end StopEnd) (Stop, error)
 	// CurrentStop returns the stop holding the agent, or ErrNotFound.
 	CurrentStop(ctx context.Context, agent GRN) (Stop, error)
+
+	// RecordOperatorContact records operator, held by orgGRN, as last contacted at at, unless a
+	// later contact is stored.
+	RecordOperatorContact(ctx context.Context, orgGRN, operator string, at time.Time) error
+	// ReportOperatorImages stores images as operator's, reported at at, unless a later report is
+	// stored.
+	ReportOperatorImages(ctx context.Context, orgGRN, operator string, images []OperatorImage, at time.Time) error
+	// ListOperators returns every operator stored for orgGRN, ordered by GRN.
+	ListOperators(ctx context.Context, orgGRN string) ([]Operator, error)
 }

@@ -69,6 +69,7 @@ func TestDesired_GaramsProofUnderAnotherContractOrNoneIsRefused503(t *testing.T)
 				PollInterval: 10 * time.Millisecond,
 				MaxAgents:    10,
 				Logger:       slog.New(slog.DiscardHandler),
+				Now:          e.clock.Now,
 			}))
 			server.TLS = &tls.Config{ClientAuth: tls.RequestClientCert}
 			server.StartTLS()

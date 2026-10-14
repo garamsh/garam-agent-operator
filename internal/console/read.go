@@ -58,6 +58,22 @@ type (
 		Generation string    `json:"generation"`
 		ObservedAt time.Time `json:"observedAt"`
 	}
+	// operatorsAnswer is the answer garam@58712f7 docs/architecture/operators.md records: an
+	// absent time is one that never happened, never now.
+	operatorsAnswer struct {
+		Operators []operatorAnswer `json:"operators"`
+	}
+	operatorAnswer struct {
+		GRN           string        `json:"grn"`
+		Images        []imageAnswer `json:"images"`
+		ReportedAt    *time.Time    `json:"reportedAt,omitempty"`
+		LastContactAt *time.Time    `json:"lastContactAt,omitempty"`
+	}
+	imageAnswer struct {
+		Name   string  `json:"name"`
+		Ref    string  `json:"ref"`
+		Digest *string `json:"digest,omitempty"`
+	}
 )
 
 // authorized reads the body, which for a read is empty, and authorizes the request for operation
@@ -188,6 +204,29 @@ func (s *server) execution(w http.ResponseWriter, r *http.Request) {
 		out.Effective = &effectiveExecution{
 			Revision: e.Effective.Revision.String(), Generation: e.Effective.Generation, ObservedAt: e.Effective.ObservedAt,
 		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// listOperators answers each controller of the organization that reached this service: the images
+// it last reported, when it reported them, and when it last made contact.
+func (s *server) listOperators(w http.ResponseWriter, r *http.Request) {
+	org := orgGRN(r)
+	if _, _, ok := s.authorized(w, r, OperationOperatorRead, org); !ok {
+		return
+	}
+	operators, err := s.definitions.ListOperators(r.Context(), org)
+	if err != nil {
+		s.respondError(w, err)
+		return
+	}
+	out := operatorsAnswer{Operators: []operatorAnswer{}}
+	for _, o := range operators {
+		answer := operatorAnswer{GRN: o.GRN, Images: []imageAnswer{}, ReportedAt: o.ReportedAt, LastContactAt: o.LastContactAt}
+		for _, image := range o.Images {
+			answer.Images = append(answer.Images, imageAnswer{Name: image.Name, Ref: image.Ref, Digest: image.Digest})
+		}
+		out.Operators = append(out.Operators, answer)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
