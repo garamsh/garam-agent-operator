@@ -1,7 +1,6 @@
 package definition
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"strconv"
@@ -605,13 +604,11 @@ type PreviousPlacement struct {
 	WriterStoppedSHA256 string
 }
 
-// PlacementInput registers a placement of agent by controller, whose leaf certificate in that
-// handshake was LeafDER.
+// PlacementInput registers a placement of agent by controller.
 type PlacementInput struct {
 	Agent      GRN
 	Controller string
 	Request    PlacementRequest
-	LeafDER    []byte
 }
 
 // Placement is a stored placement. One per agent is current; every one it replaced is kept,
@@ -620,7 +617,6 @@ type Placement struct {
 	Agent      GRN
 	Controller string
 	Request    PlacementRequest
-	LeafDER    []byte
 	Superseded bool
 }
 
@@ -630,8 +626,6 @@ type PlacementAction int
 const (
 	// PlacementRepeat answers the current placement as stored.
 	PlacementRepeat PlacementAction = iota + 1
-	// PlacementRefresh replaces the current placement's leaf, and nothing else of it.
-	PlacementRefresh
 	// PlacementRegister supersedes the current placement, if any, and makes this one current.
 	PlacementRegister
 )
@@ -647,10 +641,7 @@ func DecidePlacement(current, same *Placement, in PlacementInput) (PlacementActi
 		if same.Request != in.Request || same.Controller != in.Controller {
 			return 0, ErrPlacementConflict
 		}
-		if bytes.Equal(same.LeafDER, in.LeafDER) {
-			return PlacementRepeat, nil
-		}
-		return PlacementRefresh, nil
+		return PlacementRepeat, nil
 	}
 	previous := in.Request.Previous
 	if previous == (PreviousPlacement{}) {

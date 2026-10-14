@@ -102,7 +102,7 @@ func startIssuer(t *testing.T, status int, body string) (*countingRoute, *memory
 	t.Cleanup(server.Close)
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate())
-	issuer := NewIssuer(NewClient(server.Listener.Addr().String(), &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}),
+	issuer := NewIssuer(NewClient(server.Listener.Addr().String(), &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}),
 		store)
 	issuer.pass, issuer.transientFirst, issuer.transientLast, issuer.refusedWait =
 		time.Millisecond, time.Millisecond, time.Millisecond, time.Hour

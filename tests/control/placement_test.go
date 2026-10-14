@@ -38,7 +38,7 @@ func placementOf(epoch, pod, previous string) string {
 }
 
 // registerPlacement posts body on the controller route for agent, presenting the controller's
-// leaf, and returns the status and the raw answer.
+// token, and returns the status and the raw answer.
 func registerPlacement(agent, body string) (int, []byte, error) {
 	return registerPlacementAt(attachedURL, agent, body)
 }
@@ -55,6 +55,21 @@ func registerPlacementAt(base, agent, body string) (int, []byte, error) {
 	return resp.StatusCode, raw, err
 }
 
+// placeableAgent is an agent garam created for the controller, whose revision 2 a configure through
+// the binary recorded at its assignment, which is what a placement is registered against. It is not
+// created through the binary's create route, which garam refuses beside a token until #355.
+func placeableAgent(t *testing.T) (agent, epoch string) {
+	t.Helper()
+	g := requireGaram(t)
+	profile := seedRevision(t, g)
+	requestID := name(t, "configure")
+	body := configureBody(requestID, profile, "placed", 1)
+	status, err := sendConfigure(g, g.mint(t, requestID, body), body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	return g.agent(), g.assignment
+}
+
 func mustPlace(t *testing.T, agent, body string, status int) []byte {
 	t.Helper()
 	got, raw, err := registerPlacement(agent, body)
@@ -63,28 +78,25 @@ func mustPlace(t *testing.T, agent, body string, status int) []byte {
 	return raw
 }
 
-// currentPlacement is the Pod of the agent's current placement, and the leaf stored with it.
-func currentPlacement(t *testing.T, agent string) (pod string, leaf []byte) {
+// currentPlacement is the Pod of the agent's current placement.
+func currentPlacement(t *testing.T, agent string) (pod string) {
 	t.Helper()
 	require.NoError(t, pool.QueryRow(t.Context(),
-		"SELECT pod_uid, leaf_der FROM placements WHERE agent = $1 AND revoked_at IS NULL", agent).Scan(&pod, &leaf))
-	return pod, leaf
+		"SELECT pod_uid FROM placements WHERE agent = $1 AND revoked_at IS NULL", agent).Scan(&pod))
+	return pod
 }
 
 func TestPlacement_RegisteredUnderTheAgentBoundProofAgainstGaram(t *testing.T) {
-	agent, epoch := managedAgent(t)
+	agent, epoch := placeableAgent(t)
 
-	// A first placement, stored with the controller's leaf as presented, and answered the same on a repeat.
+	// A first placement, answered the same on a repeat.
 	first := mustPlace(t, agent, placementOf(epoch, "pod-1", ""), http.StatusCreated)
 	assert.Equal(t, first, mustPlace(t, agent, placementOf(epoch, "pod-1", ""), http.StatusOK))
-	pod, leaf := currentPlacement(t, agent)
-	assert.Equal(t, "pod-1", pod)
-	assert.Equal(t, real.controller.Certificate[0], leaf, "the stored leaf is not the one presented")
+	assert.Equal(t, "pod-1", currentPlacement(t, agent))
 
 	// Its replacement, which revokes it in the same step.
 	second := mustPlace(t, agent, placementOf(epoch, "pod-2", "pod-1"), http.StatusCreated)
-	pod, _ = currentPlacement(t, agent)
-	assert.Equal(t, "pod-2", pod)
+	assert.Equal(t, "pod-2", currentPlacement(t, agent))
 	const revoked = "SELECT count(*) FROM placements WHERE agent = $1 AND pod_uid = 'pod-1' AND revoked_at IS NOT NULL"
 	assert.Equal(t, 1, count(t, revoked, agent))
 
@@ -93,10 +105,9 @@ func TestPlacement_RegisteredUnderTheAgentBoundProofAgainstGaram(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusConflict, status, string(raw))
 	assert.Contains(t, string(raw), "placement_superseded")
-	pod, _ = currentPlacement(t, agent)
-	assert.Equal(t, "pod-2", pod)
+	assert.Equal(t, "pod-2", currentPlacement(t, agent))
 
-	// The manager's retry after a crash, and a refresh under the same leaf: both answered as stored.
+	// The manager's retry after a crash, twice: both answered as stored.
 	for range 2 {
 		assert.Equal(t, second, mustPlace(t, agent, placementOf(epoch, "pod-2", "pod-1"), http.StatusOK))
 	}
@@ -110,7 +121,7 @@ func TestPlacement_RegisteredUnderTheAgentBoundProofAgainstGaram(t *testing.T) {
 }
 
 func TestPlacement_ConcurrentReplacementsOfOnePlacementStoreOne(t *testing.T) {
-	agent, epoch := managedAgent(t)
+	agent, epoch := placeableAgent(t)
 	mustPlace(t, agent, placementOf(epoch, "pod-1", ""), http.StatusCreated)
 
 	const n = 8
@@ -141,7 +152,7 @@ func TestPlacement_ConcurrentReplacementsOfOnePlacementStoreOne(t *testing.T) {
 }
 
 func TestPlacement_ConcurrentIdenticalFirstRegistrationsStoreOne(t *testing.T) {
-	agent, epoch := managedAgent(t)
+	agent, epoch := placeableAgent(t)
 	body := placementOf(epoch, "pod-1", "")
 
 	const n = 8

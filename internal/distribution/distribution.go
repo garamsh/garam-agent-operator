@@ -17,12 +17,12 @@ type ProvenAgent struct {
 }
 
 var (
-	// ErrNoCertificate is returned for a request that presented no client certificate, or one
-	// naming no single operator GRN.
-	ErrNoCertificate = errors.New("no controller certificate presented")
+	// ErrNoToken is returned for a request that presented no bearer token of garam's operator
+	// form, or named no controller GRN beside it.
+	ErrNoToken = errors.New("no controller token presented")
 
-	// ErrNotProved is returned when garam does not prove what was asked: the certificate does not
-	// prove the controller, the controller or agent is unknown, or current authority refuses.
+	// ErrNotProved is returned when garam does not prove what was asked: the token does not prove
+	// the controller, the controller or agent is unknown, or current authority refuses.
 	ErrNotProved = errors.New("controller authority not proved")
 
 	// ErrUndecided is returned when garam could not decide the proof from current state.
@@ -33,6 +33,6 @@ var (
 	// proves nothing.
 	ErrGaramContractUnsupported = errors.New("garam answered under a contract this service does not take")
 
-	// ErrAnotherOperator is returned for a proof naming another operator than the certificate.
-	ErrAnotherOperator = errors.New("proof names another operator than the certificate")
+	// ErrAnotherOperator is returned for a proof naming another operator than the request.
+	ErrAnotherOperator = errors.New("proof names another operator than the request")
 )

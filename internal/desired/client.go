@@ -3,7 +3,6 @@ package desired
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,19 +30,25 @@ const (
 // covers only the network and the server's proofs.
 const requestMargin = 30 * time.Second
 
-// Client reaches the control service's controller routes over mutual TLS, as
-// this operator's own certificate (ADR 0040).
+// ControllerHeader is the header a request to the controller routes names this
+// operator's GRN in, beside the token minted for the control service under that
+// GRN (ADR 0072).
+const ControllerHeader = "Controller-Grn"
+
+// Client reaches the control service's controller routes as this operator: its
+// transport presents a garam token minted for the control service, and the GRN
+// that token was exchanged under (ADR 0072).
 type Client struct {
 	address string
 	http    *http.Client
 }
 
 // NewClient returns a Client reaching the control service at address, a host
-// and port, under tlsConfig.
-func NewClient(address string, tlsConfig *tls.Config) *Client {
+// and port, through transport.
+func NewClient(address string, transport http.RoundTripper) *Client {
 	return &Client{
 		address: address,
-		http:    &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}},
+		http:    &http.Client{Transport: transport},
 	}
 }
 
@@ -295,8 +300,7 @@ func recoveryOf(r *wireRecovery) *OpenRecovery {
 
 // RegisterPlacement registers a managed agent's placement with the control
 // service (#212, #218), and reports whether it was new: 201 registers it, and
-// 200 answers a repeat or a refresh under a renewed leaf, never a new
-// placement. A 4xx answer is a *RefusalError.
+// 200 answers a repeat, never a new placement. A 4xx answer is a *RefusalError.
 func (c *Client) RegisterPlacement(ctx context.Context, agent string, placement Placement) (created bool, err error) {
 	wire := wirePlacement{
 		Epoch: placement.Epoch, PodUID: placement.PodUID, PVCUID: placement.PVCUID, TokenSHA256: placement.TokenSHA256,

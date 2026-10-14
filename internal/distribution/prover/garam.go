@@ -12,8 +12,8 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
-// Garam proves controllers on garam's machine listener, through introspectController
-// (garam@f2ac780, api/machine.yaml).
+// Garam proves controllers on garam's machine listener, through introspectController under
+// operation-authority.v2 (garam@9ba35c3, api/machine.yaml).
 type Garam struct {
 	machine *garammachine.Client
 }
@@ -25,10 +25,10 @@ func NewGaram(machine *garammachine.Client) *Garam {
 	return &Garam{machine: machine}
 }
 
-// introspectionJSON is garam's ControllerIntrospection schema.
+// introspectionJSON is garam's ControllerIntrospection schema under operation-authority.v2.
 type introspectionJSON struct {
-	CertificatePEM string  `json:"certificatePem"`
-	Agent          *string `json:"agent"`
+	Token string  `json:"token"`
+	Agent *string `json:"agent"`
 }
 
 // proofJSON is garam's ControllerProof schema.
@@ -41,10 +41,11 @@ type proofJSON struct {
 	} `json:"agent"`
 }
 
-// Prove forwards leafPEM exactly as given. Every answer but 200 refuses; 403, 404 and 422 are
-// garam's refusals, and 500 and 503 are retried by the machine client within its bound.
-func (g *Garam) Prove(ctx context.Context, controller string, leafPEM []byte, agent string) (distribution.Proof, error) {
-	in := introspectionJSON{CertificatePEM: string(leafPEM)}
+// Prove forwards token exactly as the controller presented it. Every answer but 200 refuses; 403,
+// 404 and 422 are garam's refusals — 422 for a token that is not live, names another controller or
+// another audience — and 500 and 503 are retried by the machine client within its bound.
+func (g *Garam) Prove(ctx context.Context, controller, token, agent string) (distribution.Proof, error) {
+	in := introspectionJSON{Token: token}
 	if agent != "" {
 		in.Agent = &agent
 	}

@@ -15,7 +15,7 @@ import (
 )
 
 // contract is the contract version garam answers under.
-const contract = "operation-authority.v1"
+const contract = "operation-authority.v2"
 
 // garam answers each call with the next status, under contract.
 type garam struct {
@@ -49,7 +49,7 @@ func TestPost_SendsAndRequiresTheContract(t *testing.T) {
 	assert.Equal(t, 200, answer.Status)
 	assert.Equal(t, contract, g.sent.Load())
 
-	for _, answered := range []string{"operation-authority.v2", ""} {
+	for _, answered := range []string{"operation-authority.v1", ""} {
 		other := &garam{statuses: []int{200}, contract: answered}
 		_, err = post(t, other)
 		var foreign *garammachine.ContractError

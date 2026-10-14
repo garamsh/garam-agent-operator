@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
@@ -139,8 +138,8 @@ func (s *server) currentPlacement(ctx context.Context, agent, token, epoch strin
 
 // admit has garam prove, for this attempt, that the leaf is the agent's current credential on the
 // placement's controller at epoch, and that the controller the placement was registered by is still
-// the agent's, proved over the leaf stored with the placement. The generation is not asked: it is
-// the one being activated.
+// the agent's. A controller proof control cannot ask for refuses the activation by name, as
+// errControllerUnproven. The generation is not asked: it is the one being activated.
 func (s *server) admit(ctx context.Context, agent string, leafPEM []byte, epoch string, placement definition.Placement) error {
 	execution, err := s.garam.Introspect(ctx, agent, leafPEM, "")
 	if err != nil {
@@ -154,8 +153,10 @@ func (s *server) admit(ctx context.Context, agent string, leafPEM []byte, epoch 
 	case execution.Epoch != epoch:
 		return errEpochSuperseded
 	}
-	stored := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: placement.LeafDER})
-	proof, err := s.garam.ProveController(ctx, placement.Controller, stored, agent)
+	proof, err := s.garam.ProveController(ctx, placement.Controller, agent)
+	if errors.Is(err, ErrControllerUnprovable) {
+		return errControllerUnproven
+	}
 	if err != nil {
 		return refusalOf(err, errNotAuthorized)
 	}

@@ -21,7 +21,7 @@ const (
 
 	// refusedWait is how long the puller waits after a 4xx before asking again.
 	// A refusal is definite and is never asked again at once, but it can clear —
-	// a renewed certificate, a grant reissued, agents moved away — so the
+	// a key issued anew, a grant reissued, agents moved away — so the
 	// puller keeps asking, slowly.
 	refusedWait = 5 * time.Minute
 )

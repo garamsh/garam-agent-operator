@@ -141,9 +141,9 @@ CREATE TABLE initial_certificates (
 );
 
 -- Every placement a controller registered for an agent: the Pod, the state claim it started on,
--- the epoch, the digest of its placement token, the placement it replaced with the digest of that
--- one's writer-stopped evidence, and the controller's leaf exactly as presented. One per agent is
--- current; a replaced one is revoked and kept, so it is never registered again.
+-- the epoch, the digest of its placement token, and the placement it replaced with the digest of
+-- that one's writer-stopped evidence. One per agent is current; a replaced one is revoked and kept,
+-- so it is never registered again.
 CREATE TABLE placements (
     agent                          text        NOT NULL,
     pod_uid                        text        NOT NULL,
@@ -153,7 +153,6 @@ CREATE TABLE placements (
     token_sha256                   text        NOT NULL,
     previous_pod_uid               text        NOT NULL DEFAULT '',
     previous_writer_stopped_sha256 text        NOT NULL DEFAULT '',
-    leaf_der                       bytea       NOT NULL,
     registered_at                  timestamptz NOT NULL DEFAULT now(),
     revoked_at                     timestamptz,
     PRIMARY KEY (agent, pod_uid)

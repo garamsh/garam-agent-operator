@@ -2,19 +2,13 @@ package distribution_test
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/big"
+	"maps"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -48,20 +42,20 @@ type verdict struct {
 }
 
 // prover is the test double for garam's controller proof. It proves the controller and each
-// agent given an epoch, unless the test set another verdict, and records every leaf it was sent.
+// agent given an epoch, unless the test set another verdict, and records every token it was sent.
 type prover struct {
 	mu       sync.Mutex
 	session  *verdict
 	agents   map[string]verdict
 	epochs   map[string]string
-	leaves   [][]byte
+	tokens   []string
 	sessions int
 }
 
-func (p *prover) Prove(_ context.Context, c string, leafPEM []byte, agent string) (distribution.Proof, error) {
+func (p *prover) Prove(_ context.Context, c, token, agent string) (distribution.Proof, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.leaves = append(p.leaves, leafPEM)
+	p.tokens = append(p.tokens, token)
 	if agent == "" {
 		p.sessions++
 		if p.session != nil {
@@ -148,13 +142,11 @@ type env struct {
 	issuer      *issuer
 	definitions definition.Service
 	// store is the in-memory store the definitions are kept in.
-	store       *repository.Memory
-	profile     definition.ProfileRef
-	withCert    *http.Client
-	withoutCert *http.Client
-	// leaf is the DER of the certificate withCert presents.
-	leaf       []byte
-	configures int
+	store        *repository.Memory
+	profile      definition.ProfileRef
+	withToken    *http.Client
+	withoutToken *http.Client
+	configures   int
 }
 
 func newEnv(t *testing.T) *env {
@@ -208,11 +200,10 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 		MaxAgents:    maxAgents,
 		Logger:       slog.New(slog.DiscardHandler),
 	}))
-	e.server.TLS = &tls.Config{ClientAuth: tls.RequestClientCert}
 	e.server.StartTLS()
 	t.Cleanup(e.server.Close)
-	e.withoutCert = e.server.Client()
-	e.withCert, e.leaf = clientWithLeaf(t, e.server, controller)
+	e.withoutToken = e.server.Client()
+	e.withToken = clientWithToken(e.server, controller, controllerToken)
 	return e
 }
 
@@ -234,26 +225,26 @@ func (e *env) configure(t *testing.T, agent, operator string, expected definitio
 	require.NoError(t, err)
 }
 
-// clientWithLeaf is a client of server presenting a certificate whose one SAN URI is grn.
-func clientWithLeaf(t *testing.T, server *httptest.Server, grn string) (*http.Client, []byte) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	san, err := url.Parse(grn)
-	require.NoError(t, err)
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(time.Hour),
-		URIs:         []*url.URL{san},
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err)
-	client := server.Client()
-	transport := client.Transport.(*http.Transport).Clone()
-	transport.TLSClientConfig.Certificates = []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}
-	return &http.Client{Transport: transport}, der
+// controllerToken is the token the controller presents, as garam answers one.
+const controllerToken = "garam_ot_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+// clientWithToken is a client of server presenting token as a bearer, under grn.
+func clientWithToken(server *httptest.Server, grn, token string) *http.Client {
+	return &http.Client{Transport: presenting{base: server.Client().Transport, header: http.Header{
+		"Authorization": {"Bearer " + token}, "Controller-Grn": {grn},
+	}}}
+}
+
+// presenting sends every request with header set on it.
+type presenting struct {
+	base   http.RoundTripper
+	header http.Header
+}
+
+func (p presenting) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	maps.Copy(r.Header, p.header)
+	return p.base.RoundTrip(r)
 }
 
 // feed is one answer of the desired feed.

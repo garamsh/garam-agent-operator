@@ -1,7 +1,6 @@
 package execution_test
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/garamsh/garam-agent-operator/internal/definition"
 	"github.com/garamsh/garam-agent-operator/internal/execution"
 )
 
@@ -286,33 +284,20 @@ func TestActivate_ConcurrentActivationsAreSerialized(t *testing.T) {
 	assert.ElementsMatch(t, []string{"", firstActivation}, anchors)
 }
 
-// TestActivate_RefusedUnderAnExpiredControllerLeafAndAcceptedOnceTheLeafIsRefreshed is #218's
-// window: the controller leaf stored with the placement expires, and the controller presents the
-// placement again under its renewed leaf.
-func TestActivate_RefusedUnderAnExpiredControllerLeafAndAcceptedOnceTheLeafIsRefreshed(t *testing.T) {
-	ctx := context.Background()
+// TestActivate_RefusedByNameWhereTheControllerCannotBeProved is the state between #354 and #355:
+// garam proves a controller over its token, and an activation carries none of the controller's.
+func TestActivate_RefusedByNameWhereTheControllerCannotBeProved(t *testing.T) {
 	e := newEnv(t)
-	placement, err := e.definitions.CurrentPlacement(ctx, agent)
-	require.NoError(t, err)
-	e.garam.set(func(g *garam) { g.expiredLeaves[string(placement.LeafDER)] = true })
+	e.garam.set(func(g *garam) { g.prove = execution.ErrControllerUnprovable })
 
 	refused := e.activate(t, e.adapter, requestID, generation, "1")
 	assert.Equal(t, http.StatusForbidden, refused.status, refused.raw)
 	assert.Equal(t, kindNotAuthorized, refused.kind())
-	assert.Equal(t, 0, e.garam.callCount(), "garam was asked to activate under an expired controller leaf")
+	assert.Contains(t, refused.raw, "#355", "the refusal does not say why")
+	assert.Equal(t, 0, e.garam.callCount(), "garam was asked to activate with the controller unproved")
 
-	// The controller presents the same placement under its renewed leaf, as the placement route does.
-	renewed := []byte("renewed controller leaf")
-	_, first, err := e.definitions.RegisterPlacement(ctx, definition.PlacementInput{
-		Agent: agent, Controller: controller, LeafDER: renewed, Request: placement.Request,
-	})
-	require.NoError(t, err)
-	require.False(t, first, "the refresh registered a new placement")
-	refreshed, err := e.definitions.CurrentPlacement(ctx, agent)
-	require.NoError(t, err)
-	require.Equal(t, renewed, refreshed.LeafDER)
-
-	// Control: the same activation, proved over the refreshed leaf, is accepted.
+	// Control: the same activation with the controller proved is accepted.
+	e.garam.set(func(g *garam) { g.prove = nil })
 	accepted := e.activate(t, e.adapter, requestID, generation, "1")
 	assert.Equal(t, http.StatusCreated, accepted.status, accepted.raw)
 }

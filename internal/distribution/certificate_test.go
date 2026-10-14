@@ -62,7 +62,7 @@ func TestRequestCertificate_IssuesOnceAndAnswersTheStoredResult(t *testing.T) {
 	e := newEnv(t)
 	body := certificateBody("c1", epoch, csrPEM(t, p256))
 
-	status, first, out := e.requestCertificate(t, e.withCert, agentA, body)
+	status, first, out := e.requestCertificate(t, e.withToken, agentA, body)
 	require.Equal(t, http.StatusCreated, status, string(first))
 	assert.Equal(t, map[string]string{
 		"agent": agentA, "epoch": epoch, "certificatePem": "certificate for c1", "issuerPem": "issuer",
@@ -71,7 +71,7 @@ func TestRequestCertificate_IssuesOnceAndAnswersTheStoredResult(t *testing.T) {
 	require.Equal(t, 1, e.issuer.calls())
 	assert.Equal(t, "create-ref-"+agentA, e.issuer.issuances[0].OperationRef)
 
-	status, repeat, _ := e.requestCertificate(t, e.withCert, agentA, body)
+	status, repeat, _ := e.requestCertificate(t, e.withToken, agentA, body)
 	assert.Equal(t, http.StatusOK, status, string(repeat))
 	assert.Equal(t, first, repeat, "an identical retry was answered other bytes")
 	assert.Equal(t, 1, e.issuer.calls(), "an identical retry of an issued request asked garam again")
@@ -105,12 +105,12 @@ func TestRequestCertificate_RefusesWhatGaramWouldNotSignOver(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newEnv(t)
-			status, raw, _ := e.requestCertificate(t, e.withCert, agentA, tt.body)
+			status, raw, _ := e.requestCertificate(t, e.withToken, agentA, tt.body)
 			assert.Equal(t, http.StatusBadRequest, status, string(raw))
 			assert.Equal(t, 0, e.issuer.calls())
 
 			// Control: the same request over the valid P-256 request is issued.
-			status, raw, _ = e.requestCertificate(t, e.withCert, agentA, certificateBody("c1", epoch, valid))
+			status, raw, _ = e.requestCertificate(t, e.withToken, agentA, certificateBody("c1", epoch, valid))
 			assert.Equal(t, http.StatusCreated, status, string(raw))
 		})
 	}
@@ -130,12 +130,12 @@ func TestRequestCertificate_AgentNotPlacedHereRefused(t *testing.T) {
 			e := newEnv(t)
 			tt.setup(e)
 			csr := csrPEM(t, p256)
-			status, raw, _ := e.requestCertificate(t, e.withCert, tt.agent, certificateBody("c1", epoch, csr))
+			status, raw, _ := e.requestCertificate(t, e.withToken, tt.agent, certificateBody("c1", epoch, csr))
 			assert.Equal(t, http.StatusForbidden, status, string(raw))
 			assert.Equal(t, 0, e.issuer.calls())
 
 			// Control: the same request for agentA, placed here under its epoch, is issued.
-			status, raw, _ = e.requestCertificate(t, e.withCert, agentA, certificateBody("c1", epoch, csr))
+			status, raw, _ = e.requestCertificate(t, e.withToken, agentA, certificateBody("c1", epoch, csr))
 			assert.Equal(t, http.StatusCreated, status, string(raw))
 		})
 	}
@@ -155,13 +155,13 @@ func TestRequestCertificate_AnotherEpochSuperseded(t *testing.T) {
 			e := newEnv(t)
 			tt.setup(e)
 			csr := csrPEM(t, p256)
-			status, raw, out := e.requestCertificate(t, e.withCert, agentB, certificateBody("c1", tt.requestEpoch, csr))
+			status, raw, out := e.requestCertificate(t, e.withToken, agentB, certificateBody("c1", tt.requestEpoch, csr))
 			assert.Equal(t, http.StatusConflict, status, string(raw))
 			assert.Equal(t, "epoch_superseded", out["kind"])
 			assert.Equal(t, 0, e.issuer.calls())
 
 			// Control: agentA, proved under the epoch the request and its revision name, is issued.
-			status, raw, _ = e.requestCertificate(t, e.withCert, agentA, certificateBody("c1", epoch, csr))
+			status, raw, _ = e.requestCertificate(t, e.withToken, agentA, certificateBody("c1", epoch, csr))
 			assert.Equal(t, http.StatusCreated, status, string(raw))
 		})
 	}
@@ -179,20 +179,20 @@ func TestRequestCertificate_AnotherRequestThanTheStoredOneRefused(t *testing.T) 
 			e := newEnv(t)
 			csr := csrPEM(t, p256)
 			e.issuer.answer(stored.err)
-			e.requestCertificate(t, e.withCert, agentA, certificateBody("c1", epoch, csr))
+			e.requestCertificate(t, e.withToken, agentA, certificateBody("c1", epoch, csr))
 			e.issuer.answer(nil)
 
 			for _, other := range []string{
 				certificateBody("c1", epoch, csrPEM(t, p256)),
 				certificateBody("c2", epoch, csr),
 			} {
-				status, raw, out := e.requestCertificate(t, e.withCert, agentA, other)
+				status, raw, out := e.requestCertificate(t, e.withToken, agentA, other)
 				assert.Equal(t, http.StatusConflict, status, string(raw))
 				assert.Equal(t, "request_reused", out["kind"])
 			}
 
 			// Control: the stored request itself is answered with its certificate.
-			status, raw, _ := e.requestCertificate(t, e.withCert, agentA, certificateBody("c1", epoch, csr))
+			status, raw, _ := e.requestCertificate(t, e.withToken, agentA, certificateBody("c1", epoch, csr))
 			assert.Contains(t, []int{http.StatusOK, http.StatusCreated}, status, string(raw))
 		})
 	}
@@ -203,12 +203,12 @@ func TestRequestCertificate_UndecidedIsRetriedAsTheSameRequest(t *testing.T) {
 	body := certificateBody("c1", epoch, csrPEM(t, p256))
 	e.issuer.answer(fmt.Errorf("no answer: %w", definition.ErrIssuanceUndecided))
 
-	status, raw, _ := e.requestCertificate(t, e.withCert, agentA, body)
+	status, raw, _ := e.requestCertificate(t, e.withToken, agentA, body)
 	assert.Equal(t, http.StatusServiceUnavailable, status, string(raw))
 
 	// Control: once garam answers, the same request is issued and sent unchanged.
 	e.issuer.answer(nil)
-	status, raw, _ = e.requestCertificate(t, e.withCert, agentA, body)
+	status, raw, _ = e.requestCertificate(t, e.withToken, agentA, body)
 	assert.Equal(t, http.StatusCreated, status, string(raw))
 	require.Equal(t, 2, e.issuer.calls())
 	assert.Equal(t, e.issuer.issuances[0], e.issuer.issuances[1])
@@ -228,13 +228,13 @@ func TestRequestCertificate_GaramRefusalIsAnsweredWithItsKindAndKeepsNothing(t *
 		t.Run(tt.kind, func(t *testing.T) {
 			e := newEnv(t)
 			e.issuer.answer(&definition.IssuanceRefusedError{Refusal: tt.refusal, Kind: tt.kind, Message: "refused"})
-			status, raw, out := e.requestCertificate(t, e.withCert, agentA, certificateBody("c1", epoch, csrPEM(t, p256)))
+			status, raw, out := e.requestCertificate(t, e.withToken, agentA, certificateBody("c1", epoch, csrPEM(t, p256)))
 			assert.Equal(t, tt.status, status, string(raw))
 			assert.Equal(t, tt.kind, out["kind"])
 
 			// Control: garam kept nothing, so a corrected request is sent and issued.
 			e.issuer.answer(nil)
-			status, raw, _ = e.requestCertificate(t, e.withCert, agentA, certificateBody("c2", epoch, csrPEM(t, p256)))
+			status, raw, _ = e.requestCertificate(t, e.withToken, agentA, certificateBody("c2", epoch, csrPEM(t, p256)))
 			assert.Equal(t, http.StatusCreated, status, string(raw))
 		})
 	}
@@ -248,7 +248,7 @@ func (e *env) concurrentRequests(t *testing.T, n int, body string) ([]int, [][]b
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
-			resp, err := e.withCert.Post(e.server.URL+"/v1/operators/self/agents/"+agentA+"/certificate-requests",
+			resp, err := e.withToken.Post(e.server.URL+"/v1/operators/self/agents/"+agentA+"/certificate-requests",
 				"application/json", strings.NewReader(body))
 			if err != nil {
 				statuses[i] = -1
@@ -274,7 +274,7 @@ func TestRequestCertificate_ConcurrentIdenticalRequestsAgree(t *testing.T) {
 
 		// Control: a corrected request is not refused as another request than one kept.
 		e.issuer.answer(nil)
-		status, raw, _ := e.requestCertificate(t, e.withCert, agentA, certificateBody("c2", epoch, csrPEM(t, p256)))
+		status, raw, _ := e.requestCertificate(t, e.withToken, agentA, certificateBody("c2", epoch, csrPEM(t, p256)))
 		assert.Equal(t, http.StatusCreated, status, string(raw))
 	})
 	t.Run("garam issues: one request stores it, and every answer is its bytes", func(t *testing.T) {
@@ -292,13 +292,13 @@ func TestRequestCertificate_ConcurrentIdenticalRequestsAgree(t *testing.T) {
 	})
 }
 
-func TestRequestCertificate_NeedsAClientCertificate(t *testing.T) {
+func TestRequestCertificate_NeedsAToken(t *testing.T) {
 	e := newEnv(t)
 	body := certificateBody("c1", epoch, csrPEM(t, p256))
-	status, raw, _ := e.requestCertificate(t, e.withoutCert, agentA, body)
+	status, raw, _ := e.requestCertificate(t, e.withoutToken, agentA, body)
 	assert.Equal(t, http.StatusUnauthorized, status, string(raw))
 
-	// Control: the same request presenting the controller's leaf is issued.
-	status, raw, _ = e.requestCertificate(t, e.withCert, agentA, body)
+	// Control: the same request presenting the controller's token is issued.
+	status, raw, _ = e.requestCertificate(t, e.withToken, agentA, body)
 	assert.Equal(t, http.StatusCreated, status, string(raw))
 }

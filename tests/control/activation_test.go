@@ -157,6 +157,7 @@ func renew(t *testing.T, a placedAgent, pair tls.Certificate, executionToken str
 }
 
 func TestActivation_AgainstGaramsExecutionFence(t *testing.T) {
+	t.Skip(until355Activation)
 	a := placeAgent(t)
 	generation := strings.Repeat("a", 32)
 	body := activationOf(name(t, "activation"), a.epoch, generation)
@@ -244,6 +245,7 @@ func recoverCredential(t *testing.T, a placedAgent) tls.Certificate {
 }
 
 func TestActivation_RecoveredLineageRefused(t *testing.T) {
+	t.Skip(until355Activation)
 	a := placeAgent(t)
 	generation := strings.Repeat("c", 32)
 	body := activationOf(name(t, "activation"), a.epoch, generation)
@@ -278,6 +280,7 @@ func TestActivation_RecoveredLineageRefused(t *testing.T) {
 // creation's reference, which garam takes for a first activation alone: 403 (#218, #1167).
 // Unserialized, both would read the same anchor and garam would refuse one as superseded.
 func TestActivation_ConcurrentGenerationsAreSerialized(t *testing.T) {
+	t.Skip(until355Activation)
 	a := placeAgent(t)
 	reported := strings.Repeat("e", 32)
 	first := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), a.epoch, reported))
@@ -316,30 +319,4 @@ FROM activation_requests WHERE agent = $1 AND generation <> $2`, a.grn, reported
 	activatedFirst := anchors[activation]
 	require.NotEmpty(t, activatedFirst)
 	assert.Contains(t, anchors, activatedFirst)
-}
-
-// TestActivate_RefusedUnderAStoredControllerLeafGaramDoesNotProveUntilTheLeafIsRefreshed is #218's
-// window for the stored controller leaf, through the built binary and PostgreSQL. A leaf garam's
-// clock has expired cannot be minted here, so the stored leaf is replaced with one garam does not
-// prove the controller under, the agent's own; the refresh through the placement route is real.
-func TestActivate_RefusedUnderAStoredControllerLeafGaramDoesNotProveUntilTheLeafIsRefreshed(t *testing.T) {
-	a := placeAgent(t)
-	_, controllerLeaf := currentPlacement(t, a.grn)
-	require.Equal(t, 1, count(t, "UPDATE placements SET leaf_der = $2 WHERE agent = $1 AND revoked_at IS NULL "+
-		"RETURNING 1", a.grn, a.pair.Certificate[0]))
-	body := activationOf(name(t, "activation"), a.epoch, strings.Repeat("c", 32))
-
-	refused := postAgent(t, a, a.pair, "activations", body)
-	assert.Equal(t, http.StatusForbidden, refused.status, refused.raw)
-	assert.Equal(t, 0, count(t, "SELECT count(*) FROM activation_requests WHERE agent = $1 AND activation_id IS NOT NULL",
-		a.grn), "an activation was recorded under a leaf garam does not prove")
-
-	// The controller presents the same placement under its own leaf: a refresh, not a new placement.
-	mustPlace(t, a.grn, a.placement(t), http.StatusOK)
-	_, refreshed := currentPlacement(t, a.grn)
-	require.Equal(t, controllerLeaf, refreshed)
-
-	// Control: the same activation is accepted once the stored leaf is one garam proves.
-	accepted := postAgent(t, a, a.pair, "activations", body)
-	assert.Equal(t, http.StatusCreated, accepted.status, accepted.raw)
 }

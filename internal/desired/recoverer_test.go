@@ -223,8 +223,7 @@ func startRecoverer(t *testing.T, route *recoveryRoute, store *recoveryStore) (s
 	t.Cleanup(server.Close)
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate())
-	recoverer := NewRecoverer(NewClient(server.Listener.Addr().String(),
-		&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}), store)
+	recoverer := NewRecoverer(NewClient(server.Listener.Addr().String(), &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}), store)
 	recoverer.pass, recoverer.transientFirst, recoverer.transientLast = time.Millisecond, time.Millisecond, time.Millisecond
 	recoverer.refusedWait, recoverer.preparedWait = time.Hour, time.Millisecond
 	recoverer.Offer(map[string]OpenRecovery{agentA: {RequestID: recoveryID, Epoch: "7"}})

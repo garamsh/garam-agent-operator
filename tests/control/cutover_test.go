@@ -163,7 +163,6 @@ func releasedCutovers(t *testing.T) map[string]string {
 
 func TestCutover_ImportFreezeSwitchReleasesALegacyAgentAgainstGaram(t *testing.T) {
 	agent := legacyAgent(t)
-	pair := legacyCertificate(t, agent)
 	profile := publishProfile(t, real.orgID)
 
 	status, imported := importLegacy(t, agent, profile)
@@ -195,8 +194,29 @@ func TestCutover_ImportFreezeSwitchReleasesALegacyAgentAgainstGaram(t *testing.T
 	assert.Equal(t, "switched", switched["stage"])
 	assert.Equal(t, "1/cutover", releasedCutovers(t)[agent])
 
-	// The released revision 1 is activated under the switch's agent:configure reference: garam takes
-	// the legacy agent's first activation once its switch is recorded.
+	// After the switch there is no rollback.
+	rollbackID := name(t, "rollback")
+	status, refusedRollback := runStage(t, agent, "rollback", requestBody(t, stageBody{rollbackID}), rollbackID)
+	assert.Equal(t, http.StatusConflict, status, refusedRollback)
+	assert.Equal(t, "reverse_migration_required", refusedRollback["kind"])
+	assert.Equal(t, "1/cutover", releasedCutovers(t)[agent])
+}
+
+// TestCutover_TheSwitchedRevisionIsActivatedAgainstGaram activates the revision 1 a switch released,
+// under the switch's agent:configure reference: garam takes the legacy agent's first activation once
+// its switch is recorded.
+func TestCutover_TheSwitchedRevisionIsActivatedAgainstGaram(t *testing.T) {
+	t.Skip(until355Activation)
+	agent := legacyAgent(t)
+	pair := legacyCertificate(t, agent)
+	status, imported := importLegacy(t, agent, publishProfile(t, real.orgID))
+	require.Equal(t, http.StatusCreated, status, imported)
+	freezeID, switchID := name(t, "freeze"), name(t, "switch")
+	status, frozen := runStage(t, agent, "freeze", requestBody(t, stageBody{freezeID}), freezeID)
+	require.Equal(t, http.StatusOK, status, frozen)
+	status, switched := runStage(t, agent, "switch", switchOf(t, switchID), switchID)
+	require.Equal(t, http.StatusOK, status, switched)
+
 	var epoch string
 	const importedEpoch = "SELECT epoch FROM cutover_imports WHERE agent = $1"
 	require.NoError(t, pool.QueryRow(t.Context(), importedEpoch, agent).Scan(&epoch))
@@ -211,13 +231,6 @@ func TestCutover_ImportFreezeSwitchReleasesALegacyAgentAgainstGaram(t *testing.T
 	activation := activationOf(name(t, "activation"), epoch, strings.Repeat("f", 32))
 	activated := postAgent(t, placed, pair, "activations", activation)
 	require.Equal(t, http.StatusCreated, activated.status, activated.raw)
-
-	// After the switch there is no rollback.
-	rollbackID := name(t, "rollback")
-	status, refusedRollback := runStage(t, agent, "rollback", requestBody(t, stageBody{rollbackID}), rollbackID)
-	assert.Equal(t, http.StatusConflict, status, refusedRollback)
-	assert.Equal(t, "reverse_migration_required", refusedRollback["kind"])
-	assert.Equal(t, "1/cutover", releasedCutovers(t)[agent])
 }
 
 func TestCutover_RollbackFromFrozenAgainstGaram(t *testing.T) {

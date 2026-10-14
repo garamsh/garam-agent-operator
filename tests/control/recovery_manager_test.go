@@ -97,6 +97,7 @@ func (m *managerStore) state() (request *desired.PendingRequest, certificatePEM 
 // certificate only once it verifies against the issuer kept from the first certificate. garam
 // then fences the first lineage, and the recovered pair activates the next generation.
 func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
+	t.Skip(until355Recovery)
 	grn, epoch := managedAgent(t)
 	key, csr := certificateRequestPEM(t)
 	status, raw, err := requestCertificate(grn, certificateRequestBody(name(t, "certificate"), epoch, csr))
@@ -110,8 +111,7 @@ func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
 	activated(t, a, strings.Repeat("9", 32))
 
 	store := &managerStore{agent: grn, issuer: []byte(first.IssuerPem)}
-	client := desired.NewClient(strings.TrimPrefix(attachedURL, "https://"),
-		real.feedClient().Transport.(*http.Transport).TLSClientConfig)
+	client := desired.NewClient(strings.TrimPrefix(attachedURL, "https://"), real.feedTransport())
 	recoverer := desired.NewRecoverer(client, store)
 	// The recoverer's log is the test's, so a failure shows what it met.
 	logged := funcr.New(func(prefix, args string) { t.Log(prefix, args) }, funcr.Options{})

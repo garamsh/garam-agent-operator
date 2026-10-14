@@ -1,6 +1,6 @@
 # ADR 0008: Renew the operator's credential into the Secret it is read from
 
-> Status: accepted
+> Status: superseded by ADR-0072
 > Date: 2026-08-25
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

@@ -10,9 +10,9 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
-func placementInput(pod, previous string, leaf string) definition.PlacementInput {
+func placementInput(pod, previous string) definition.PlacementInput {
 	in := definition.PlacementInput{
-		Agent: firstAgent, Controller: k8s, LeafDER: []byte(leaf),
+		Agent: firstAgent, Controller: k8s,
 		Request: definition.PlacementRequest{PodUID: pod, PVCUID: "pvc-1", Epoch: "1", TokenSHA256: "token of " + pod},
 	}
 	if previous != "" {
@@ -21,44 +21,34 @@ func placementInput(pod, previous string, leaf string) definition.PlacementInput
 	return in
 }
 
-func TestRegisterPlacement_RefreshReplacesTheLeafAndNothingElse(t *testing.T) {
+func TestRegisterPlacement_ARepeatAnswersThePlacementAsStored(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 
-	first, stored, err := f.service.RegisterPlacement(ctx, placementInput("pod-1", "", "leaf one"))
+	first, stored, err := f.service.RegisterPlacement(ctx, placementInput("pod-1", ""))
 	require.NoError(t, err)
 	require.True(t, stored)
-	assert.Equal(t, []byte("leaf one"), first.LeafDER)
 
-	refreshed, stored, err := f.service.RegisterPlacement(ctx, placementInput("pod-1", "", "leaf two"))
+	repeat, stored, err := f.service.RegisterPlacement(ctx, placementInput("pod-1", ""))
 	require.NoError(t, err)
-	assert.False(t, stored, "a refresh was stored as a new placement")
-	assert.Equal(t, []byte("leaf two"), refreshed.LeafDER)
-	assert.Equal(t, first.Request, refreshed.Request)
-
-	// A repeat under the leaf now held answers it unchanged.
-	repeat, stored, err := f.service.RegisterPlacement(ctx, placementInput("pod-1", "", "leaf two"))
-	require.NoError(t, err)
-	assert.False(t, stored)
-	assert.Equal(t, refreshed, repeat)
+	assert.False(t, stored, "a repeat was stored as a new placement")
+	assert.Equal(t, first, repeat)
 }
 
 func TestRegisterPlacement_NothingRevivesASupersededPlacement(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
-	_, _, err := f.service.RegisterPlacement(ctx, placementInput("pod-1", "", "leaf one"))
+	_, _, err := f.service.RegisterPlacement(ctx, placementInput("pod-1", ""))
 	require.NoError(t, err)
-	_, _, err = f.service.RegisterPlacement(ctx, placementInput("pod-2", "pod-1", "leaf one"))
+	_, _, err = f.service.RegisterPlacement(ctx, placementInput("pod-2", "pod-1"))
 	require.NoError(t, err)
 
-	for _, leaf := range []string{"leaf one", "leaf two"} {
-		_, _, err := f.service.RegisterPlacement(ctx, placementInput("pod-1", "", leaf))
-		require.ErrorIs(t, err, definition.ErrPlacementSuperseded)
-	}
+	_, _, err = f.service.RegisterPlacement(ctx, placementInput("pod-1", ""))
+	require.ErrorIs(t, err, definition.ErrPlacementSuperseded)
 
-	// Control: the placement that replaced it is held, and refreshed under another leaf.
-	held, stored, err := f.service.RegisterPlacement(ctx, placementInput("pod-2", "pod-1", "leaf two"))
+	// Control: the placement that replaced it is held, and answered as a repeat.
+	held, stored, err := f.service.RegisterPlacement(ctx, placementInput("pod-2", "pod-1"))
 	require.NoError(t, err)
 	assert.False(t, stored)
-	assert.Equal(t, []byte("leaf two"), held.LeafDER)
+	assert.Equal(t, "pod-2", held.Request.PodUID)
 }

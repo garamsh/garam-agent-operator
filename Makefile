@@ -456,7 +456,7 @@ $(LOCALBIN):
 # Dependabot ecosystem reads a Makefile variable. That pull request writes here
 # the commit and digest garam's PM confirms, and is merged only once they are
 # confirmed.
-GARAM_REVISION ?= d6874d21faf3582ffe4e814643f5b15068333622
+GARAM_REVISION ?= 9ba35c37bfe3d1b68c481884825338d171d2cb6b
 GARAM_TEST_REGISTRY ?= 486152169996.dkr.ecr.ap-northeast-2.amazonaws.com
 GARAM_TEST_REPOSITORY ?= garam-dev/garam-test
 GARAM_TEST_IMAGE_DIGEST ?= sha256:7a8fc22f7abb7fc653241a1eb1d0779eab41e97f9f26419de9f0ba201f1dc328

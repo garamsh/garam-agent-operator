@@ -21,7 +21,7 @@ func controllerRequest(t *testing.T, client *http.Client, method, path, body str
 	return resp.StatusCode
 }
 
-func TestBinary_ControllerRoutesRequireAClientCertificate(t *testing.T) {
+func TestBinary_ControllerRoutesRequireAToken(t *testing.T) {
 	routes := []struct{ method, path, body string }{
 		{http.MethodGet, "/v1/operators/self/desired", ""},
 		{http.MethodPost, "/v1/operators/self/agents/grn:acme:default:agent:a/status",
@@ -31,16 +31,16 @@ func TestBinary_ControllerRoutesRequireAClientCertificate(t *testing.T) {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
 			assert.Equal(t, http.StatusUnauthorized, controllerRequest(t, apiClient, route.method, route.path, route.body))
 
-			// Control: a client certificate passes the door and reaches garam's proof, which
-			// nothing answers here, so the request is undecided rather than refused.
+			// Control: a token under a controller's GRN passes the door and reaches garam's proof,
+			// which nothing answers here, so the request is undecided rather than refused.
 			assert.Equal(t, http.StatusServiceUnavailable,
 				controllerRequest(t, controllerClient, route.method, route.path, route.body))
 		})
 	}
 }
 
-func TestBinary_ConsoleRouteNeedsNoClientCertificate(t *testing.T) {
-	// The console's route is reached without a client certificate, and answers its own refusal.
+func TestBinary_ConsoleRouteNeedsNoControllerToken(t *testing.T) {
+	// The console's route is reached without a controller's token, and answers its own refusal.
 	resp := postConfigure(t, "")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, "Garam-Operation", resp.Header.Get("WWW-Authenticate"))

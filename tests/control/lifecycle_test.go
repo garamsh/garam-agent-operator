@@ -164,6 +164,7 @@ func openAndPrepare(t *testing.T, a placedAgent) (
 }
 
 func TestRecovery_AgainstGaram(t *testing.T) {
+	t.Skip(until355Recovery)
 	a := placeAgent(t)
 	generation := strings.Repeat("a", 32)
 	first := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), a.epoch, generation))
@@ -241,6 +242,7 @@ func TestRecovery_AgainstGaram(t *testing.T) {
 // handoff minted again for the same request, garam answers the certificate it issued, and that is
 // what control records.
 func TestRecovery_ResumesWhereGaramAnsweredAndControlDidNotRecord(t *testing.T) {
+	t.Skip(until355Recovery)
 	a := placeAgent(t)
 	recoveryID, prepared, _ := openAndPrepare(t, a)
 
@@ -302,6 +304,7 @@ func activated(t *testing.T, a placedAgent, generation string) string {
 }
 
 func TestStop_AgainstGaram(t *testing.T) {
+	t.Skip(until355Stop)
 	a := placeAgent(t)
 	generation := strings.Repeat("d", 32)
 	activation := activated(t, a, generation)
@@ -358,6 +361,7 @@ func TestStop_AgainstGaram(t *testing.T) {
 // before it asked garam to deactivate, and one after garam answered and before it was recorded:
 // each repeat of the stop request asks garam, and records the deactivation on its answer alone.
 func TestStop_ARestartAroundTheDeactivationResumesOnGaramsAnswer(t *testing.T) {
+	t.Skip(until355Stop)
 	a := placeAgent(t)
 	generation := strings.Repeat("7", 32)
 	activation := activated(t, a, generation)

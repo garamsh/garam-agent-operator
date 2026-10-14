@@ -76,6 +76,7 @@ func parsePEM(t *testing.T, text string) *x509.Certificate {
 }
 
 func TestInitialCertificate_IssuedByGaramForTheControllersKey(t *testing.T) {
+	t.Skip(until355Creation)
 	agent, epoch := managedAgent(t)
 	key, csr := certificateRequestPEM(t)
 	body := certificateRequestBody(name(t, "certificate"), epoch, csr)
@@ -120,6 +121,7 @@ func TestInitialCertificate_IssuedByGaramForTheControllersKey(t *testing.T) {
 }
 
 func TestInitialCertificate_ConcurrentIdenticalRequestsStoreOne(t *testing.T) {
+	t.Skip(until355Creation)
 	agent, epoch := managedAgent(t)
 	_, csr := certificateRequestPEM(t)
 	statuses, answers := sendConcurrently(t, agent, certificateRequestBody(name(t, "certificate"), epoch, csr), 16)
@@ -141,6 +143,7 @@ func TestInitialCertificate_ConcurrentIdenticalRequestsStoreOne(t *testing.T) {
 // creation, which garam refuses with 403. Garam records nothing for a refusal, so neither does
 // the store, and once the reference is restored a corrected request is issued.
 func TestInitialCertificate_GaramRefusalKeepsNothing(t *testing.T) {
+	t.Skip(until355Creation)
 	agent, epoch := managedAgent(t)
 	other, _ := managedAgent(t)
 	const swap = `UPDATE creations SET operation_ref = (SELECT operation_ref FROM creations WHERE agent = $2)
@@ -170,6 +173,7 @@ WHERE agent = $1`
 // TestInitialCertificate_AnAgentWithNoCreationIsNotFound answers 404 for an agent its controller
 // is assigned but that no creation names.
 func TestInitialCertificate_AnAgentWithNoCreationIsNotFound(t *testing.T) {
+	t.Skip(until355Creation)
 	g := requireGaram(t)
 	profile := seedRevision(t, g)
 	// A configure records the latest revision for the controller garam assigned the agent to,

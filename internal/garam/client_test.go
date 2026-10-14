@@ -2,7 +2,6 @@ package garam_test
 
 import (
 	"context"
-	"crypto/tls"
 	"net/http"
 	"strings"
 	"testing"
@@ -248,18 +247,6 @@ func TestClientIssueAgentCertificateRefusesAnIncompleteAnswer(t *testing.T) {
 	answer = strings.Replace(agentCertificateAnswer, "notAfter", "notNotAfter", 1)
 	_, err = client.IssueAgentCertificate(context.Background(), sampleAgent)
 	g.Expect(err).To(MatchError(ContainSubstring("no expiry")))
-}
-
-// trustedBy is the TLS configuration verifying stub and nothing else.
-func trustedBy(t *testing.T, stub *stubListener) *tls.Config {
-	t.Helper()
-
-	certificateFile, keyFile := writeIdentity(t, t.TempDir(), "operator")
-	tlsConfig, err := garam.MutualTLS(certificateFile, keyFile, stub.trustFile)
-	if err != nil {
-		t.Fatalf("configure mutual TLS against the stub listener: %v", err)
-	}
-	return tlsConfig
 }
 
 // TestClientListDefinitionsRefusesAClaimAtNoEpoch keeps a claim and the epoch

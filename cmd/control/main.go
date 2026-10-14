@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/execution"
 	executiongaram "github.com/garamsh/garam-agent-operator/internal/execution/garam"
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
+	"github.com/garamsh/garam-agent-operator/internal/machinetoken"
 )
 
 // databaseURLVariable names the environment variable holding the store's connection URL,
@@ -56,16 +58,18 @@ const feedMaxAgents = 500
 // apiWriteTimeout bounds writing one answer, above the desired feed's longest wait.
 const apiWriteTimeout = 45 * time.Second
 
+// garamTokenPath is garam's exchangeClientAssertion route under the machine listener's base URL.
+const garamTokenPath = "/oauth/token"
+
 type options struct {
-	probeAddr       string
-	apiAddr         string
-	apiCertificate  string
-	apiKey          string
-	garamURL        string
-	serverRootFile  string
-	certificateFile string
-	keyFile         string
-	consoleOrigins  []string
+	probeAddr      string
+	apiAddr        string
+	apiCertificate string
+	apiKey         string
+	garamURL       string
+	serverRootFile string
+	operatorKeys   machinetoken.Files
+	consoleOrigins []string
 }
 
 func main() {
@@ -84,9 +88,14 @@ func main() {
 	flag.StringVar(&o.garamURL, "garam-machine-url", "", "The base URL of garam's machine listener.")
 	flag.StringVar(&o.serverRootFile, "garam-server-root-file", "",
 		"PEM file holding the garam server root the machine listener's certificate chains to.")
-	flag.StringVar(&o.certificateFile, "operator-certificate-file", "",
-		"PEM file holding this service's operator certificate, whose SAN URI is its operator GRN.")
-	flag.StringVar(&o.keyFile, "operator-key-file", "", "PEM file holding the operator certificate's private key.")
+	flag.StringVar(&o.operatorKeys.PrivateKey, "operator-private-key-file", "",
+		"PKCS#8 PEM file holding the private key garam issued this service's operator, read at every exchange.")
+	flag.StringVar(&o.operatorKeys.ClientID, "operator-client-id-file", "",
+		"File holding this service's operator GRN, the clientId garam answered beside its key, and the audience "+
+			"every authority this service accepts must name.")
+	flag.StringVar(&o.operatorKeys.TokenURL, "operator-token-url-file", "",
+		"File holding the tokenUrl garam answered beside this service's key, which every assertion names as "+
+			"its audience.")
 	flag.Func("console-origin",
 		"A browser origin the console calls from, exactly as a browser sends it: scheme, host and any port, "+
 			"with no path. Repeat for each. Only these get a CORS answer; none set answers no CORS at all.",
@@ -199,8 +208,8 @@ func run(ctx context.Context, o options, databaseURL string) error {
 }
 
 // apiTLSConfig serves the API's certificate, read again whenever its files change, and refuses
-// to go on without one. A client certificate is requested and not verified here: a controller
-// route has garam prove the leaf a controller presents, and a console route reads none.
+// to go on without one. No client certificate is requested: a controller route has garam prove the
+// token a controller presents, and a console route the authority it carries.
 func apiTLSConfig(o options) (*tls.Config, error) {
 	if o.apiCertificate == "" || o.apiKey == "" {
 		return nil, errors.New("--api-certificate-file and --api-key-file are both required")
@@ -211,28 +220,23 @@ func apiTLSConfig(o options) (*tls.Config, error) {
 	}
 	return &tls.Config{
 		GetCertificate: reloader.GetCertificate,
-		ClientAuth:     tls.RequestClientCert,
 		MinVersion:     tls.VersionTLS13,
 	}, nil
 }
 
-// garamClient builds the mutual-TLS client garam's machine listener requires, and reads this
-// service's operator GRN, the audience of every authority it accepts, from the certificate.
+// garamClient builds the client garam's machine listener is called through: it verifies the
+// listener against the garam server root and presents this service's token, exchanged under its
+// own key (ADR 0072). It reads this service's operator GRN, the audience of every authority it
+// accepts, from the client_id file.
 func garamClient(o options) (*http.Client, string, error) {
-	if o.garamURL == "" || o.serverRootFile == "" || o.certificateFile == "" || o.keyFile == "" {
-		return nil, "", errors.New("--garam-machine-url, --garam-server-root-file, " +
-			"--operator-certificate-file and --operator-key-file are all required")
+	if o.garamURL == "" || o.serverRootFile == "" || o.operatorKeys.PrivateKey == "" ||
+		o.operatorKeys.ClientID == "" || o.operatorKeys.TokenURL == "" {
+		return nil, "", errors.New("--garam-machine-url, --garam-server-root-file, --operator-private-key-file, " +
+			"--operator-client-id-file and --operator-token-url-file are all required")
 	}
-	pair, err := tls.LoadX509KeyPair(o.certificateFile, o.keyFile)
+	audience, err := machinetoken.ReadClientID(o.operatorKeys.ClientID)
 	if err != nil {
-		return nil, "", fmt.Errorf("load operator certificate: %w", err)
-	}
-	leaf, err := x509.ParseCertificate(pair.Certificate[0])
-	if err != nil {
-		return nil, "", fmt.Errorf("parse operator certificate: %w", err)
-	}
-	if len(leaf.URIs) != 1 {
-		return nil, "", fmt.Errorf("operator certificate carries %d SAN URIs, want its GRN alone", len(leaf.URIs))
+		return nil, "", fmt.Errorf("read this service's operator GRN: %w", err)
 	}
 	root, err := os.ReadFile(o.serverRootFile)
 	if err != nil {
@@ -242,13 +246,16 @@ func garamClient(o options) (*http.Client, string, error) {
 	if !roots.AppendCertsFromPEM(root) {
 		return nil, "", errors.New("garam server root file holds no certificate")
 	}
-	client := &http.Client{
-		Timeout: garamTimeout,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{
-			Certificates: []tls.Certificate{pair},
-			RootCAs:      roots,
-			MinVersion:   tls.VersionTLS13,
-		}},
-	}
-	return client, leaf.URIs[0].String(), nil
+	base := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}}
+	source := machinetoken.NewSource(machinetoken.Config{
+		Endpoint: strings.TrimSuffix(o.garamURL, "/") + garamTokenPath,
+		Files:    o.operatorKeys,
+		HTTP:     &http.Client{Timeout: garamTimeout, Transport: base},
+		Failed: func(failed *machinetoken.Error) {
+			slog.Error("exchange a client assertion for a garam token", "reason", failed.Reason,
+				"until", failed.Until, "error", failed.Err)
+		},
+	})
+	client := &http.Client{Timeout: garamTimeout, Transport: &machinetoken.Transport{Source: source, Base: base}}
+	return client, audience, nil
 }

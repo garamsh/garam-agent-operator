@@ -31,6 +31,7 @@ The kubebuilder scaffold writes the manager's code into paths it names, and the 
 
 - **What two domains both need sits below them, never beside them.** It is extracted to a package named for what it is, which imports no domain, or it is owned by one domain and reached through that domain's surface. It never becomes a sibling folder that no domain owns.
 - **`internal/secretref` states and parses a Secret key reference, `<secret-name>/<key>`, for both binaries** (#248). The control service's `internal/definition` and the manager's `internal/desired/renderer` both parse with it, and neither restates the rule. It imports no domain.
+- **`internal/machinetoken` obtains an operator's garam token under its own key and presents it, for both binaries** ([ADR 0072](adr/0072-authenticate-the-manager-and-the-control-service-to-garam-with-their-own-private-keys.md)). The manager's composition site hands it to `internal/garam`'s and `internal/desired`'s clients, and the control service's to `internal/garammachine`'s; `internal/garam` also reads its failure type to count it. It imports no domain.
 
 ### A new domain
 

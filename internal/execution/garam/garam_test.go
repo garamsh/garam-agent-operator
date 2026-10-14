@@ -86,14 +86,17 @@ func TestGaram_ActivatesUnderTheExecutionFence(t *testing.T) {
 	}
 }
 
-func TestGaram_ProvesTheControllerUnderOperationAuthority(t *testing.T) {
+func TestGaram_ProvingTheControllerIsRefusedByNameAndSendsNothing(t *testing.T) {
 	g, got := stand(t, garammachine.OperationAuthority, http.StatusOK,
 		`{"operator":"c","org":"o","agent":{"grn":"`+agent+`","epoch":"7"}}`)
-	proof, err := g.ProveController(context.Background(), "c", []byte(leaf), agent)
-	require.NoError(t, err)
-	assert.Equal(t, execution.ControllerProof{Operator: "c", Agent: agent, Epoch: "7"}, proof)
-	assert.Equal(t, "/operators/c/introspection", got.path)
-	assert.Equal(t, map[string]any{keyCertificatePEM: leaf, "agent": agent}, got.body)
+	_, err := g.ProveController(context.Background(), "c", agent)
+	require.ErrorIs(t, err, execution.ErrControllerUnprovable)
+	assert.Empty(t, got.path, "garam was asked to prove the controller with nothing to prove it over")
+
+	// Control: the same stand-in answers a call that is sent.
+	_, err = g.Introspect(context.Background(), agent, []byte(leaf), "")
+	assert.NotErrorIs(t, err, execution.ErrControllerUnprovable)
+	assert.Equal(t, "/agents/"+agent+"/execution/introspection", got.path)
 }
 
 func TestGaram_RefusalsAreTold(t *testing.T) {

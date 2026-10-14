@@ -1,6 +1,6 @@
 # ADR 0020: Enroll this operator with a one-time token, and keep the key it generated
 
-> Status: superseded by ADR-0021
+> Status: superseded by ADR-0021; the enrollment removed by ADR-0072
 > Date: 2026-09-04
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

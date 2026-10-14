@@ -92,12 +92,9 @@ type garam struct {
 	latest      string
 	active      *activation
 	refusedRefs map[string]bool
-	// expiredLeaves holds the controller leaves, by their DER, that garam refuses to prove over as
-	// outside their validity.
-	expiredLeaves map[string]bool
-	introspect    error
-	prove         error
-	activate      error
+	introspect  error
+	prove       error
+	activate    error
 	// proveEpoch, where set, is the epoch the controller proof names; wrongGRN, where set, is the
 	// agent garam's activation answer names; delay holds every activation that long.
 	proveEpoch string
@@ -111,7 +108,7 @@ type garam struct {
 
 func newGaram() *garam {
 	return &garam{fenced: map[string]bool{}, assignee: controller, epoch: epoch,
-		byRequest: map[string]*activation{}, refusedRefs: map[string]bool{}, expiredLeaves: map[string]bool{}}
+		byRequest: map[string]*activation{}, refusedRefs: map[string]bool{}}
 }
 
 func (g *garam) Introspect(_ context.Context, grn string, leafPEM []byte, gen string) (execution.Introspection, error) {
@@ -140,15 +137,11 @@ func (g *garam) Introspect(_ context.Context, grn string, leafPEM []byte, gen st
 	return i, nil
 }
 
-func (g *garam) ProveController(_ context.Context, c string, leafPEM []byte, grn string) (execution.ControllerProof, error) {
+func (g *garam) ProveController(_ context.Context, c, grn string) (execution.ControllerProof, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.prove != nil {
 		return execution.ControllerProof{}, g.prove
-	}
-	// garam answers a leaf outside its validity 403, which the client reads as not authorized.
-	if block, _ := pem.Decode(leafPEM); block != nil && g.expiredLeaves[string(block.Bytes)] {
-		return execution.ControllerProof{}, execution.ErrNotAuthorized
 	}
 	proved := g.epoch
 	if g.proveEpoch != "" {
@@ -257,7 +250,7 @@ func newEnvLogging(t *testing.T, logger *slog.Logger) *env {
 	require.NoError(t, err)
 	digest := sha256.Sum256([]byte(token))
 	_, _, err = definitions.RegisterPlacement(ctx, definition.PlacementInput{
-		Agent: agent, Controller: controller, LeafDER: []byte("controller leaf"),
+		Agent: agent, Controller: controller,
 		Request: definition.PlacementRequest{PodUID: "pod-1", PVCUID: "pvc-1", Epoch: epoch, TokenSHA256: hex.EncodeToString(digest[:])},
 	})
 	require.NoError(t, err)

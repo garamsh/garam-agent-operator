@@ -87,7 +87,7 @@ func (e *env) registerPlacement(t *testing.T, client *http.Client, agent, body s
 // mustRegister registers body for agentA and requires status.
 func (e *env) mustRegister(t *testing.T, body string, status int) []byte {
 	t.Helper()
-	got, raw, _ := e.registerPlacement(t, e.withCert, agentA, body)
+	got, raw, _ := e.registerPlacement(t, e.withToken, agentA, body)
 	require.Equal(t, status, got, string(raw))
 	return raw
 }
@@ -97,14 +97,14 @@ func TestRegisterPlacement_StoresTheFirstPlacementAndAnswersARepeat(t *testing.T
 	// The wire's own form of a first placement: previous is null.
 	body := strings.Replace(placementBody("pod-1", "", ""), `}`, `,"previous":null}`, 1)
 
-	status, first, _ := e.registerPlacement(t, e.withCert, agentA, body)
+	status, first, _ := e.registerPlacement(t, e.withToken, agentA, body)
 	require.Equal(t, http.StatusCreated, status, string(first))
 	assert.Equal(t, placementWire{
 		Agent: agentA, Epoch: epoch, PodUID: "pod-1", PVCUID: "pvc-1", TokenSHA256: digest("token of pod-1"),
 	}, wireOf(t, first))
 
 	// The manager's retry after a lost answer is answered the same.
-	status, repeat, _ := e.registerPlacement(t, e.withCert, agentA, body)
+	status, repeat, _ := e.registerPlacement(t, e.withToken, agentA, body)
 	assert.Equal(t, http.StatusOK, status, string(repeat))
 	assert.Equal(t, first, repeat)
 }
@@ -116,13 +116,10 @@ func TestRegisterPlacement_SupersededPlacementRefused(t *testing.T) {
 	second := placementBody("pod-2", "pod-1", "evidence of pod-1")
 	e.mustRegister(t, second, http.StatusCreated)
 
-	// A replay of the replaced registration, and a refresh of its leaf under another leaf.
-	other, _ := clientWithLeaf(t, e.server, controller)
-	for _, client := range []*http.Client{e.withCert, other} {
-		status, raw, out := e.registerPlacement(t, client, agentA, first)
-		assert.Equal(t, http.StatusConflict, status, string(raw))
-		assert.Equal(t, "placement_superseded", out["kind"])
-	}
+	// A replay of the replaced registration.
+	status, raw, out := e.registerPlacement(t, e.withToken, agentA, first)
+	assert.Equal(t, http.StatusConflict, status, string(raw))
+	assert.Equal(t, "placement_superseded", out["kind"])
 
 	// Control: the placement that replaced it is still the one held.
 	e.mustRegister(t, second, http.StatusOK)
@@ -150,7 +147,7 @@ func TestRegisterPlacement_PreviousOtherThanTheHeldOneRefused(t *testing.T) {
 			for _, body := range tt.setup {
 				e.mustRegister(t, body, http.StatusCreated)
 			}
-			status, raw, out := e.registerPlacement(t, e.withCert, agentA, tt.body)
+			status, raw, out := e.registerPlacement(t, e.withToken, agentA, tt.body)
 			assert.Equal(t, http.StatusConflict, status, string(raw))
 			assert.Equal(t, "previous_mismatch", out["kind"])
 
@@ -168,7 +165,7 @@ func TestRegisterPlacement_ReplacementWithoutEvidenceRefused(t *testing.T) {
 	e := newEnv(t)
 	e.mustRegister(t, placementBody("pod-1", "", ""), http.StatusCreated)
 
-	status, raw, out := e.registerPlacement(t, e.withCert, agentA, placementBody("pod-2", "pod-1", ""))
+	status, raw, out := e.registerPlacement(t, e.withToken, agentA, placementBody("pod-2", "pod-1", ""))
 	assert.Equal(t, http.StatusConflict, status, string(raw))
 	assert.Equal(t, "evidence_missing", out["kind"])
 
@@ -190,30 +187,13 @@ func TestRegisterPlacement_HeldPlacementRegisteredDifferentlyRefused(t *testing.
 	} {
 		changed := wireOf(t, []byte(body))
 		change(&changed)
-		status, raw, out := e.registerPlacement(t, e.withCert, agentA, marshal(changed))
+		status, raw, out := e.registerPlacement(t, e.withToken, agentA, marshal(changed))
 		assert.Equal(t, http.StatusConflict, status, string(raw))
 		assert.Equal(t, "placement_conflict", out["kind"])
 	}
 
 	// Control: the registration as it was made is answered.
 	e.mustRegister(t, body, http.StatusOK)
-}
-
-func TestRegisterPlacement_LeafRefreshIsNotANewPlacement(t *testing.T) {
-	e := newEnv(t)
-	body := placementBody("pod-1", "", "")
-	first := e.mustRegister(t, body, http.StatusCreated)
-
-	// The same registration under the controller's renewed leaf, twice: a refresh, then a repeat.
-	renewed, _ := clientWithLeaf(t, e.server, controller)
-	for range 2 {
-		status, raw, _ := e.registerPlacement(t, renewed, agentA, body)
-		assert.Equal(t, http.StatusOK, status, string(raw))
-		assert.Equal(t, first, raw, "a refresh changed the placement or its token")
-	}
-
-	// Control: the placement held is still pod-1, so a replacement naming it is registered.
-	e.mustRegister(t, placementBody("pod-2", "pod-1", "evidence of pod-1"), http.StatusCreated)
 }
 
 func TestRegisterPlacement_AgentNotPlacedUnderTheEpochRefused(t *testing.T) {
@@ -241,7 +221,7 @@ func TestRegisterPlacement_AgentNotPlacedUnderTheEpochRefused(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newEnv(t)
 			tt.setup(e)
-			status, raw, out := e.registerPlacement(t, e.withCert, tt.agent, tt.body)
+			status, raw, out := e.registerPlacement(t, e.withToken, tt.agent, tt.body)
 			assert.Equal(t, tt.status, status, string(raw))
 			assert.Equal(t, tt.kind, out["kind"])
 
@@ -268,7 +248,7 @@ func TestRegisterPlacement_RefusesWhatIsNotOneRegistration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newEnv(t)
-			status, raw, out := e.registerPlacement(t, e.withCert, agentA, tt.body)
+			status, raw, out := e.registerPlacement(t, e.withToken, agentA, tt.body)
 			assert.Equal(t, http.StatusBadRequest, status, string(raw))
 			assert.Equal(t, "invalid_request", out["kind"])
 
@@ -287,7 +267,7 @@ func TestRegisterPlacement_ConcurrentReplacementsOfOnePlacementStoreOne(t *testi
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
-			status, _, _ := e.registerPlacement(t, e.withCert, agentA,
+			status, _, _ := e.registerPlacement(t, e.withToken, agentA,
 				placementBody("pod-new-"+string(rune('a'+i)), "pod-1", "evidence of pod-1"))
 			statuses[i] = status
 		})

@@ -25,17 +25,17 @@ const (
 
 // seen is what the stand-in garam last received.
 type seen struct {
-	method, target, contract, authorization string
-	body                                    string
+	method, target, contract, operation string
+	body                                string
 }
 
-// stand is a stand-in garam under prefix, answering status and answer under agent-cutover.v1.
+// stand is a stand-in garam under prefix, answering status and answer under agent-cutover.v2.
 func stand(t *testing.T, prefix string, status int, answer string) (*cutover.Garam, *seen) {
 	t.Helper()
 	got := &seen{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		*got = seen{r.Method, r.URL.RequestURI(), r.Header.Get("Garam-Contract-Version"), r.Header.Get("Authorization"), string(raw)}
+		*got = seen{r.Method, r.URL.RequestURI(), r.Header.Get("Garam-Contract-Version"), r.Header.Get("Garam-Operation"), string(raw)}
 		w.Header().Set("Garam-Contract-Version", garammachine.AgentCutover)
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(answer))
@@ -54,7 +54,7 @@ func TestGaram_ReadsTheSourceUnderTheReadsReference(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, console.CutoverSource{Agent: agent, Assignee: "op", Epoch: "3", Mode: "legacy", Class: "eligible",
 		HasSource: true, Operator: "op", Values: map[string]string{"k": "v"}, SourceDigest: "aa"}, source)
-	assert.Equal(t, seen{http.MethodGet, "/agents/" + agent + "/cutover", garammachine.AgentCutover, "Garam-Operation read-ref", ""}, *got)
+	assert.Equal(t, seen{http.MethodGet, "/agents/" + agent + "/cutover", garammachine.AgentCutover, "read-ref", ""}, *got)
 	assert.Equal(t, got.target, g.Target(agent, console.StageRead), "the target the reference binds is not the one sent")
 }
 
@@ -115,7 +115,7 @@ func TestGaram_RefusalsCarryGaramsReason(t *testing.T) {
 func TestGaram_AnAnswerUnderAnotherContractOrNoneDecidesNothing(t *testing.T) {
 	answer := `{"importId":"i1","stage":"frozen","frozenDigest":"aa"}`
 	for name, header := range map[string]*string{
-		"the contract asked": ptrTo(garammachine.AgentCutover), "another contract": ptrTo("agent-cutover.v2"), "no contract": nil,
+		"the contract asked": ptrTo(garammachine.AgentCutover), "another contract": ptrTo("agent-cutover.v1"), "no contract": nil,
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -40,7 +40,7 @@ type contractCase struct {
 // contractCases are the accepted control, an answer under another contract, and one under none.
 var contractCases = []contractCase{
 	{name: "the contract asked", contract: garammachine.OperationAuthority, status: http.StatusOK},
-	{name: "another contract", contract: "operation-authority.v2", status: http.StatusServiceUnavailable,
+	{name: "another contract", contract: "operation-authority.v1", status: http.StatusServiceUnavailable,
 		kind: kindGaramContractUnsupported},
 	{name: "no contract", omit: true, status: http.StatusServiceUnavailable, kind: kindGaramContractUnsupported},
 }

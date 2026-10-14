@@ -70,7 +70,7 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, errorBody{Kind: kindRequestReused, Message: err.Error()})
 	case errors.Is(err, definition.ErrRecoveryStage):
 		writeJSON(w, http.StatusConflict, errorBody{Kind: kindRecoveryStage, Message: err.Error()})
-	case errors.Is(err, ErrNoCertificate):
+	case errors.Is(err, ErrNoToken):
 		writeMessage(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, ErrNotProved), errors.Is(err, ErrAnotherOperator), errors.Is(err, errNotPlaced):
 		writeMessage(w, http.StatusForbidden, err.Error())
