@@ -560,6 +560,12 @@ var _ = Describe("Agent workload", Ordered, func() {
 		// volume that has mount options set. Mounting can block every container,
 		// the workspace included. A missing credential no longer does, because a
 		// Pod with no adapter mounts no credential (ADR 0073).
+		//
+		// The Agent carries an ego so that its Pod has an init container, the
+		// config writer. The kubelet writes Failed only in TerminatePod, and in a
+		// Pod with no init container it reports every waiting container there as
+		// terminated with no ID, which the fence holds for a hand release
+		// (kubernetes v1.37.0 pkg/kubelet/status/status_manager.go:742-783).
 		const (
 			stuck        = "e2e-never-created"
 			stuckPod     = stuck + "-0"
@@ -628,7 +634,8 @@ spec:
 		})
 		apply := exec.Command("kubectl", "apply", "-f", "-")
 		apply.Stdin = strings.NewReader(strings.Replace(agentManifestFor(stuck, agentImage),
-			"credentialsSecretName: "+credentialsSecret, "credentialsSecretName: "+stuckSecret, 1))
+			"credentialsSecretName: "+credentialsSecret, "credentialsSecretName: "+stuckSecret, 1) +
+			"  ego: e2e never-created\n")
 		_, err = utils.Run(apply)
 		Expect(err).NotTo(HaveOccurred())
 		// Registered after every cleanup above, so it runs first, while the
@@ -679,10 +686,25 @@ spec:
 			g.Expect(waiting).NotTo(BeEmpty(), "the agent's container is not reported waiting")
 			g.Expect(podField(`{.status.containerStatuses[*].containerID}`)).To(BeEmpty(),
 				"a writer of the replacement was created")
+			g.Expect(podField(`{.status.initContainerStatuses[?(@.name=="config")].state.waiting.reason}`)).
+				NotTo(BeEmpty(), "the replacement has no config init container waiting, so it would not stay uninitialized")
+			g.Expect(podField(`{.status.initContainerStatuses[*].containerID}`)).To(BeEmpty(),
+				"an init container of the replacement was created")
 			g.Expect(kubectlIn("get", "events", "--field-selector", "involvedObject.uid="+stuckUID+",reason=FailedMount",
 				"-o", "jsonpath={.items[*].message}")).To(ContainSubstring("mount options are not supported"),
 				"the replacement is not stalled on its state volume")
 		}, 3*time.Minute, time.Second).Should(Succeed())
+
+		// Registered last, so it runs first: before the Agent is deleted and the Pod released.
+		DeferCleanup(func() {
+			if !CurrentSpecReport().Failed() {
+				return
+			}
+			args := []string{kubectlGet, podResource, stuckPod, "-o", `jsonpath={.metadata.uid}{"\n"}` +
+				`{.metadata.deletionTimestamp}{"\n"}{.status}{"\n"}`}
+			output, err := kubectlIn(args...)
+			_, _ = fmt.Fprintf(GinkgoWriter, "%s:\n%s\n%v\n", strings.Join(args, " "), output, err)
+		})
 
 		By("deleting the Pod no writer was created in, which is released once the kubelet marks it Failed")
 		_, err = kubectlIn("delete", "pod", stuckPod, "--wait=false")
