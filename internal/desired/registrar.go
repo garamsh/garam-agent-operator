@@ -18,6 +18,7 @@ const registerPass = time.Second
 // again; a new Pod, epoch or token is a new body (#218).
 const (
 	kindPlacementSuperseded = "placement_superseded"
+	kindEpochSuperseded     = "epoch_superseded"
 )
 
 // CurrentPlacement is a managed agent's current placement, under its GRN.

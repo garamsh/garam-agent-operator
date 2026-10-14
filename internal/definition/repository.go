@@ -61,15 +61,6 @@ type Repository interface {
 	// CreationOf returns the registered creation of agent, or ErrNotFound.
 	CreationOf(ctx context.Context, agent GRN) (Creation, error)
 
-	// BeginInitialCertificate stores r as agent's pending first-certificate request unless one is
-	// already stored, and returns the one stored either way.
-	BeginInitialCertificate(ctx context.Context, agent GRN, r CertificateRequest) (InitialCertificate, error)
-	// IssueInitialCertificate records issued as the result of agent's stored request when it is
-	// still pending and equal to r. It reports whether this call recorded it, and returns what is
-	// stored; ErrNotFound when no request is stored.
-	IssueInitialCertificate(
-		ctx context.Context, agent GRN, r CertificateRequest, issued IssuedCertificate,
-	) (InitialCertificate, bool, error)
 	// RegisterPlacement decides in with DecidePlacement against the agent's current placement and
 	// the stored placement of the same Pod, and applies the decision in the same step: a new
 	// placement supersedes the current one, revoking its token digest, before it is stored. It
@@ -121,10 +112,6 @@ type Repository interface {
 	RecordRuntimeApplied(ctx context.Context, agent GRN, applied RuntimeApplied) error
 	// GetRuntimeApplied returns what RecordRuntimeApplied last recorded, or ErrNotFound.
 	GetRuntimeApplied(ctx context.Context, agent GRN) (RuntimeApplied, error)
-
-	// ClearInitialCertificate removes agent's stored request when it is still pending and equal
-	// to r, deciding and removing it in one step. Anything else is left as it is.
-	ClearInitialCertificate(ctx context.Context, agent GRN, r CertificateRequest) error
 
 	// OpenRecovery stores r as requested unless a recovery is stored under its console key, and
 	// returns the one stored under the key either way, and whether this call stored it. A new one

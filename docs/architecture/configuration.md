@@ -10,7 +10,7 @@ How this operator's deployment is configured, and which repository owns each val
 
 | Flag | Why the base owns it |
 |---|---|
-| `--agent-copy-image` | The init container is in every agent's Pod, so every deployment needs the flag. What it asks of the image is a shell, `install` and `mkdir`, and nothing of the agent, which no environment answers differently. |
+| `--agent-copy-image` | The manager refuses to start without it. The init containers that write an agent's config file and make its outbox, and a memory move's copy, run it. What it asks of the image is a shell, `install` and `mkdir`, and nothing of the agent, which no environment answers differently. |
 | `--garam-private-key-file`, `--garam-client-id-file`, `--garam-token-url-file` | Paths inside the container, under the `mountPath` the same file writes. Each file's base name is the Secret key a person places that part of `garam`'s key issuance under — `private-key.pem`, `client-id` and `token-url` — so the three fix this operator's contract with whoever places the Secret. What differs between deployments is the key, not where this operator reads one (ADR 0072). |
 | `--garam-trust-file` | The same, and it names the role rather than the certificate: what `garam`'s listener is verified against has already moved once, and only the file's contents moved with it. |
 

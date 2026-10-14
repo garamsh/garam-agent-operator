@@ -3,7 +3,6 @@ package distribution_test
 import (
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/garamsh/garam-agent-operator/internal/definition"
 	"github.com/garamsh/garam-agent-operator/internal/distribution"
 	garamprover "github.com/garamsh/garam-agent-operator/internal/distribution/prover"
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
@@ -87,20 +85,4 @@ func TestDesired_GaramsProofUnderAnotherContractOrNoneIsRefused503(t *testing.T)
 			}
 		})
 	}
-}
-
-func TestRequestCertificate_GaramsIssuanceUnderAnotherContractIsRefused503AndRetriedAsTheSameRequest(t *testing.T) {
-	e := newEnv(t)
-	body := certificateBody("c1", epoch, csrPEM(t, p256))
-	e.issuer.answer(fmt.Errorf("issue initial certificate: %w", definition.ErrGaramContractUnsupported))
-
-	status, raw, out := e.requestCertificate(t, e.withToken, agentA, body)
-	assert.Equal(t, http.StatusServiceUnavailable, status, string(raw))
-	assert.Equal(t, kindGaramContractUnsupported, out["kind"])
-
-	// Control: once garam answers under the contract, the same request is issued: nothing was
-	// cleared or decided by the unread answer.
-	e.issuer.answer(nil)
-	status, raw, _ = e.requestCertificate(t, e.withToken, agentA, body)
-	assert.Equal(t, http.StatusCreated, status, string(raw))
 }

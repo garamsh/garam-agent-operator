@@ -31,6 +31,11 @@ func (e *env) openRecovery(t *testing.T, agent string) {
 	require.NoError(t, err)
 }
 
+// recoveryBody is a controller's request for its agent's recovery recoveryID at epoch.
+func recoveryBody(recoveryID, epoch string) string {
+	return `{"requestId":"` + recoveryID + `","epoch":"` + epoch + `"}`
+}
+
 // prepareRecovery posts body for agent's recovery with client, and returns the status and the answer.
 func (e *env) prepareRecovery(t *testing.T, agent, body string) (int, map[string]any) {
 	t.Helper()
@@ -45,53 +50,48 @@ func (e *env) prepareRecovery(t *testing.T, agent, body string) (int, map[string
 	return resp.StatusCode, out
 }
 
-func TestPrepareRecovery_StoresTheRequestAndAnswersTheRecoveredCredential(t *testing.T) {
+func TestPrepareRecovery_StoresTheRequestAndAnswersTheNewLineage(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	e.openRecovery(t, agentA)
-	body := certificateBody("rec-1", epoch, csrPEM(t, p256))
+	body := recoveryBody("rec-1", epoch)
 
 	status, out := e.prepareRecovery(t, agentA, body)
 	require.Equal(t, http.StatusAccepted, status, out)
 	assert.Equal(t, "prepared", out["stage"])
-	assert.Nil(t, out["certificatePem"])
+	assert.Nil(t, out["lineage"])
 	status, _ = e.prepareRecovery(t, agentA, body)
 	assert.Equal(t, http.StatusAccepted, status, "an identical repeat was not answered as stored")
+	stored, err := e.definitions.RecoveryOf(ctx, orgID, agentA)
+	require.NoError(t, err)
+	assert.JSONEq(t, body, string(stored.Body), "the request garam is to be sent is not the controller's")
 
-	_, err := e.definitions.FinalizeRecovery(ctx, agentA, "rec-1", definition.RecoveredCredential{
-		Lineage: "lineage-2", CertificatePEM: "recovered", IssuerPEM: "answered issuer", ServerRootPEM: "answered root",
-	})
+	_, err = e.definitions.FinalizeRecovery(ctx, agentA, "rec-1", definition.RecoveredCredential{Lineage: "lineage-2"})
 	require.NoError(t, err)
 	status, out = e.prepareRecovery(t, agentA, body)
 	require.Equal(t, http.StatusOK, status, out)
 	assert.Equal(t, "lineage-2", out["lineage"])
-	assert.Equal(t, "recovered", out["certificatePem"])
-	assert.Equal(t, "answered issuer", out["issuerPem"], "the chain garam answered is not returned to the controller")
-	assert.Equal(t, "answered root", out["serverRootPem"])
-	assert.Equal(t, 0, e.issuer.calls(), "a recovery asked for a first certificate")
+	assert.NotContains(t, out, "certificatePem")
 }
 
 func TestPrepareRecovery_Refusals(t *testing.T) {
 	e := newEnv(t)
 	e.openRecovery(t, agentA)
-	csr := csrPEM(t, p256)
-	accepted := certificateBody("rec-1", epoch, csr)
 
-	status, _ := e.prepareRecovery(t, agentA, certificateBody("rec-unknown", epoch, csr))
-	assert.Equal(t, http.StatusNotFound, status, "a certificate request for no open recovery was stored")
-	status, _ = e.prepareRecovery(t, agentC, certificateBody("rec-1", epoch, csr))
+	status, _ := e.prepareRecovery(t, agentA, recoveryBody("rec-unknown", epoch))
+	assert.Equal(t, http.StatusNotFound, status, "a request for no open recovery was stored")
+	status, _ = e.prepareRecovery(t, agentC, recoveryBody("rec-1", epoch))
 	assert.Equal(t, http.StatusForbidden, status, "another controller's agent was prepared here")
-	status, out := e.prepareRecovery(t, agentA, certificateBody("rec-1", "6", csr))
+	status, out := e.prepareRecovery(t, agentA, recoveryBody("rec-1", "6"))
 	assert.Equal(t, http.StatusConflict, status)
 	assert.Equal(t, "epoch_superseded", out["kind"])
+	status, _ = e.prepareRecovery(t, agentA,
+		`{"requestId":"rec-1","epoch":"`+epoch+`","certificateRequestPem":"-----BEGIN CERTIFICATE REQUEST-----"}`)
+	assert.Equal(t, http.StatusBadRequest, status, "a certificate request was taken under execution-fence.v2")
 
 	// Control: the open recovery's own request is stored.
-	status, out = e.prepareRecovery(t, agentA, accepted)
+	status, out = e.prepareRecovery(t, agentA, recoveryBody("rec-1", epoch))
 	require.Equal(t, http.StatusAccepted, status, out)
-
-	status, out = e.prepareRecovery(t, agentA, certificateBody("rec-1", epoch, csrPEM(t, p256)))
-	assert.Equal(t, http.StatusConflict, status)
-	assert.Equal(t, "request_reused", out["kind"], "another key replaced the prepared request")
 }
 
 func TestDesired_CarriesTheOpenRecoveryAndTheStop(t *testing.T) {

@@ -4,9 +4,7 @@ package control_test
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
-	"encoding/pem"
 	"io"
 	"net/http"
 	"strings"
@@ -15,10 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// fenceContract is garam's execution-fence.v1, which its recovery, deactivation and execution
-// introspection speak.
-const fenceContract = "execution-fence.v1"
 
 // lifecycleRoute is the console route of agent under route.
 func lifecycleRoute(agent, route string) string {
@@ -111,7 +105,7 @@ func desiredOf(t *testing.T, agent string) map[string]any {
 	return nil
 }
 
-// prepareAs posts the controller's certificate request for agent's recovery, as its manager will.
+// prepareAs posts the controller's request for agent's recovery, as its manager does.
 func prepareAs(t *testing.T, agent, body string) (int, map[string]any) {
 	t.Helper()
 	resp, err := real.feedClient().Post(attachedURL+"/v1/operators/self/agents/"+agent+"/recovery-requests",
@@ -125,12 +119,19 @@ func prepareAs(t *testing.T, agent, body string) (int, map[string]any) {
 	return resp.StatusCode, out
 }
 
+// recoveryRequestBody is the controller's request for a recovery recoveryID at epoch.
+func recoveryRequestBody(recoveryID, epoch string) string {
+	b, err := json.Marshal(map[string]string{"requestId": recoveryID, "epoch": epoch})
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
 // openAndPrepare opens a recovery of a from the console under a fresh agent:recover authority, has
-// its controller prepare it over a key generated here, and returns the recovery's identifier, the
-// prepared bytes as the read answers them, and the pair of that key with a recovered certificate.
-func openAndPrepare(t *testing.T, a placedAgent) (
-	recoveryID string, prepared []byte, pairFor func(string) tls.Certificate,
-) {
+// its controller prepare it, and returns the recovery's identifier and the prepared bytes as the
+// read answers them.
+func openAndPrepare(t *testing.T, a placedAgent) (recoveryID string, prepared []byte) {
 	t.Helper()
 	recoveryID, openID := name(t, "recovery"), name(t, "open")
 	open := requestBody(t, struct {
@@ -150,28 +151,26 @@ func openAndPrepare(t *testing.T, a placedAgent) (
 	assert.Equal(t, recoveryID, released.RequestID, "the feed does not tell the controller to prepare the recovery")
 	assert.Equal(t, a.epoch, released.Epoch)
 
-	key, csr := certificateRequestPEM(t)
-	status, out := prepareAs(t, a.grn, certificateRequestBody(recoveryID, a.epoch, csr))
+	status, out := prepareAs(t, a.grn, recoveryRequestBody(recoveryID, a.epoch))
 	require.Equal(t, http.StatusAccepted, status, out)
 	read := readRecovery(t, a.grn)
 	require.Equal(t, "prepared", read["stage"])
 	body, _ := read["body"].(string)
 	require.NotEmpty(t, body)
 	require.Equal(t, sha(body), read["bodySha256"])
-	return recoveryID, []byte(body), func(certificatePEM string) tls.Certificate {
-		return tls.Certificate{Certificate: [][]byte{parsePEM(t, certificatePEM).Raw}, PrivateKey: key}
-	}
+	// garam's recovery under execution-fence.v2 is sent no certificate request.
+	assert.JSONEq(t, recoveryRequestBody(recoveryID, a.epoch), body)
+	return recoveryID, []byte(body)
 }
 
 func TestRecovery_AgainstGaram(t *testing.T) {
-	t.Skip(until355Recovery)
 	a := placeAgent(t)
 	generation := strings.Repeat("a", 32)
-	first := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), a.epoch, generation))
+	first := postAgent(t, a, a.control, "activations", activationOf(name(t, "activation"), a.epoch, generation))
 	require.Equal(t, http.StatusCreated, first.status, first.raw)
 	activation := first.body["activationId"].(string)
 	require.Equal(t, http.StatusNoContent,
-		postAgent(t, a, a.pair, "runtime-status", statusOf(activation, a.grn, a.epoch, generation)).status)
+		postAgent(t, a, a.control, "runtime-status", statusOf(activation, a.grn, a.epoch, generation)).status)
 
 	// An agent:configure authority opens no recovery.
 	openID := name(t, "open")
@@ -183,15 +182,13 @@ func TestRecovery_AgainstGaram(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, status, refused)
 
 	// Control: an agent:recover authority opens it, and the controller prepares it.
-	recoveryID, prepared, pairFor := openAndPrepare(t, a)
-	var fields map[string]string
-	require.NoError(t, json.Unmarshal(prepared, &fields))
+	recoveryID, prepared := openAndPrepare(t, a)
 
 	// A handoff minted over other bytes than the prepared ones is refused before garam is asked: the
 	// same request, re-encoded. garam binds one digest to a request id, so it is another agent's
 	// recovery that is refused; this agent's finalize below is the control.
 	b := placeAgent(t)
-	otherID, otherPrepared, _ := openAndPrepare(t, b)
+	otherID, otherPrepared := openAndPrepare(t, b)
 	var otherFields map[string]string
 	require.NoError(t, json.Unmarshal(otherPrepared, &otherFields))
 	reencoded, err := json.MarshalIndent(otherFields, "", " ")
@@ -208,22 +205,22 @@ func TestRecovery_AgainstGaram(t *testing.T) {
 		mint(t, "agent:recover", a.grn, recoveryID, prepared), prepared)
 	require.Equal(t, http.StatusCreated, status, finalized)
 	assert.Equal(t, "finalized", finalized["stage"])
-	certificatePEM, _ := finalized["certificatePem"].(string)
-	require.NotEmpty(t, certificatePEM)
+	lineage, _ := finalized["lineage"].(string)
+	require.NotEmpty(t, lineage)
+	assert.NotContains(t, finalized, "certificatePem")
 	assert.NotContains(t, desiredOf(t, a.grn), "recovery", "a finalized recovery is still released for preparing")
 
-	// The controller's repeat is answered the recovered certificate, over the key it holds.
-	status, fetched := prepareAs(t, a.grn, certificateRequestBody(recoveryID, a.epoch, fields["certificateRequestPem"]))
+	// The controller's repeat is answered the new lineage.
+	status, fetched := prepareAs(t, a.grn, recoveryRequestBody(recoveryID, a.epoch))
 	require.Equal(t, http.StatusOK, status, fetched)
-	assert.Equal(t, certificatePEM, fetched["certificatePem"])
-	recovered := pairFor(certificatePEM)
+	assert.Equal(t, lineage, fetched["lineage"])
 
-	// garam fenced the old lineage and ended its activation; the recovered leaf activates the next
-	// generation.
-	old := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), a.epoch, strings.Repeat("b", 32)))
+	// garam refuses the old lineage's tokens and ended its activation; a token the controller mints
+	// in the new lineage activates the next generation.
+	old := postAgent(t, a, a.control, "activations", activationOf(name(t, "activation"), a.epoch, strings.Repeat("b", 32)))
 	assert.Equal(t, http.StatusForbidden, old.status, old.raw)
 	assert.Equal(t, "credential_fenced", old.body["kind"])
-	next := postAgent(t, a, recovered, "activations",
+	next := postAgent(t, a, controlToken(t, a.grn), "activations",
 		activationOf(name(t, "activation"), a.epoch, strings.Repeat("c", 32)))
 	assert.Equal(t, http.StatusCreated, next.status, next.raw)
 
@@ -239,12 +236,11 @@ func TestRecovery_AgainstGaram(t *testing.T) {
 
 // TestRecovery_ResumesWhereGaramAnsweredAndControlDidNotRecord is the restart between garam's
 // recovery committing and the control service recording it: the finalize is sent again under a
-// handoff minted again for the same request, garam answers the certificate it issued, and that is
+// handoff minted again for the same request, garam answers the lineage it started, and that is
 // what control records.
 func TestRecovery_ResumesWhereGaramAnsweredAndControlDidNotRecord(t *testing.T) {
-	t.Skip(until355Recovery)
 	a := placeAgent(t)
-	recoveryID, prepared, _ := openAndPrepare(t, a)
+	recoveryID, prepared := openAndPrepare(t, a)
 
 	// garam recovered under the handoff, and the control service stopped before it recorded it.
 	req, err := http.NewRequest(http.MethodPost, real.machineURL+"/agents/"+a.grn+"/credential-recovery",
@@ -252,23 +248,24 @@ func TestRecovery_ResumesWhereGaramAnsweredAndControlDidNotRecord(t *testing.T) 
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Garam-Contract-Version", fenceContract)
-	req.Header.Set("Authorization", "Garam-Operation "+mint(t, "agent:recover", a.grn, recoveryID, prepared))
-	resp, err := real.hostedTLS.Do(req)
+	req.Header.Set("Garam-Operation", mint(t, "agent:recover", a.grn, recoveryID, prepared))
+	resp, err := real.hostedMachine.Do(req)
 	require.NoError(t, err)
 	raw, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, string(raw))
-	var issued struct{ CertificatePem string }
+	var issued struct{ Lineage string }
 	require.NoError(t, json.Unmarshal(raw, &issued))
+	require.NotEmpty(t, issued.Lineage)
 	restartAttached(t)
 	require.Equal(t, "prepared", readRecovery(t, a.grn)["stage"])
 
 	status, finalized := consoleSend(t, lifecycleRoute(a.grn, "/recovery/finalize"),
 		mint(t, "agent:recover", a.grn, recoveryID, prepared), prepared)
 	require.Equal(t, http.StatusCreated, status, finalized)
-	assert.Equal(t, issued.CertificatePem, finalized["certificatePem"],
-		"control recorded another certificate than the one garam issued")
+	assert.Equal(t, issued.Lineage, finalized["lineage"],
+		"control recorded another lineage than the one garam started")
 	assert.Equal(t, 1, count(t, "SELECT count(*) FROM recoveries WHERE agent = $1 AND stage = 'finalized'", a.grn))
 }
 
@@ -279,15 +276,14 @@ func stopBody(t *testing.T, requestID string) []byte {
 	}{requestID})
 }
 
-// introspectFence asks garam which activation of agent is current, with the leaf pair presents.
-func introspectFence(t *testing.T, a placedAgent, leaf []byte, generation string) *string {
+// introspectFence asks garam which activation of agent is current, forwarding a's control token.
+func introspectFence(t *testing.T, a placedAgent, generation string) *string {
 	t.Helper()
 	var out struct {
 		ActivationID *string `json:"activationId"`
 	}
-	require.NoError(t, real.machineCall(real.hostedTLS, "/agents/"+a.grn+"/execution/introspection", fenceContract,
-		map[string]any{"certificatePem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf})),
-			"generation": generation}, http.StatusOK, &out))
+	require.NoError(t, real.machineCall(real.hostedMachine, "/agents/"+a.grn+"/execution/introspection", fenceContract,
+		map[string]any{"token": a.control, "generation": generation}, http.StatusOK, &out))
 	return out.ActivationID
 }
 
@@ -295,21 +291,20 @@ func introspectFence(t *testing.T, a placedAgent, leaf []byte, generation string
 // later activation needs no reference; it returns the activation and its generation.
 func activated(t *testing.T, a placedAgent, generation string) string {
 	t.Helper()
-	first := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), a.epoch, generation))
+	first := postAgent(t, a, a.control, "activations", activationOf(name(t, "activation"), a.epoch, generation))
 	require.Equal(t, http.StatusCreated, first.status, first.raw)
 	activation := first.body["activationId"].(string)
 	require.Equal(t, http.StatusNoContent,
-		postAgent(t, a, a.pair, "runtime-status", statusOf(activation, a.grn, a.epoch, generation)).status)
+		postAgent(t, a, a.control, "runtime-status", statusOf(activation, a.grn, a.epoch, generation)).status)
 	return activation
 }
 
 func TestStop_AgainstGaram(t *testing.T) {
-	t.Skip(until355Stop)
 	a := placeAgent(t)
 	generation := strings.Repeat("d", 32)
 	activation := activated(t, a, generation)
-	require.NotNil(t, introspectFence(t, a, a.pair.Certificate[0], generation))
-	require.Equal(t, activation, *introspectFence(t, a, a.pair.Certificate[0], generation))
+	require.NotNil(t, introspectFence(t, a, generation))
+	require.Equal(t, activation, *introspectFence(t, a, generation))
 
 	// An agent:recover authority stops nothing. garam binds a request id to one operation, so the
 	// refused request has its own.
@@ -327,13 +322,13 @@ func TestStop_AgainstGaram(t *testing.T) {
 	assert.Equal(t, true, stopped["stopped"])
 	assert.Equal(t, true, stopped["deactivated"])
 	assert.Equal(t, activation, stopped["activationId"])
-	assert.Nil(t, introspectFence(t, a, a.pair.Certificate[0], generation), "garam still routes to the stopped activation")
+	assert.Nil(t, introspectFence(t, a, generation), "garam still routes to the stopped activation")
 	assert.Equal(t, true, desiredOf(t, a.grn)["stopped"], "the feed does not keep the runtime stopped")
 
 	// A new placement is registered, and nothing is activated on it.
 	a.token = "token pod-2"
 	mustPlace(t, a.grn, placementOf(a.epoch, "pod-2", "pod-1"), http.StatusCreated)
-	replacement := postAgent(t, a, a.pair, "activations",
+	replacement := postAgent(t, a, a.control, "activations",
 		activationOf(name(t, "activation"), a.epoch, strings.Repeat("e", 32)))
 	assert.Equal(t, http.StatusForbidden, replacement.status, replacement.raw)
 	assert.Equal(t, "placement_not_current", replacement.body["kind"], "a replacement was activated while stopped")
@@ -351,7 +346,8 @@ func TestStop_AgainstGaram(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, started)
 	assert.Equal(t, false, started["stopped"])
 	assert.NotContains(t, desiredOf(t, a.grn), "stopped")
-	next := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), a.epoch, strings.Repeat("f", 32)))
+	next := postAgent(t, a, a.control, "activations",
+		activationOf(name(t, "activation"), a.epoch, strings.Repeat("f", 32)))
 	assert.Equal(t, http.StatusCreated, next.status, next.raw)
 	assert.Equal(t, 1, count(t, "SELECT count(*) FROM stops WHERE agent = $1 AND started_at IS NOT NULL", a.grn),
 		"the ended stop was not kept")
@@ -361,7 +357,6 @@ func TestStop_AgainstGaram(t *testing.T) {
 // before it asked garam to deactivate, and one after garam answered and before it was recorded:
 // each repeat of the stop request asks garam, and records the deactivation on its answer alone.
 func TestStop_ARestartAroundTheDeactivationResumesOnGaramsAnswer(t *testing.T) {
-	t.Skip(until355Stop)
 	a := placeAgent(t)
 	generation := strings.Repeat("7", 32)
 	activation := activated(t, a, generation)
@@ -379,8 +374,8 @@ SELECT $1, $2, $3, actor, 'agent:configure', $3, $4, $5, $6, $7, $8 FROM creatio
 		real.orgID, stopID, a.grn, sha(string(body)), ref, real.controllerGRN, a.epoch, activation)
 	require.NoError(t, err)
 	restartAttached(t)
-	require.Equal(t, activation, *introspectFence(t, a, a.pair.Certificate[0], generation))
-	refused := postAgent(t, a, a.pair, "activations",
+	require.Equal(t, activation, *introspectFence(t, a, generation))
+	refused := postAgent(t, a, a.control, "activations",
 		activationOf(name(t, "activation"), a.epoch, strings.Repeat("8", 32)))
 	assert.Equal(t, http.StatusForbidden, refused.status,
 		"an activation was admitted between the stop and its deactivation")
@@ -388,7 +383,7 @@ SELECT $1, $2, $3, actor, 'agent:configure', $3, $4, $5, $6, $7, $8 FROM creatio
 	status, stopped := consoleSend(t, lifecycleRoute(a.grn, "/stop"), authority, body)
 	require.Equal(t, http.StatusOK, status, stopped)
 	assert.Equal(t, true, stopped["deactivated"])
-	assert.Nil(t, introspectFence(t, a, a.pair.Certificate[0], generation), "the resumed stop did not deactivate")
+	assert.Nil(t, introspectFence(t, a, generation), "the resumed stop did not deactivate")
 
 	// garam deactivated, and the control service stopped before it recorded it.
 	_, err = pool.Exec(t.Context(), "UPDATE stops SET deactivated_at = NULL WHERE agent = $1", a.grn)

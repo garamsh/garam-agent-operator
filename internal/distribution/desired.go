@@ -36,11 +36,11 @@ type desiredAgent struct {
 	// runtime stopped, with no replacement (ADR 0057).
 	Stopped bool `json:"stopped,omitempty"`
 	// Recovery is the agent's open recovery, absent where none is open: the controller prepares
-	// its certificate request at recovery-requests (ADR 0057).
+	// its request at recovery-requests (ADR 0057).
 	Recovery *recovery `json:"recovery,omitempty"`
 }
 
-// recovery is what an open recovery's certificate request is made under.
+// recovery is what an open recovery's request is made under.
 type recovery struct {
 	RequestID string `json:"requestId"`
 	Epoch     string `json:"epoch"`

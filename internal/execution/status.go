@@ -27,7 +27,7 @@ type statusReport struct {
 // stateServing is the runtime state in which the revision it reports is the one it runs.
 const stateServing = "serving"
 
-// reportStatus accepts a runtime's status only from the agent's current credential, for the
+// reportStatus accepts a runtime's status only under the agent's current token, for the
 // generation garam holds active, under the activation that generation was activated as, on the
 // agent's current placement. A report never activates or supersedes anything.
 func (s *server) reportStatus(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +37,7 @@ func (s *server) reportStatus(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, errInvalidRequest)
 		return
 	}
-	leafPEM, err := agentLeaf(r, agent)
+	token, err := agentToken(r)
 	if err != nil {
 		s.respondError(w, err)
 		return
@@ -47,7 +47,7 @@ func (s *server) reportStatus(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	if err := s.admitReport(r, agent, leafPEM, in); err != nil {
+	if err := s.admitReport(r, agent, token, in); err != nil {
 		s.respondError(w, err)
 		return
 	}
@@ -62,12 +62,12 @@ func (s *server) reportStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// admitReport has garam answer, for this report, whether the leaf and the generation are current
+// admitReport has garam answer, for this report, whether the token and the generation are current
 // together, and requires the agent's assignment, epoch and activation to be the ones reported.
-func (s *server) admitReport(r *http.Request, agent string, leafPEM []byte, in statusReport) error {
-	execution, err := s.garam.Introspect(r.Context(), agent, leafPEM, in.Generation)
+func (s *server) admitReport(r *http.Request, agent string, token AgentToken, in statusReport) error {
+	execution, err := s.garam.Introspect(r.Context(), agent, token, in.Generation)
 	if err != nil {
-		// agent-execution.v1 lists no not_authorized here; garam's refusal of control's authority
+		// agent-execution.v2 lists no not_authorized here; garam's refusal of control's authority
 		// stops the adapter's protected work as a fence does.
 		return refusalOf(err, errCredentialFenced)
 	}

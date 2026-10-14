@@ -38,17 +38,9 @@ const garamContract = "operation-authority.v1"
 // enrollmentContract is the contract version of garam's managed create.
 const enrollmentContract = "managed-enrollment.v1"
 
-// The reasons the cases garam refuses beside this service's token skip, until #355 moves agents'
-// credentials to garam tokens. Each skipped case calls t.Skip with one of them.
-const (
-	until355Activation = "#355: activation forwards the agent's certificate, " +
-		"which garam refuses beside this service's token until agents hold garam tokens"
-	until355Creation = "#355: managed create and the initial certificate are certificate-only, " +
-		"and garam refuses them beside this service's token"
-	until355Recovery = "#355: credential recovery moves to agents' garam tokens, " +
-		"and garam refuses its certificate form beside this service's token"
-	until355Stop = "#355: a stop ends an activation, and activation is unavailable until agents hold garam tokens"
-)
+// fenceContract is garam's execution-fence.v2, which its recovery, deactivation and execution
+// introspection speak beside a token (garam@afde8b8).
+const fenceContract = "execution-fence.v2"
 
 // garamStack is a real garam built at the revision the Makefile pins: its authz engine, its
 // browser API and its machine listener, over a database garam's test-principal fixture prepared.
@@ -69,9 +61,14 @@ type garamStack struct {
 	// exchanges a minute per operator.
 	controllerToken *machinetoken.Source
 	machine         *http.Client
+	// controllerMachine and hostedMachine call garam's machine listener as the controller and as
+	// this service, each under a token exchanged under its own key: the controller mints agents'
+	// tokens, as the manager does, and this service's calls are made where the suite stands in for
+	// the binary.
+	controllerMachine, hostedMachine *http.Client
 	// hostedTLS and controller are the certificates garam enrolled the two operators with, which
-	// the suite presents itself to make on garam what the binary takes as given: agents created,
-	// and activated, as this service did before #355 moves them to tokens.
+	// the suite presents itself to make on garam what the binary takes as given: agents created
+	// for the controller, and its legacy agents.
 	hostedTLS  *http.Client
 	controller tls.Certificate
 	// processes are garam's three running for the suite.
@@ -293,6 +290,8 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	s.controllerToken = machinetoken.NewSource(machinetoken.Config{
 		Endpoint: s.machineURL + "/oauth/token", Files: controllerKeys, Audience: s.hosted, HTTP: s.machine,
 	})
+	s.controllerMachine = s.tokenClient(controllerKeys)
+	s.hostedMachine = s.tokenClient(s.hostedFiles.operatorKeys)
 
 	delegation := struct {
 		RequestID   string   `json:"requestId"`
@@ -309,6 +308,30 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	return step("write the hosted operator's delegation",
 		s.create(http.MethodPut, "/orgs/"+s.orgID+"/operators/control/delegation", garamContract, delegation, nil),
 		s.processes...)
+}
+
+// tokenClient is a client of garam's machine listener presenting the token the operator files name
+// exchanges for garam itself.
+func (s *garamStack) tokenClient(files machinetoken.Files) *http.Client {
+	source := machinetoken.NewSource(machinetoken.Config{
+		Endpoint: s.machineURL + "/oauth/token", Files: files, HTTP: s.machine,
+	})
+	return &http.Client{Transport: &machinetoken.Transport{Source: source, Base: s.machine.Transport}}
+}
+
+// mintAgentToken has the controller mint agent's token for audience, garam's own where it is empty,
+// as the manager does (garam@afde8b8 api/machine.yaml mintAgentToken). The token is never logged.
+func (s *garamStack) mintAgentToken(agent, audience string) (string, error) {
+	var minted struct {
+		Token string `json:"token"`
+	}
+	in := map[string]string{}
+	if audience != "" {
+		in["audience"] = audience
+	}
+	err := s.machineCall(s.controllerMachine, "/agents/"+url.PathEscape(agent)+"/tokens", "machine-token.v1",
+		in, http.StatusCreated, &minted)
+	return minted.Token, err
 }
 
 // enrolled is an operator garam signed a certificate for, over a key generated here.

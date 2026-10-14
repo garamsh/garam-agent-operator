@@ -20,12 +20,9 @@ import (
 // refused on reconcile with ReasonTypeUnimplemented, so a half-filled entry
 // refuses the workload rather than building it with a missing name.
 type agentTypeDescriptor struct {
-	// credentialsMountPath is where the agent reads the copy of its credential.
+	// credentialsMountPath is where the agent reads the garam server root out of
+	// its credential Secret.
 	credentialsMountPath string
-
-	// credentialsSecretMountPath is where the kubelet projects the credential's
-	// Secret, and only the init container that copies it mounts it.
-	credentialsSecretMountPath string
 
 	// stateMountPath is where the agent's state volume is mounted, in the agent
 	// container and in its workspace.
@@ -108,9 +105,8 @@ type agentTypeDescriptor struct {
 // sherlock's deployment contract is
 // sherlock@8218189:docs/architecture/deployment.md.
 var agentTypeSherlock = agentTypeDescriptor{
-	credentialsMountPath:       "/run/sherlock/credentials",
-	credentialsSecretMountPath: "/etc/sherlock/credentials",
-	stateMountPath:             "/var/lib/sherlock",
+	credentialsMountPath: "/run/sherlock/credentials",
+	stateMountPath:       "/var/lib/sherlock",
 
 	// sherlock's setting memory-path, whose default is relative and resolves
 	// against its image's working directory, off this volume

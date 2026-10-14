@@ -35,12 +35,13 @@ const (
 	// reserved for that (RFC 2606 section 2).
 	unstartableImage = "sherlock.invalid/agent:v0"
 
-	// credentialsToken is what the specs look for: in the mounted file, and
-	// nowhere in the container's environment.
+	// credentialsToken is what the specs look for, and find nowhere in the
+	// agent's container: no file of it is mounted there and no variable carries
+	// it (ADR 0073).
 	credentialsToken = "e2e-token-6f1c9a"
 
-	// credentialsMountPath is where the agent reads the copy the init container
-	// made, not where the kubelet projects the Secret.
+	// credentialsMountPath is where the agent reads the garam server root where
+	// its adapter is placed, and where an Agent with no adapter has nothing.
 	credentialsMountPath = "/run/sherlock/credentials"
 	stateMountPath       = "/var/lib/sherlock"
 
@@ -50,23 +51,6 @@ const (
 	memoryDir    = stateMountPath + "/memory"
 	workspaceDir = stateMountPath + "/workspace"
 )
-
-// keyfileRule is the rule garam's reader applies to a key file, transcribed from
-// garam@1ff8346:internal/keyfile/keyfile.go:30-41: it refuses a file any group or
-// other permission bit is set on, and refuses one whose owner is not the reading
-// process. 63 is 0o077 in decimal, which sh arithmetic has no octal literal for.
-const keyfileRule = `
-check() {
-  perm=$(( 0$(stat -Lc '%a' "$1") ))
-  if [ $(( perm & 63 )) -ne 0 ]; then
-    echo "$2 REFUSE readable-beyond-its-owner"
-  elif [ "$(stat -Lc '%u' "$1")" != "$(id -u)" ]; then
-    echo "$2 REFUSE owned-by-another-user"
-  else
-    echo "$2 ACCEPT"
-  fi
-}
-`
 
 // agentManifestFor renders an Agent differing from every other this suite
 // creates in its name and its image, so that a difference in what the operator
@@ -266,35 +250,25 @@ var _ = Describe("Agent workload", Ordered, func() {
 		}, 2*time.Minute, time.Second).Should(Succeed())
 	})
 
-	It("delivers the credential as a file the rule its reader applies accepts, and nowhere in the environment", func() {
+	It("keeps the credential out of the agent's container, as a file and in its environment", func() {
 		waitForAgentPod()
 
-		// Everything below is about an agent that dropped root. Read as root, a
-		// credential file is readable whatever mode it carries, so this is the
-		// line that makes the rest of the spec mean anything.
+		// Read as root, every file is readable, so a file's absence says more
+		// only where the container dropped root.
 		By("checking the container is not running as root")
 		uid, err := execInAgent("id", "-u")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(strings.TrimSpace(uid)).NotTo(Equal("0"))
 
-		By("applying garam's rule to the credential, and to a file written beside it")
-		// The control is the second file: written by this container, into a
-		// volume it can write, at the mode a default umask gives it. The rule only
-		// refuses, so a control it accepts would leave a check that cannot fail
-		// reading exactly like one that can.
-		verdicts, err := execInAgent("sh", "-ec", keyfileRule+
-			"umask 022\n"+
-			": > "+stateMountPath+"/control\n"+
-			"check "+credentialsMountPath+"/token credential\n"+
-			"check "+stateMountPath+"/control control\n")
-		Expect(err).NotTo(HaveOccurred(), "the credentials are not files inside the container")
-		Expect(verdicts).To(ContainSubstring("credential ACCEPT"))
-		Expect(verdicts).To(ContainSubstring("control REFUSE readable-beyond-its-owner"))
-
-		By("reading the credential out of the file")
-		content, err := execInAgent("cat", credentialsMountPath+"/token")
+		By("finding no credential file where the agent would read one")
+		// The control is the state mount beside it, which the container does
+		// carry: a listing that fails for every path would read the same as one
+		// that finds nothing.
+		listing, err := execInAgent("sh", "-ec",
+			"[ -d "+stateMountPath+" ] && echo state-mounted; [ -e "+credentialsMountPath+" ] || echo credentials-absent")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(content).To(Equal(credentialsToken))
+		Expect(listing).To(ContainSubstring("state-mounted"))
+		Expect(listing).To(ContainSubstring("credentials-absent"))
 
 		By("listing the container's environment")
 		environment, err := execInAgent("env")

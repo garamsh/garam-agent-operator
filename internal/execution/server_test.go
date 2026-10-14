@@ -3,22 +3,15 @@ package execution_test
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -33,7 +26,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/execution"
 )
 
-// The refusal kinds agent-execution.v1 lists, as these tests expect them.
+// The refusal kinds agent-execution.v2 lists, as these tests expect them.
 const (
 	kindInvalidRequest       = "invalid_request"
 	kindUnauthenticated      = "unauthenticated"
@@ -62,6 +55,9 @@ const (
 	token      = "placement-token-1"
 	createRef  = "create-ref"
 	generation = "0123456789abcdef0123456789abcdef"
+
+	// otherController is an operator the agent is not placed on.
+	otherController = "grn:acme:default:operator:other"
 )
 
 // registrar registers the creation of agent at epoch.
@@ -81,11 +77,13 @@ type activation struct {
 
 // garam is the test double for garam's execution fence. It holds activations as activateAgent
 // does: a replay of one requestId answers the same activation at a higher token version, the anchor
-// must name the agent's latest activation, and an ended one refuses. A leaf is the agent's current
-// credential unless fenced.
+// must name the agent's latest activation, and an ended one refuses. A token is the agent's current
+// one unless fenced, and garam refuses one it holds as foreign as not the agent's token for control,
+// as it answers a token minted for garam (422).
 type garam struct {
 	mu          sync.Mutex
 	fenced      map[string]bool
+	foreign     map[string]bool
 	assignee    string
 	epoch       string
 	byRequest   map[string]*activation
@@ -93,13 +91,11 @@ type garam struct {
 	active      *activation
 	refusedRefs map[string]bool
 	introspect  error
-	prove       error
 	activate    error
-	// proveEpoch, where set, is the epoch the controller proof names; wrongGRN, where set, is the
-	// agent garam's activation answer names; delay holds every activation that long.
-	proveEpoch string
-	wrongGRN   string
-	delay      time.Duration
+	// wrongGRN, where set, is the agent garam's activation answer names; delay holds every
+	// activation that long.
+	wrongGRN string
+	delay    time.Duration
 	// generationAnswer, where set, is the standing introspection answers for a supplied generation.
 	generationAnswer string
 	calls            []execution.ActivationCall
@@ -107,18 +103,21 @@ type garam struct {
 }
 
 func newGaram() *garam {
-	return &garam{fenced: map[string]bool{}, assignee: controller, epoch: epoch,
+	return &garam{fenced: map[string]bool{}, foreign: map[string]bool{}, assignee: controller, epoch: epoch,
 		byRequest: map[string]*activation{}, refusedRefs: map[string]bool{}}
 }
 
-func (g *garam) Introspect(_ context.Context, grn string, leafPEM []byte, gen string) (execution.Introspection, error) {
+func (g *garam) Introspect(_ context.Context, grn string, token execution.AgentToken, gen string) (execution.Introspection, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.introspect != nil {
 		return execution.Introspection{}, g.introspect
 	}
+	if g.foreign[string(token)] {
+		return execution.Introspection{}, fmt.Errorf("%w: garam answered 422", execution.ErrCredentialRefused)
+	}
 	i := execution.Introspection{GRN: grn, Assignee: g.assignee, Epoch: g.epoch, Mode: "fenced", Credential: "current"}
-	if g.fenced[string(leafPEM)] {
+	if g.fenced[string(token)] {
 		i.Credential = "fenced"
 	}
 	if g.active != nil && !g.active.ended {
@@ -135,19 +134,6 @@ func (g *garam) Introspect(_ context.Context, grn string, leafPEM []byte, gen st
 		i.Generation = "not_current"
 	}
 	return i, nil
-}
-
-func (g *garam) ProveController(_ context.Context, c, grn string) (execution.ControllerProof, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.prove != nil {
-		return execution.ControllerProof{}, g.prove
-	}
-	proved := g.epoch
-	if g.proveEpoch != "" {
-		proved = g.proveEpoch
-	}
-	return execution.ControllerProof{Operator: c, Agent: grn, Epoch: proved}, nil
 }
 
 func (g *garam) Activate(_ context.Context, grn string, call execution.ActivationCall) (execution.Activation, bool, error) {
@@ -208,16 +194,29 @@ func (g *garam) callCount() int {
 	return len(g.calls)
 }
 
+// caller is an adapter calling the routes: the token it presents in Authorization, none where empty.
+type caller struct {
+	token string
+}
+
+// newCaller is an adapter presenting a fresh token in garam's form.
+func newCaller(t *testing.T) caller {
+	t.Helper()
+	var b [32]byte
+	_, err := rand.Read(b[:])
+	require.NoError(t, err)
+	return caller{token: "garam_at_" + hex.EncodeToString(b[:])}
+}
+
 // env is the agent routes over an in-memory store holding agent created on controller, configured
-// once more, and placed on it under token.
+// once more, and placed on it under token. adapter presents the agent's token minted for control.
 type env struct {
 	server      *httptest.Server
 	garam       *garam
 	definitions definition.Service
 	repository  *repository.Memory
 	profile     definition.ProfileRef
-	adapter     *http.Client
-	leafPEM     []byte
+	adapter     caller
 }
 
 func newEnv(t *testing.T) *env {
@@ -230,7 +229,7 @@ func newEnvLogging(t *testing.T, logger *slog.Logger) *env {
 	t.Helper()
 	ctx := context.Background()
 	repo := repository.NewMemory()
-	definitions := definition.NewService(repo, registrar{}, nil)
+	definitions := definition.NewService(repo, registrar{})
 	class := "standard"
 	p, err := definitions.PublishProfile(ctx, "acme", "small", definition.ExecutionSettings{
 		Resources:   corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")}},
@@ -256,35 +255,13 @@ func newEnvLogging(t *testing.T, logger *slog.Logger) *env {
 	require.NoError(t, err)
 
 	e := &env{garam: newGaram(), definitions: definitions, repository: repo, profile: profile}
-	e.server = httptest.NewUnstartedServer(execution.NewHandler(execution.Config{
+	// Over server TLS alone, as the control service's listener requests no client certificate.
+	e.server = httptest.NewTLSServer(execution.NewHandler(execution.Config{
 		Definitions: definitions, Garam: e.garam, Logger: logger,
 	}))
-	e.server.TLS = &tls.Config{ClientAuth: tls.RequestClientCert}
-	e.server.StartTLS()
 	t.Cleanup(e.server.Close)
-	e.adapter, e.leafPEM = e.leaf(t, agent)
+	e.adapter = newCaller(t)
 	return e
-}
-
-// leaf is a client of the server presenting a fresh certificate whose one SAN URI is grn, and that
-// certificate as the PEM garam is forwarded.
-func (e *env) leaf(t *testing.T, grn string) (*http.Client, []byte) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	san, err := url.Parse(grn)
-	require.NoError(t, err)
-	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
-	require.NoError(t, err)
-	template := &x509.Certificate{
-		SerialNumber: serial, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
-		URIs: []*url.URL{san}, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err)
-	transport := e.server.Client().Transport.(*http.Transport).Clone()
-	transport.TLSClientConfig.Certificates = []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}
-	return &http.Client{Transport: transport}, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
 // configure stores the agent's next revision, under ref.
@@ -312,20 +289,23 @@ func (a answer) kind() string {
 	return kind
 }
 
-// post sends body to the agent's route with client, under the contract and, where placement is
-// not empty, the placement token.
-func (e *env) post(t *testing.T, client *http.Client, route, body, placement string, header map[string]string) answer {
+// post sends body to the agent's route as c, under the contract and, where placement is not
+// empty, the placement token.
+func (e *env) post(t *testing.T, c caller, route, body, placement string, header map[string]string) answer {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, e.server.URL+"/v1/agents/"+agent+"/"+route, strings.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Garam-Contract-Version", execution.Contract)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Garam-Token "+c.token)
+	}
 	if placement != "" {
-		req.Header.Set("Authorization", "Garam-Placement "+placement)
+		req.Header.Set("Garam-Placement", placement)
 	}
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}
-	resp, err := client.Do(req)
+	resp, err := e.server.Client().Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
@@ -343,8 +323,8 @@ func activationBody(requestID, gen, revision string) string {
 	return string(b)
 }
 
-// activate sends the activation of gen at revision under requestID, with client and the token.
-func (e *env) activate(t *testing.T, client *http.Client, requestID, gen, revision string) answer {
+// activate sends the activation of gen at revision under requestID, as c and with the placement token.
+func (e *env) activate(t *testing.T, c caller, requestID, gen, revision string) answer {
 	t.Helper()
-	return e.post(t, client, "activations", activationBody(requestID, gen, revision), token, nil)
+	return e.post(t, c, "activations", activationBody(requestID, gen, revision), token, nil)
 }

@@ -90,8 +90,8 @@ func setAvailableFromWorkload(agent *agentv1alpha1.Agent, statefulSet *appsv1.St
 }
 
 // setRecovery records whether a recovery of the agent's credential is in
-// progress, and, where the recovered certificate was refused, why.
-func setRecovery(agent *agentv1alpha1.Agent, persisted bool, refusedAs string) {
+// progress.
+func setRecovery(agent *agentv1alpha1.Agent, persisted bool) {
 	condition := metav1.Condition{
 		Type:               agentv1alpha1.ConditionRecovery,
 		Status:             metav1.ConditionFalse,
@@ -99,14 +99,9 @@ func setRecovery(agent *agentv1alpha1.Agent, persisted bool, refusedAs string) {
 		Message:            "No recovery of the agent's credential is in progress",
 		ObservedGeneration: agent.Generation,
 	}
-	switch {
-	case persisted && refusedAs == agentv1alpha1.ReasonRecoveredCertificateUnverified:
-		condition.Status, condition.Reason = metav1.ConditionTrue, refusedAs
-		condition.Message = "The recovered certificate does not verify against the issuer kept from the first " +
-			"certificate, or is not over the persisted key, so it is not placed; the recovery request is kept"
-	case persisted:
+	if persisted {
 		condition.Status, condition.Reason = metav1.ConditionTrue, agentv1alpha1.ReasonRecovering
-		condition.Message = "A recovery request is persisted and its recovered certificate is not placed yet"
+		condition.Message = "A recovery request is persisted and its new lineage is not recorded yet"
 	}
 	meta.SetStatusCondition(&agent.Status.Conditions, condition)
 }

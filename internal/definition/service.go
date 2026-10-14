@@ -19,7 +19,6 @@ type Service interface {
 	Position(ctx context.Context) (Position, error)
 	Desired(ctx context.Context, operator string, limit int) (DesiredPage, error)
 	RecordStatus(ctx context.Context, agent GRN, observed, rendered Revision) (Status, error)
-	RequestInitialCertificate(ctx context.Context, in InitialCertificateInput) (c InitialCertificate, first bool, err error)
 	RegisterPlacement(ctx context.Context, in PlacementInput) (p Placement, first bool, err error)
 	CurrentPlacement(ctx context.Context, agent GRN) (Placement, error)
 	ImportCutover(ctx context.Context, imp CutoverImport) (stored CutoverImport, first bool, err error)
@@ -34,7 +33,7 @@ type Service interface {
 	RecordRuntimeStatus(ctx context.Context, agent GRN, report RuntimeReport) error
 	OpenRecovery(ctx context.Context, in OpenRecoveryInput) (r Recovery, first bool, err error)
 	RecoveryOf(ctx context.Context, org string, agent GRN) (Recovery, error)
-	PrepareRecovery(ctx context.Context, in InitialCertificateInput) (Recovery, error)
+	PrepareRecovery(ctx context.Context, agent GRN, r RecoveryRequest) (Recovery, error)
 	FinalizeRecovery(ctx context.Context, agent GRN, requestID string, c RecoveredCredential) (Recovery, error)
 	Stop(ctx context.Context, in StopInput) (s Stop, first bool, err error)
 	RecordDeactivation(ctx context.Context, key RequestKey) error
@@ -44,11 +43,9 @@ type Service interface {
 type service struct {
 	repository Repository
 	registrar  Registrar
-	issuer     Issuer
 }
 
-// NewService returns a Service storing in repository, registering agents through registrar and
-// asking for their first certificates through issuer.
-func NewService(repository Repository, registrar Registrar, issuer Issuer) Service {
-	return &service{repository: repository, registrar: registrar, issuer: issuer}
+// NewService returns a Service storing in repository and registering agents through registrar.
+func NewService(repository Repository, registrar Registrar) Service {
+	return &service{repository: repository, registrar: registrar}
 }

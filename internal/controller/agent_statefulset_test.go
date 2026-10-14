@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
 // testPinnedTool is the tool the specs declare a pin for. It is sherlock's one
@@ -159,58 +160,70 @@ var _ = Describe("Agent workload", func() {
 			To(HaveValue(Equal("fast")))
 	})
 
-	It("delivers the credential from a volume the kubelet does not write, owned by the user that reads it", func() {
-		name := "owns-its-credential"
+	It("gives the adapter alone the credential Secret, group-readable, and the agent the garam server root alone", func() {
+		name := "mounts-its-credential"
 		createSecret(credentialsSecretName(name))
 		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
 		createAgent(agent)
+
+		_, err := reconcileAgentWithIssuer(name, testGaramIssuer, true)
+		Expect(err).NotTo(HaveOccurred())
+
+		pod := statefulSetFor(name).Spec.Template.Spec
+
+		By("running the whole Pod as one user, so the file mode excludes no container of it")
+		Expect(pod.SecurityContext).NotTo(BeNil())
+		Expect(pod.SecurityContext.RunAsUser).To(HaveValue(BeEquivalentTo(65532)))
+		Expect(pod.SecurityContext.FSGroup).To(HaveValue(BeEquivalentTo(65532)))
+
+		By("projecting the Secret group-readable, which the kubelet replaces by rename")
+		projected := volumeNamed(pod, credentialsVolumeName)
+		Expect(projected.Secret).NotTo(BeNil())
+		Expect(projected.Secret.SecretName).To(Equal(agent.Spec.CredentialsSecretName))
+		Expect(projected.Secret.Items).To(BeEmpty())
+		Expect(projected.Secret.DefaultMode).To(HaveValue(BeEquivalentTo(0o440)))
+
+		By("mounting it read-only into the adapter, and into no other container")
+		Expect(initContainerOf(pod, adapterContainerName).VolumeMounts).To(ContainElement(
+			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true}))
+		for _, container := range append(slices.Clone(pod.Containers), pod.InitContainers...) {
+			if container.Name == adapterContainerName {
+				continue
+			}
+			for _, mount := range container.VolumeMounts {
+				Expect(mount.Name).NotTo(Equal(credentialsVolumeName), container.Name)
+			}
+		}
+
+		By("copying nothing: no init container reads the credential")
+		Expect(slices.ContainsFunc(pod.InitContainers, func(container corev1.Container) bool {
+			return container.Name == "credentials"
+		})).To(BeFalse())
+
+		By("giving the agent the server root out of the same Secret, and no token")
+		serverRoot := volumeNamed(pod, serverRootVolumeName)
+		Expect(serverRoot.Secret).NotTo(BeNil())
+		Expect(serverRoot.Secret.SecretName).To(Equal(agent.Spec.CredentialsSecretName))
+		Expect(serverRoot.Secret.Items).To(Equal([]corev1.KeyToPath{{Key: garam.ServerRootKey, Path: garam.ServerRootKey}}))
+		Expect(containerOf(pod, agentContainerName).VolumeMounts).To(ContainElement(
+			corev1.VolumeMount{Name: serverRootVolumeName, MountPath: agentTypeSherlock.credentialsMountPath, ReadOnly: true}))
+	})
+
+	It("mounts no credential where no adapter is placed", func() {
+		name := "mounts-no-credential"
+		createSecret(credentialsSecretName(name))
+		createAgent(newAgent(name))
 
 		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 
 		pod := statefulSetFor(name).Spec.Template.Spec
-
-		By("running the whole Pod as one user, which is what leaves the copy owned by its reader")
-		Expect(pod.SecurityContext).NotTo(BeNil())
-		Expect(pod.SecurityContext.RunAsUser).To(HaveValue(BeEquivalentTo(65532)))
-		Expect(pod.SecurityContext.FSGroup).To(HaveValue(BeEquivalentTo(65532)))
-
-		By("projecting the Secret group-readable, which is what the init container reads it by")
-		projected := volumeNamed(pod, credentialsSecretVolumeName)
-		Expect(projected.Secret).NotTo(BeNil())
-		Expect(projected.Secret.SecretName).To(Equal(agent.Spec.CredentialsSecretName))
-		Expect(projected.Secret.DefaultMode).To(HaveValue(BeEquivalentTo(0o440)))
-
-		By("copying it into a memory-backed volume, so the copy never reaches the node's disk")
-		copied := volumeNamed(pod, credentialsVolumeName)
-		Expect(copied.EmptyDir).NotTo(BeNil())
-		Expect(copied.EmptyDir.Medium).To(Equal(corev1.StorageMediumMemory))
-		Expect(copied.EmptyDir.SizeLimit).NotTo(BeNil())
-
-		By("making that copy before the agent starts, at a mode no group or other user can reach")
-		Expect(pod.InitContainers).To(HaveLen(1))
-		credentials := pod.InitContainers[0]
-		Expect(credentials.Name).To(Equal(credentialsContainerName))
-		Expect(credentials.Image).To(Equal(testCopyImage))
-		script := strings.Join(credentials.Command, " ")
-		Expect(script).To(ContainSubstring("install -m 0600"))
-		Expect(script).To(ContainSubstring(agentTypeSherlock.credentialsSecretMountPath + "/*"))
-		Expect(script).To(ContainSubstring(agentTypeSherlock.credentialsMountPath + "/"))
-		Expect(credentials.VolumeMounts).To(ConsistOf(
-			corev1.VolumeMount{Name: credentialsSecretVolumeName, MountPath: agentTypeSherlock.credentialsSecretMountPath, ReadOnly: true},
-			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: agentTypeSherlock.credentialsMountPath},
-		))
-
-		By("letting neither container name a user of its own, which would leave the copy owned by somebody else")
-		Expect(credentials.SecurityContext.RunAsUser).To(BeNil())
-		Expect(pod.Containers).To(HaveLen(1))
-		Expect(pod.Containers[0].SecurityContext.RunAsUser).To(BeNil())
-
-		By("giving the agent the copy and not the projection")
+		Expect(pod.InitContainers).To(BeEmpty())
 		Expect(pod.Containers[0].VolumeMounts).To(ConsistOf(
-			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: agentTypeSherlock.credentialsMountPath},
 			corev1.VolumeMount{Name: stateVolumeName, MountPath: agentTypeSherlock.stateMountPath},
 		))
+		Expect(pod.Volumes).To(BeEmpty())
 	})
 
 	It("builds a Pod a namespace enforcing PodSecurity restricted admits, and would not without its security context", func() {
@@ -243,12 +256,17 @@ var _ = Describe("Agent workload", func() {
 	It("pulls both images at every start, so that no node runs one it cached", func() {
 		name := "pulls-what-it-runs"
 		createSecret(credentialsSecretName(name))
-		createAgent(newAgent(name))
+		// A declared tool set, so the Pod carries an init container running the
+		// copy image.
+		agent := newAgent(name)
+		agent.Spec.Tools.Pins = map[string]string{testPinnedTool: testToolPin}
+		createAgent(agent)
 
 		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 
 		pod := statefulSetFor(name).Spec.Template.Spec
+		Expect(pod.InitContainers[0].Image).To(Equal(testCopyImage))
 		Expect(pod.InitContainers[0].ImagePullPolicy).To(Equal(corev1.PullAlways))
 		Expect(pod.Containers[0].ImagePullPolicy).To(Equal(corev1.PullAlways))
 	})
@@ -267,7 +285,7 @@ var _ = Describe("Agent workload", func() {
 
 		pod := statefulSetFor(name).Spec.Template.Spec
 		Expect(pod.Containers).To(HaveLen(2))
-		Expect(pod.InitContainers).To(HaveLen(2))
+		Expect(pod.InitContainers).To(HaveLen(1))
 		Expect(toolTreeIn(pod)).To(BeEmpty())
 	})
 
@@ -496,13 +514,13 @@ var _ = Describe("Agent workload", func() {
 		Expect(adapter.ReadinessProbe).To(BeNil())
 		Expect(adapter.StartupProbe).To(BeNil())
 
-		By("starting after the credential it reads has been copied")
+		By("starting after the outbox it mounts has been made")
 		names := make([]string, 0, len(pod.InitContainers))
 		for _, initContainer := range pod.InitContainers {
 			names = append(names, initContainer.Name)
 		}
 		Expect(slices.Index(names, adapterContainerName)).
-			To(BeNumerically(">", slices.Index(names, credentialsContainerName)))
+			To(BeNumerically(">", slices.Index(names, outboxContainerName)))
 
 		By("configuring it as the agent, against garam's listener and the agent's gateway")
 		gatewayAddress := agentTypeSherlock.gatewayAddress
@@ -510,13 +528,12 @@ var _ = Describe("Agent workload", func() {
 			adapterAgentSetting:      testGRN,
 			adapterMachineURLSetting: "https://" + testGaramAddress,
 			adapterGatewayURLSetting: "http://" + gatewayAddress,
-			adapterCertFileSetting:   adapterCredentialsMountPath + "/certificate.pem",
-			adapterKeyFileSetting:    adapterCredentialsMountPath + "/key.pem",
-			adapterServerRootSetting: adapterCredentialsMountPath + "/server-root.pem",
+			adapterTokenFileSetting:  adapterCredentialsMountPath + "/token",
+			adapterServerRootSetting: adapterCredentialsMountPath + "/" + garam.ServerRootKey,
 			adapterOutboxDirSetting:  outboxMountPath,
 		}))
 
-		By("mounting the credential and placement token copies read-only, and the agent's outbox, and nothing else")
+		By("mounting the credential and placement token Secrets read-only, and the agent's outbox, and nothing else")
 		Expect(adapter.VolumeMounts).To(ConsistOf(
 			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true},
 			corev1.VolumeMount{Name: placementVolumeName, MountPath: placementMountPath, ReadOnly: true},
@@ -572,7 +589,7 @@ var _ = Describe("Agent workload", func() {
 		_, err := reconcileAgentWithAdapter(name)
 		Expect(err).NotTo(HaveOccurred())
 		pod := statefulSetFor(name).Spec.Template.Spec
-		Expect(pod.InitContainers).To(HaveLen(1))
+		Expect(pod.InitContainers).To(BeEmpty())
 		Expect(environmentOf(containerOf(pod, agentContainerName))).
 			NotTo(HaveKey(agentTypeSherlock.listenAddressVariable))
 
@@ -586,7 +603,7 @@ var _ = Describe("Agent workload", func() {
 			Client: k8sClient, Scheme: k8sClient.Scheme(), CopyImage: testCopyImage, AdapterImage: testAdapterImage,
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(statefulSetFor(withGRN).Spec.Template.Spec.InitContainers).To(HaveLen(1))
+		Expect(statefulSetFor(withGRN).Spec.Template.Spec.InitContainers).To(BeEmpty())
 	})
 
 	It("takes the adapter back out when this operator stops naming an image for it", func() {
@@ -598,15 +615,15 @@ var _ = Describe("Agent workload", func() {
 
 		_, err := reconcileAgentWithAdapter(name)
 		Expect(err).NotTo(HaveOccurred())
-		// The credential's copy, the config writer the reply instruction brings,
-		// the outbox's maker and the adapter.
-		Expect(statefulSetFor(name).Spec.Template.Spec.InitContainers).To(HaveLen(4))
+		// The config writer the reply instruction brings, the outbox's maker and
+		// the adapter.
+		Expect(statefulSetFor(name).Spec.Template.Spec.InitContainers).To(HaveLen(3))
 
 		_, err = reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 		pod := statefulSetFor(name).Spec.Template.Spec
-		Expect(pod.InitContainers).To(HaveLen(1))
-		Expect(pod.InitContainers[0].Name).To(Equal(credentialsContainerName))
+		Expect(pod.InitContainers).To(BeEmpty())
+		Expect(pod.Volumes).NotTo(ContainElement(HaveField("Name", credentialsVolumeName)))
 		Expect(environmentOf(containerOf(pod, agentContainerName))).
 			NotTo(HaveKey(agentTypeSherlock.listenAddressVariable))
 	})
@@ -630,7 +647,7 @@ var _ = Describe("Agent workload", func() {
 			_, err := reconcileAgent(name)
 			Expect(err).NotTo(HaveOccurred())
 		}
-		Expect(statefulSetFor(bare).Spec.Template.Spec.InitContainers).To(HaveLen(1))
+		Expect(statefulSetFor(bare).Spec.Template.Spec.InitContainers).To(BeEmpty())
 		Expect(containerOf(statefulSetFor(bare).Spec.Template.Spec, agentContainerName).Args).
 			NotTo(ContainElement(sherlockEgoFileFlag))
 		Expect(environmentOf(initContainerOf(statefulSetFor(declared).Spec.Template.Spec, configContainerName))).
@@ -642,7 +659,7 @@ var _ = Describe("Agent workload", func() {
 		createAgent(newAgent(written))
 		_, err := reconcileAgentWithAdapter(written)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(statefulSetFor(written).Spec.Template.Spec.InitContainers).To(HaveLen(1))
+		Expect(statefulSetFor(written).Spec.Template.Spec.InitContainers).To(BeEmpty())
 	})
 
 	It("builds a Pod carrying the adapter that a namespace enforcing PodSecurity restricted admits", func() {
@@ -658,7 +675,7 @@ var _ = Describe("Agent workload", func() {
 
 		By("creating the Pod the StatefulSet describes, which carries the adapter and which is admitted")
 		admitted := podOf(statefulSetFor(name), namespace)
-		Expect(admitted.Spec.InitContainers).To(HaveLen(4))
+		Expect(admitted.Spec.InitContainers).To(HaveLen(3))
 		Expect(k8sClient.Create(ctx, admitted)).To(Succeed())
 
 		By("creating the same Pod with the adapter allowed to escalate its privileges, which it refuses")
@@ -894,7 +911,7 @@ var _ = Describe("Agent workload", func() {
 
 		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(statefulSetFor(name).Spec.Template.Spec.InitContainers).To(HaveLen(2))
+		Expect(statefulSetFor(name).Spec.Template.Spec.InitContainers).To(HaveLen(1))
 
 		edited := readAgent(name)
 		edited.Spec.Tools = agentv1alpha1.ToolSet{}
@@ -904,8 +921,7 @@ var _ = Describe("Agent workload", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		pod := statefulSetFor(name).Spec.Template.Spec
-		Expect(pod.InitContainers).To(HaveLen(1))
-		Expect(pod.InitContainers[0].Name).To(Equal(credentialsContainerName))
+		Expect(pod.InitContainers).To(BeEmpty())
 		Expect(environmentOf(containerOf(pod, agentContainerName))).NotTo(HaveKey(agentTypeSherlock.configHomeVariable))
 	})
 
@@ -1237,12 +1253,16 @@ var _ = Describe("Agent workload", func() {
 	It("leaves the root filesystem of every container writable, which restricted does not ask for", func() {
 		name := "writes-its-own-filesystem"
 		createSecret(credentialsSecretName(name))
-		createAgent(newAgent(name))
+		// A declared tool set, so the Pod carries an init container.
+		agent := newAgent(name)
+		agent.Spec.Tools.Pins = map[string]string{testPinnedTool: testToolPin}
+		createAgent(agent)
 
 		_, err := reconcileAgent(name)
 		Expect(err).NotTo(HaveOccurred())
 
 		pod := statefulSetFor(name).Spec.Template.Spec
+		Expect(pod.InitContainers).NotTo(BeEmpty())
 		Expect(pod.InitContainers[0].SecurityContext.ReadOnlyRootFilesystem).To(BeNil())
 		Expect(pod.Containers[0].SecurityContext.ReadOnlyRootFilesystem).To(BeNil())
 	})
@@ -1367,24 +1387,17 @@ func withoutWorkspace(pod corev1.PodSpec) corev1.PodSpec {
 	return stripped
 }
 
-// withoutAdapter returns the Pod spec with the adapter's sidecar, the gateway
-// address it dials, and the instructions file its reply instruction brings
-// removed. What
+// withoutAdapter returns the Pod spec with the adapter's sidecar, the Secrets
+// it mounts, the gateway address it dials, and the instructions file its reply
+// instruction brings removed. What
 // is left is what this operator builds where it names no adapter image for an
 // Agent declaring nothing else, so the two being equal is what says the unset
 // flag adds nothing anywhere else.
 func withoutAdapter(pod corev1.PodSpec) corev1.PodSpec {
 	stripped := withoutToolPins(pod)
-	isPlacement := func(name string) bool { return name == placementVolumeName || name == placementSecretVolumeName }
-	stripped.Volumes = slices.DeleteFunc(stripped.Volumes, func(volume corev1.Volume) bool { return isPlacement(volume.Name) })
-	for i := range stripped.InitContainers {
-		if stripped.InitContainers[i].Name != credentialsContainerName {
-			continue
-		}
-		stripped.InitContainers[i].VolumeMounts = slices.DeleteFunc(stripped.InitContainers[i].VolumeMounts,
-			func(mount corev1.VolumeMount) bool { return isPlacement(mount.Name) })
-		stripped.InitContainers[i].Command = copyCredentialsCommand(agentTypeSherlock, false)
-	}
+	stripped.Volumes = slices.DeleteFunc(stripped.Volumes, func(volume corev1.Volume) bool {
+		return volume.Name == placementVolumeName || volume.Name == credentialsVolumeName
+	})
 	for i := range stripped.Containers {
 		if at := slices.Index(stripped.Containers[i].Args, sherlockInstructionsFlag); at >= 0 {
 			stripped.Containers[i].Args = slices.Delete(stripped.Containers[i].Args, at, at+2)
@@ -1398,7 +1411,7 @@ func withoutAdapter(pod corev1.PodSpec) corev1.PodSpec {
 			func(variable corev1.EnvVar) bool { return variable.Name == agentTypeSherlock.listenAddressVariable })
 	}
 
-	return stripped
+	return absentWhereEmpty(stripped)
 }
 
 // withoutToolPins returns the Pod spec with the config file's volume, the
@@ -1426,7 +1439,21 @@ func withoutToolPins(pod corev1.PodSpec) corev1.PodSpec {
 		}
 	}
 
-	return stripped
+	return absentWhereEmpty(stripped)
+}
+
+// absentWhereEmpty is pod with its volumes and init containers absent where a
+// strip left them empty: a slice emptied is not a slice absent, and it is the
+// absent one a Pod built with none carries.
+func absentWhereEmpty(pod corev1.PodSpec) corev1.PodSpec {
+	if len(pod.Volumes) == 0 {
+		pod.Volumes = nil
+	}
+	if len(pod.InitContainers) == 0 {
+		pod.InitContainers = nil
+	}
+
+	return pod
 }
 
 // retiredToolsVolume and retiredToolsDirVariable are the volume and the

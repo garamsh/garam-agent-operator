@@ -3,24 +3,22 @@ package garam
 import "context"
 
 // Constructor builds the agents garam assigned this operator: the Agent the
-// reconciler acts on, and the Secret its workload mounts the credential from.
+// reconciler acts on, and the Secret its adapter mounts the agent's tokens from.
 //
 // A definition says what an agent is and this operator says how one is built,
 // so what a Constructor needs beyond what the definition declares is its own
 // configuration: the image and the storage size are properties of a cluster
 // garam has never seen.
 type Constructor interface {
-	// HasCredential reports whether the credential an agent's workload mounts
-	// is already placed. garam issues a private key once, so nothing asks for a
-	// certificate it has nowhere to put.
+	// HasCredential reports whether the Secret an agent's adapter mounts its
+	// tokens from is already placed. Construction stops there: the refresher
+	// keeps the tokens in it current.
 	HasCredential(ctx context.Context, agent GRN) (bool, error)
 
 	// Construct creates the Agent a claimed definition declares, records the
-	// epoch garam holds the agent at on it, and places credential where that
-	// Agent's workload reads it. It is the step that makes the credential
-	// obtained: garam keeps no private key and has already moved on, so one this
-	// fails to store is recovered by asking for another certificate and never by
-	// retrying the write.
+	// epoch garam holds the agent at on it, and places token where that Agent's
+	// adapter reads it. A token this fails to store is answered by minting
+	// another on the next pass, never by retrying the write.
 	//
 	// It takes the whole definition rather than the GRN inside it because the
 	// definition now declares something — its tool set — and carries no
@@ -30,7 +28,7 @@ type Constructor interface {
 	// epoch is recorded because a report to garam carries it and nothing else
 	// answers it later: a definition's claim reports whichever assignment
 	// stands, and a claim is not repeatable.
-	Construct(ctx context.Context, definition Definition, epoch int64, credential AgentCredential) error
+	Construct(ctx context.Context, definition Definition, epoch int64, token AgentToken) error
 
 	// CorrectSpec brings the fields construction writes on an agent this
 	// operator already constructed to what they should be, and reports whether

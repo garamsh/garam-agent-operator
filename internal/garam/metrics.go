@@ -14,8 +14,9 @@ import (
 // The runnables a refusal is counted against, which is the value of the
 // runnable label on [refusalsTotal].
 const (
-	runnablePoller   = "poller"
-	runnableReporter = "reporter"
+	runnablePoller    = "poller"
+	runnableReporter  = "reporter"
+	runnableRefresher = "refresher"
 )
 
 var (

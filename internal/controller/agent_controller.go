@@ -30,9 +30,9 @@ type AgentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	// CopyImage is the image the init container runs that copies an agent's
-	// credential out of the volume the kubelet projects it into and into the one
-	// the agent reads. It needs a shell and install, and nothing of the agent.
+	// CopyImage is the image the init containers run that write an agent's
+	// config file and make its outbox, and a memory move's copy runs. It needs a
+	// shell and install, and nothing of the agent.
 	CopyImage string
 
 	// WorkspaceImage is the image the agent's workspace container runs: the
@@ -352,10 +352,8 @@ func secretsRequiredBy(agent *agentv1alpha1.Agent) []requiredSecret {
 }
 
 // reconcileRecovery reports whether this operator holds a recovery request for
-// the agent, and why its recovered certificate was refused where it was
-// (ADR 0059). The request Secret's metadata is all that is read: the
-// recoverer records a refusal there, and the condition is this controller's
-// alone to write.
+// the agent (ADR 0057, ADR 0073). Whether the request Secret exists is all that
+// is read, and the condition is this controller's alone to write.
 func (r *AgentReconciler) reconcileRecovery(ctx context.Context, agent *agentv1alpha1.Agent) error {
 	identity := agent.Spec.Identity
 	if identity == nil || identity.Source != agentv1alpha1.DesiredSourceControl {
@@ -365,17 +363,17 @@ func (r *AgentReconciler) reconcileRecovery(ctx context.Context, agent *agentv1a
 
 		return nil
 	}
-	persisted, refusedAs := false, ""
+	persisted := false
 	secret := &metav1.PartialObjectMetadata{}
 	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
 	err := r.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: agentname.RecoveryRequestSecret(identity.GRN)}, secret)
 	switch {
 	case err == nil:
-		persisted, refusedAs = true, secret.GetAnnotations()[agentname.RecoveryRefusedAnnotation]
+		persisted = true
 	case !apierrors.IsNotFound(err):
 		return fmt.Errorf("read the recovery request of the agent: %w", err)
 	}
-	setRecovery(agent, persisted, refusedAs)
+	setRecovery(agent, persisted)
 
 	return nil
 }

@@ -13,10 +13,10 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
-// Garam calls recoverAgentCredential and deactivateAgent under execution-fence.v1
-// (garam@59fe68d api/machine.yaml). Both are safe to send again: a recovery's same requestId, body
-// and handoff reference answers the certificate it issued, and a deactivation of an activation
-// that already ended is answered the same.
+// Garam calls recoverAgentCredential and deactivateAgent under execution-fence.v2
+// (garam@afde8b8 api/machine.yaml). Both are safe to send again: a recovery's same requestId, body
+// and handoff reference answers the lineage it started, and a deactivation of an activation that
+// already ended is answered the same.
 type Garam struct {
 	machine *garammachine.Client
 }
@@ -29,8 +29,8 @@ func NewGaram(machine *garammachine.Client) *Garam {
 }
 
 // Recover sends body as it is, with the handoff in the Garam-Operation header. The handoff is
-// never logged. It stays on the certificate contract until #355 moves agents' credentials, so
-// garam refuses it beside this service's token.
+// never logged. garam signs nothing and answers the agent's new lineage, in which every token
+// minted before it is refused.
 func (g *Garam) Recover(ctx context.Context, agent string, handoff console.Authority, body []byte) (definition.RecoveredCredential, error) {
 	answer, err := g.send(ctx, garammachine.Call{
 		Method: http.MethodPost, Contract: garammachine.ExecutionFence,
@@ -44,28 +44,23 @@ func (g *Garam) Recover(ctx context.Context, agent string, handoff console.Autho
 		return definition.RecoveredCredential{}, refusal("recovery", answer)
 	}
 	var out struct {
-		GRN            string `json:"grn"`
-		Lineage        string `json:"lineage"`
-		CertificatePEM string `json:"certificatePem"`
-		IssuerPEM      string `json:"issuerPem"`
-		ServerRootPEM  string `json:"serverRootPem"`
+		GRN     string `json:"grn"`
+		Lineage string `json:"lineage"`
 	}
 	if err := json.Unmarshal(answer.Body, &out); err != nil {
 		return definition.RecoveredCredential{}, fmt.Errorf("decode the recovery: %v", err)
 	}
-	if out.GRN != agent || out.Lineage == "" || out.CertificatePEM == "" {
+	if out.GRN != agent || out.Lineage == "" {
 		return definition.RecoveredCredential{}, fmt.Errorf("garam answered the recovery of %s for %q, lineage %q",
 			agent, out.GRN, out.Lineage)
 	}
-	return definition.RecoveredCredential{
-		Lineage: out.Lineage, CertificatePEM: out.CertificatePEM, IssuerPEM: out.IssuerPEM, ServerRootPEM: out.ServerRootPEM,
-	}, nil
+	return definition.RecoveredCredential{Lineage: out.Lineage}, nil
 }
 
 // Deactivate asks garam to end the activation, if it is still the current one.
 func (g *Garam) Deactivate(ctx context.Context, agent, activationID string) error {
 	answer, err := g.send(ctx, garammachine.Call{
-		Method: http.MethodPost, Contract: garammachine.ExecutionFenceToken,
+		Method: http.MethodPost, Contract: garammachine.ExecutionFence,
 		Path: "/agents/" + url.PathEscape(agent) + "/activations/" + url.PathEscape(activationID) + "/deactivation",
 	})
 	if err != nil {

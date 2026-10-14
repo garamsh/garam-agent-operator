@@ -62,8 +62,11 @@ spec:
               credentialsSecretName:
                 description: |-
                   credentialsSecretName is the name of a Secret in the Agent's namespace
-                  holding the agent's credential material. The Secret is created outside this
-                  operator, and its keys are mounted into the agent as files.
+                  holding the agent's credential material: the garam tokens its adapter reads
+                  and the garam server root. This operator writes it for an Agent it builds.
+                  Its keys are mounted as files: the tokens into garam's adapter alone, and
+                  the server root into the agent where it verifies garam's message signing
+                  keys.
                 minLength: 1
                 type: string
               ego:
@@ -121,9 +124,9 @@ spec:
                   Pod is pulled at every start rather than read from a node's cache. An image
                   no registry serves cannot be run here for the same reason, however it
                   reached the node. It must run as uid 65532, which is the user every
-                  container of the agent's Pod is given: the agent's credential is delivered
-                  as a file that user owns, and the process that reads it is refused a file
-                  owned by anyone else. It must also need no Linux capability, no privilege
+                  container of the agent's Pod is given: the config file the agent is given
+                  is written by that user at a mode only its owner can read, so a process
+                  running as any other cannot read it. It must also need no Linux capability, no privilege
                   it did not start with, and nothing the runtime's default seccomp profile
                   blocks, because the Pod this operator builds is one PodSecurity restricted
                   admits and grants none of the three.
@@ -545,7 +548,7 @@ spec:
                   assignment is currently on, so a report this operator sends carries this
                   value and is refused once the agent has been assigned again.
 
-                  It is recorded where garam's certificate route proved it and is never
+                  It is recorded where garam's mint proved it and is never
                   refreshed afterwards. A value re-read later would be whatever epoch the
                   assignment stands at, which is current whoever holds the agent by then, and
                   a report carrying it could never be found stale.

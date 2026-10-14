@@ -28,12 +28,12 @@ const (
 var (
 	legacySettings = []string{
 		adapterAgentSetting, adapterMachineURLSetting, adapterGatewayURLSetting,
-		adapterCertFileSetting, adapterKeyFileSetting, adapterServerRootSetting, adapterOutboxDirSetting,
+		adapterTokenFileSetting, adapterServerRootSetting, adapterOutboxDirSetting,
 	}
 	fencedSettings = []string{
 		adapterAgentSetting, adapterMachineURLSetting, adapterGatewayURLSetting,
-		adapterCertFileSetting, adapterKeyFileSetting, adapterServerRootSetting,
-		adapterControlURLSetting, adapterControlRootSetting, adapterPlacementTokenSetting,
+		adapterTokenFileSetting, adapterServerRootSetting,
+		adapterControlURLSetting, adapterControlRootSetting, adapterControlTokenSetting, adapterPlacementTokenSetting,
 		adapterOutboxDirSetting,
 	}
 )
@@ -90,7 +90,7 @@ var _ = Describe("Adapter control settings", func() {
 		Expect(settingNames(initContainerOf(pod, adapterContainerName))).To(ConsistOf(legacySettings))
 		Expect(pod.Volumes).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
 
-		By("a Control-source agent's adapter, all ten settings")
+		By("a Control-source agent's adapter, all ten settings, in the token mode")
 		on := "adapter-control-on"
 		agentFrom(on, agentv1alpha1.DesiredSourceControl)
 		_, err = reconcileAgentWithControl(on)
@@ -101,7 +101,13 @@ var _ = Describe("Adapter control settings", func() {
 		settings := environmentOf(adapter)
 		Expect(settings).To(HaveKeyWithValue(adapterControlURLSetting, "https://"+testControlAddress))
 		Expect(settings).To(HaveKeyWithValue(adapterControlRootSetting, "/run/garam/control/root.pem"))
+		Expect(settings).To(HaveKeyWithValue(adapterTokenFileSetting, "/run/garam/credentials/token"))
+		Expect(settings).To(HaveKeyWithValue(adapterControlTokenSetting, "/run/garam/credentials/control-token"))
 		Expect(settings).To(HaveKeyWithValue(adapterPlacementTokenSetting, "/run/garam/placement/token"))
+		// garam refuses a certificate's settings beside the token file
+		// (garam@afde8b8:docs/architecture/adapter.md §Token mode).
+		Expect(settings).NotTo(HaveKey("GARAM_ADAPTER_TLS_CERT_FILE"))
+		Expect(settings).NotTo(HaveKey("GARAM_ADAPTER_TLS_KEY_FILE"))
 		Expect(settings).To(HaveKeyWithValue(adapterOutboxDirSetting, outboxMountPath))
 
 		By("each file the settings name mounted where they name it")
@@ -141,7 +147,8 @@ var _ = Describe("Adapter control settings", func() {
 		By("none of the control settings, no control socket, no gateway agent, and no control root")
 		Expect(settingNames(adapter)).To(ConsistOf(legacySettings))
 		Expect(settingNames(adapter)).NotTo(ContainElements(adapterControlURLSetting, adapterControlRootSetting,
-			adapterPlacementTokenSetting, "GARAM_ADAPTER_CONTROL_SOCKET", "GARAM_ADAPTER_GATEWAY_AGENT"))
+			adapterControlTokenSetting, adapterPlacementTokenSetting, "GARAM_ADAPTER_CONTROL_SOCKET",
+			"GARAM_ADAPTER_GATEWAY_AGENT"))
 		Expect(adapter.VolumeMounts).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
 		Expect(pod.Volumes).NotTo(ContainElement(HaveField("Name", controlRootVolumeName)))
 	})

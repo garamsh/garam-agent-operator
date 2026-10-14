@@ -43,7 +43,7 @@ func TestObservationsReadTheEpochAndTheReadinessOffTheAgentTheyAreOn(t *testing.
 	c := newClient(scheme)
 	building := newConstructor(t, scheme, c)
 
-	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleToken)).To(Succeed())
 	setAvailable(t, c, constructor.Name(sampleAgent), metav1.ConditionTrue)
 
 	observations, err := building.Observations(context.Background())
@@ -60,8 +60,8 @@ func TestObservationsReadNoReadyReplicaAsNoReplicaAndAnUnreadWorkloadAsUnobserve
 	c := newClient(scheme)
 	building := newConstructor(t, scheme, c)
 
-	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
-	g.Expect(building.Construct(context.Background(), definitionOf(otherAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleToken)).To(Succeed())
+	g.Expect(building.Construct(context.Background(), definitionOf(otherAgent), sampleEpoch, sampleToken)).To(Succeed())
 	setAvailable(t, c, constructor.Name(sampleAgent), metav1.ConditionFalse)
 	setAvailable(t, c, constructor.Name(otherAgent), metav1.ConditionUnknown)
 
@@ -97,7 +97,7 @@ func TestObservationsLeaveOutAnAgentThisOperatorHoldsNoRecordOf(t *testing.T) {
 
 	// The constructed agent beside it, so that an empty answer cannot be read
 	// as the user's Agent having been left out.
-	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleToken)).To(Succeed())
 	setAvailable(t, c, constructor.Name(sampleAgent), metav1.ConditionTrue)
 
 	observations, err := building.Observations(context.Background())
@@ -143,8 +143,8 @@ func TestObservationsLeaveOutAnAgentCutOverToTheControlService(t *testing.T) {
 	c := newClient(scheme)
 	building := newConstructor(t, scheme, c)
 
-	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
-	g.Expect(building.Construct(context.Background(), definitionOf(otherAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleToken)).To(Succeed())
+	g.Expect(building.Construct(context.Background(), definitionOf(otherAgent), sampleEpoch, sampleToken)).To(Succeed())
 	setAvailable(t, c, constructor.Name(sampleAgent), metav1.ConditionTrue)
 	setAvailable(t, c, constructor.Name(otherAgent), metav1.ConditionTrue)
 	cutOver(t, c, otherAgent)
@@ -163,8 +163,8 @@ func TestHeldByControlReadsTheSourceOffTheAgentsSpec(t *testing.T) {
 	scheme := newScheme(t)
 	c := newClient(scheme)
 	building := newConstructor(t, scheme, c)
-	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
-	g.Expect(building.Construct(context.Background(), definitionOf(otherAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	g.Expect(building.Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleToken)).To(Succeed())
+	g.Expect(building.Construct(context.Background(), definitionOf(otherAgent), sampleEpoch, sampleToken)).To(Succeed())
 	cutOver(t, c, otherAgent)
 
 	// The control: an Agent the constructor built is garam's.
@@ -185,8 +185,8 @@ func TestCorrectSpecLeavesAnAgentCutOverToTheControlServiceAlone(t *testing.T) {
 	g := NewWithT(t)
 	scheme := newScheme(t)
 	c := newClient(scheme)
-	g.Expect(newConstructor(t, scheme, c).Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleCredential)).To(Succeed())
-	g.Expect(newConstructor(t, scheme, c).Construct(context.Background(), definitionOf(otherAgent), sampleEpoch, sampleCredential)).To(Succeed())
+	g.Expect(newConstructor(t, scheme, c).Construct(context.Background(), definitionOf(sampleAgent), sampleEpoch, sampleToken)).To(Succeed())
+	g.Expect(newConstructor(t, scheme, c).Construct(context.Background(), definitionOf(otherAgent), sampleEpoch, sampleToken)).To(Succeed())
 	cutOver(t, c, otherAgent)
 
 	corrector := newCorrector(t, scheme, c)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -40,7 +41,7 @@ func NewClient(address string, transport http.RoundTripper) *Client {
 // GRN each minted and the claim standing on it where there is one.
 func (c *Client) ListDefinitions(ctx context.Context) ([]Definition, error) {
 	var answered []definitionPayload
-	if err := c.send(ctx, http.MethodGet, "/definitions", nil, &answered); err != nil {
+	if err := c.send(ctx, http.MethodGet, "/definitions", "", nil, &answered); err != nil {
 		return nil, fmt.Errorf("list the definitions garam holds for this operator: %w", err)
 	}
 	definitions := make([]Definition, 0, len(answered))
@@ -55,11 +56,11 @@ func (c *Client) ListDefinitions(ctx context.Context) ([]Definition, error) {
 }
 
 // ClaimDefinition binds this operator to the agent a definition minted, which
-// is what admits it to that agent's certificate route. An agent garam already
+// is what admits it to mint that agent's tokens. An agent garam already
 // holds a claim for answers [ErrClaimConflict], which no retry changes.
 func (c *Client) ClaimDefinition(ctx context.Context, agent GRN) (Assignment, error) {
 	var answered assignmentPayload
-	err := c.send(ctx, http.MethodPost, "/definitions/"+url.PathEscape(string(agent))+"/claim", nil, &answered)
+	err := c.send(ctx, http.MethodPost, "/definitions/"+url.PathEscape(string(agent))+"/claim", "", nil, &answered)
 
 	var refused *refusal
 	if errors.As(err, &refused) && refused.status == http.StatusConflict {
@@ -71,25 +72,28 @@ func (c *Client) ClaimDefinition(ctx context.Context, agent GRN) (Assignment, er
 	return answered.assignment()
 }
 
-// IssueAgentCertificate asks garam for the credential an agent authenticates
-// with. It answers for an agent assigned to this operator at the current epoch,
-// which is what the claim bought.
+// MintAgentToken asks garam for a token of an agent this operator holds at the
+// current epoch, under machine-token.v1 (garam@afde8b8 api/machine.yaml
+// mintAgentToken). audience names the hosted operator the token is minted for,
+// and is empty for a token garam itself accepts. garam mints it in the lineage
+// the agent's execution holds, and a mint voids no earlier token.
 //
-// An agent this operator does not hold answers [ErrAgentNotHeld]. The private
-// key comes back once and garam keeps none, so what this returns is not
-// obtainable again: store it before treating it as obtained.
-func (c *Client) IssueAgentCertificate(ctx context.Context, agent GRN) (AgentCredential, error) {
-	var answered agentCredentialPayload
-	err := c.send(ctx, http.MethodPost, "/agents/"+url.PathEscape(string(agent))+"/certificate", nil, &answered)
+// An agent this operator does not hold at the current epoch answers
+// [ErrAgentNotHeld]. The token is answered once: nothing here logs it or puts
+// it in an error.
+func (c *Client) MintAgentToken(ctx context.Context, agent GRN, audience string) (AgentToken, error) {
+	var answered agentTokenPayload
+	err := c.send(ctx, http.MethodPost, "/agents/"+url.PathEscape(string(agent))+"/tokens", tokenContract,
+		tokenRequest{Audience: audience}, &answered)
 
 	var refused *refusal
 	if errors.As(err, &refused) && refused.status == http.StatusForbidden {
-		return AgentCredential{}, fmt.Errorf("issue a certificate for %s: %w: %w", agent, ErrAgentNotHeld, refused)
+		return AgentToken{}, fmt.Errorf("mint a token for %s: %w: %w", agent, ErrAgentNotHeld, refused)
 	}
 	if err != nil {
-		return AgentCredential{}, fmt.Errorf("issue a certificate for %s: %w", agent, err)
+		return AgentToken{}, fmt.Errorf("mint a token for %s: %w", agent, err)
 	}
-	return answered.agentCredential()
+	return answered.agentToken(agent, audience)
 }
 
 // ReportProvisioningState tells garam what this operator sees of an agent's pod.
@@ -107,11 +111,11 @@ func (c *Client) IssueAgentCertificate(ctx context.Context, agent GRN) (AgentCre
 // rather than evidence that this operator is still there.
 func (c *Client) ReportProvisioningState(ctx context.Context, agent GRN, epoch int64, state ProvisioningState) error {
 	report := provisioningStateReport{Epoch: epoch, State: string(state)}
-	err := c.send(ctx, http.MethodPost, "/agents/"+url.PathEscape(string(agent))+"/provisioning-state", report, nil)
+	err := c.send(ctx, http.MethodPost, "/agents/"+url.PathEscape(string(agent))+"/provisioning-state", "", report, nil)
 
 	// Discriminated the way each refusal allows: by kind where garam answers one
 	// status for two facts, and by status where it answers one fact, as
-	// IssueAgentCertificate does for this same 403.
+	// MintAgentToken does for this same 403.
 	var refused *refusal
 	if errors.As(err, &refused) {
 		switch {
@@ -127,17 +131,31 @@ func (c *Client) ReportProvisioningState(ctx context.Context, agent GRN, epoch i
 	return nil
 }
 
+const (
+	// contractHeader names the contract version a route of garam's speaks.
+	contractHeader = "Garam-Contract-Version"
+	// tokenContract is the contract mintAgentToken speaks (garam@afde8b8).
+	tokenContract = "machine-token.v1"
+)
+
+// agentTokenPattern is an agent token in garam's form, which is also the whole
+// of the file the adapter reads it from (garam@afde8b8 api/machine.yaml
+// AgentToken, docs/architecture/adapter.md §Token mode).
+var agentTokenPattern = regexp.MustCompile(`^garam_at_[0-9a-f]{64}$`)
+
 // kindFailedPrecondition is the kind garam answers a report at a superseded
 // epoch under. garam tells its refusals apart by kind rather than by status
 // (garam@1150b88:internal/wire/error.go:16).
 const kindFailedPrecondition = "failed_precondition"
 
 // send performs one request against the machine listener, carrying body where
-// there is one, and decodes what it answered into out.
+// there is one, and decodes what it answered into out. A route that carries a
+// contract version is sent contract, and its answer is read only under the same
+// one; an empty contract sends none.
 //
 // A nil body sends none and a nil out reads none: a route that records
 // something answers 204 and has nothing to decode.
-func (c *Client) send(ctx context.Context, method, path string, body, out any) error {
+func (c *Client) send(ctx context.Context, method, path, contract string, body, out any) error {
 	var payload io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -154,6 +172,9 @@ func (c *Client) send(ctx context.Context, method, path string, body, out any) e
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	if contract != "" {
+		request.Header.Set(contractHeader, contract)
+	}
 	response, err := c.http.Do(request)
 	if err != nil {
 		return err
@@ -163,6 +184,9 @@ func (c *Client) send(ctx context.Context, method, path string, body, out any) e
 	answered, err := io.ReadAll(response.Body)
 	if err != nil {
 		return err
+	}
+	if got := response.Header.Get(contractHeader); contract != "" && got != contract {
+		return fmt.Errorf("garam answered %d under contract %q, want %q", response.StatusCode, got, contract)
 	}
 	if response.StatusCode >= http.StatusBadRequest {
 		return refusalFrom(response.StatusCode, answered)
@@ -291,28 +315,33 @@ func (p assignmentPayload) assignment() (Assignment, error) {
 	return Assignment{Agent: GRN(p.GRN), Operator: GRN(p.Operator), Epoch: p.Epoch}, nil
 }
 
-// agentCredentialPayload is an agent's certificate as the machine listener
-// answers it.
-type agentCredentialPayload struct {
-	CertificatePEM string    `json:"certificatePem"`
-	PrivateKeyPEM  string    `json:"privateKeyPem"`
-	IssuerPEM      string    `json:"issuerPem"`
-	ServerRootPEM  string    `json:"serverRootPem"`
-	NotAfter       time.Time `json:"notAfter"`
+// tokenRequest is what mintAgentToken is sent: the audience, absent for
+// garam's own.
+type tokenRequest struct {
+	Audience string `json:"audience,omitempty"`
 }
 
-func (p agentCredentialPayload) agentCredential() (AgentCredential, error) {
-	if p.CertificatePEM == "" || p.PrivateKeyPEM == "" || p.IssuerPEM == "" || p.ServerRootPEM == "" {
-		return AgentCredential{}, errors.New("a certificate garam issued an agent is missing one of its four PEMs")
+// agentTokenPayload is an agent token as the machine listener answers it.
+type agentTokenPayload struct {
+	Token         string    `json:"token"`
+	GRN           string    `json:"grn"`
+	Epoch         int64     `json:"epoch"`
+	Audience      string    `json:"audience"`
+	ExpiresAt     time.Time `json:"expiresAt"`
+	ServerRootPEM string    `json:"serverRootPem"`
+}
+
+// agentToken is the token answered for agent and audience, once it is one the
+// adapter can read: anything else is refused, naming no part of the token.
+func (p agentTokenPayload) agentToken(agent GRN, audience string) (AgentToken, error) {
+	switch {
+	case !agentTokenPattern.MatchString(p.Token):
+		return AgentToken{}, fmt.Errorf("a token garam minted for %s is not an agent token", agent)
+	case p.GRN != string(agent) || p.Audience != audience:
+		return AgentToken{}, fmt.Errorf("garam minted a token for %s and audience %q, not %s and %q",
+			p.GRN, p.Audience, agent, audience)
+	case p.Epoch < 1 || p.ExpiresAt.IsZero() || p.ServerRootPEM == "":
+		return AgentToken{}, fmt.Errorf("a token garam minted for %s carries no epoch, expiry or server root", agent)
 	}
-	if p.NotAfter.IsZero() {
-		return AgentCredential{}, errors.New("a certificate garam issued an agent carries no expiry")
-	}
-	return AgentCredential{
-		CertificatePEM: []byte(p.CertificatePEM),
-		KeyPEM:         []byte(p.PrivateKeyPEM),
-		IssuerPEM:      []byte(p.IssuerPEM),
-		ServerRootPEM:  []byte(p.ServerRootPEM),
-		NotAfter:       p.NotAfter,
-	}, nil
+	return AgentToken{Token: p.Token, Epoch: p.Epoch, ExpiresAt: p.ExpiresAt, ServerRootPEM: []byte(p.ServerRootPEM)}, nil
 }

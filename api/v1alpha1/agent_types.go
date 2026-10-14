@@ -34,9 +34,9 @@ type AgentSpec struct {
 	// Pod is pulled at every start rather than read from a node's cache. An image
 	// no registry serves cannot be run here for the same reason, however it
 	// reached the node. It must run as uid 65532, which is the user every
-	// container of the agent's Pod is given: the agent's credential is delivered
-	// as a file that user owns, and the process that reads it is refused a file
-	// owned by anyone else. It must also need no Linux capability, no privilege
+	// container of the agent's Pod is given: the config file the agent is given
+	// is written by that user at a mode only its owner can read, so a process
+	// running as any other cannot read it. It must also need no Linux capability, no privilege
 	// it did not start with, and nothing the runtime's default seccomp profile
 	// blocks, because the Pod this operator builds is one PodSecurity restricted
 	// admits and grants none of the three.
@@ -45,8 +45,11 @@ type AgentSpec struct {
 	Image string `json:"image"`
 
 	// credentialsSecretName is the name of a Secret in the Agent's namespace
-	// holding the agent's credential material. The Secret is created outside this
-	// operator, and its keys are mounted into the agent as files.
+	// holding the agent's credential material: the garam tokens its adapter reads
+	// and the garam server root. This operator writes it for an Agent it builds.
+	// Its keys are mounted as files: the tokens into garam's adapter alone, and
+	// the server root into the agent where it verifies garam's message signing
+	// keys.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	CredentialsSecretName string `json:"credentialsSecretName"`
@@ -344,7 +347,7 @@ type AgentStatus struct {
 	// assignment is currently on, so a report this operator sends carries this
 	// value and is refused once the agent has been assigned again.
 	//
-	// It is recorded where garam's certificate route proved it and is never
+	// It is recorded where garam's mint proved it and is never
 	// refreshed afterwards. A value re-read later would be whatever epoch the
 	// assignment stands at, which is current whoever holds the agent by then, and
 	// a report carrying it could never be found stale.
@@ -522,22 +525,16 @@ const (
 )
 
 // ConditionRecovery is the condition type reporting whether a recovery of the
-// agent's credential is in progress (ADR 0059). True means this operator holds
-// a recovery request for it: the recovered certificate is not placed yet, or
-// was refused, which its reason says.
+// agent's credential is in progress (ADR 0057, ADR 0073). True means this
+// operator holds a recovery request for it, whose new lineage is not recorded
+// yet.
 const ConditionRecovery = "Recovery"
 
 // Reasons for the Recovery condition.
 const (
 	// ReasonRecovering is set while a recovery request is persisted and its
-	// recovered certificate is not placed.
+	// new lineage is not recorded.
 	ReasonRecovering = "Recovering"
-
-	// ReasonRecoveredCertificateUnverified is set when the recovered
-	// certificate does not chain to the issuer kept from the agent's first
-	// certificate, is not signed over the persisted key, or names another
-	// agent. Nothing is placed, and the request is kept.
-	ReasonRecoveredCertificateUnverified = "RecoveredCertificateUnverified"
 
 	// ReasonNotRecovering is set while no recovery request is persisted.
 	ReasonNotRecovering = "NotRecovering"

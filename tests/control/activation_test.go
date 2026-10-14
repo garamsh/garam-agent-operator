@@ -3,7 +3,6 @@
 package control_test
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -15,30 +14,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// executionContract is agent-execution.v1 (garam@e81a1e0, ADR-0084), carried by the agent routes.
-const executionContract = "agent-execution.v1"
+// executionContract is agent-execution.v2 (garam@afde8b8, ADR-0084, ADR-0100), carried by the
+// agent routes.
+const executionContract = "agent-execution.v2"
 
-// placedAgent is a managed agent with its first certificate issued over a key generated here, and
-// a placement registered on its controller under token.
+// placedAgent is a managed agent created through the binary, with a placement registered on its
+// controller under token, and control, the agent's token its controller minted for this service.
 type placedAgent struct {
-	grn, epoch, token string
-	pair              tls.Certificate
+	grn, epoch, token, control string
 }
 
 func placeAgent(t *testing.T) placedAgent {
 	t.Helper()
 	grn, epoch := managedAgent(t)
-	key, csr := certificateRequestPEM(t)
-	status, raw, err := requestCertificate(grn, certificateRequestBody(name(t, "certificate"), epoch, csr))
-	require.NoError(t, err)
-	require.Equal(t, http.StatusCreated, status, string(raw))
-	var issued struct{ CertificatePem string }
-	require.NoError(t, json.Unmarshal(raw, &issued))
-	pair := tls.Certificate{Certificate: [][]byte{parsePEM(t, issued.CertificatePem).Raw}, PrivateKey: key}
-
-	a := placedAgent{grn: grn, epoch: epoch, token: name(t, "placement-token"), pair: pair}
+	a := placedAgent{grn: grn, epoch: epoch, token: name(t, "placement-token"), control: controlToken(t, grn)}
 	mustPlace(t, grn, a.placement(t), http.StatusCreated)
 	return a
+}
+
+// controlToken is a token of agent its controller minted for this service, as the manager keeps
+// one in the file its adapter reads.
+func controlToken(t *testing.T, agent string) string {
+	t.Helper()
+	token, err := real.mintAgentToken(agent, real.hosted)
+	require.NoError(t, err)
+	return token
 }
 
 // placement is the body a's controller registers its placement with.
@@ -55,15 +55,6 @@ func (a placedAgent) placement(t *testing.T) string {
 	return string(body)
 }
 
-// adapterClient is the agent's adapter's client of control: it presents pair and verifies control's
-// serving certificate.
-func adapterClient(pair tls.Certificate) *http.Client {
-	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		RootCAs:      apiClient.Transport.(*http.Transport).TLSClientConfig.RootCAs,
-		Certificates: []tls.Certificate{pair},
-	}}}
-}
-
 // agentAnswer is one of the agent routes' answers.
 type agentAnswer struct {
 	status   int
@@ -72,22 +63,24 @@ type agentAnswer struct {
 	raw      string
 }
 
-// postAgent sends body to the agent's route, as its adapter does.
-func postAgent(t *testing.T, a placedAgent, pair tls.Certificate, route, body string) agentAnswer {
+// postAgent sends body to the agent's route under control, as its adapter does.
+func postAgent(t *testing.T, a placedAgent, control, route, body string) agentAnswer {
 	t.Helper()
-	return postAgentAt(t, attachedURL, a, pair, route, body)
+	return postAgentAt(t, attachedURL, a, control, route, body)
 }
 
-// postAgentAt is postAgent to the binary whose routes are at base.
-func postAgentAt(t *testing.T, base string, a placedAgent, pair tls.Certificate, route, body string) agentAnswer {
+// postAgentAt is postAgent to the binary whose routes are at base. The adapter presents its token
+// in Authorization and, on an activation, the placement token in Garam-Placement, over server TLS.
+func postAgentAt(t *testing.T, base string, a placedAgent, control, route, body string) agentAnswer {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, base+"/v1/agents/"+a.grn+"/"+route, strings.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Garam-Contract-Version", executionContract)
+	req.Header.Set("Authorization", "Garam-Token "+control)
 	if route == "activations" {
-		req.Header.Set("Authorization", "Garam-Placement "+a.token)
+		req.Header.Set("Garam-Placement", a.token)
 	}
-	resp, err := adapterClient(pair).Do(req)
+	resp, err := apiClient.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
@@ -132,38 +125,13 @@ func statusOf(activation, grn, epoch, generation string) string {
 	return string(b)
 }
 
-// renew has garam renew the agent's certificate over the connection its current one authenticates,
-// presenting its execution token, as the agent renews its own (issueAgentCertificate).
-func renew(t *testing.T, a placedAgent, pair tls.Certificate, executionToken string) tls.Certificate {
-	t.Helper()
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		RootCAs:      real.machine.Transport.(*http.Transport).TLSClientConfig.RootCAs,
-		Certificates: []tls.Certificate{pair},
-	}}}
-	req, err := http.NewRequest(http.MethodPost, real.machineURL+"/agents/"+a.grn+"/certificate", nil)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Garam-Execution "+executionToken)
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusCreated, resp.StatusCode, string(raw))
-	var renewed struct{ CertificatePem, PrivateKeyPem string }
-	require.NoError(t, json.Unmarshal(raw, &renewed))
-	out, err := tls.X509KeyPair([]byte(renewed.CertificatePem), []byte(renewed.PrivateKeyPem))
-	require.NoError(t, err)
-	return out
-}
-
 func TestActivation_AgainstGaramsExecutionFence(t *testing.T) {
-	t.Skip(until355Activation)
 	a := placeAgent(t)
 	generation := strings.Repeat("a", 32)
 	body := activationOf(name(t, "activation"), a.epoch, generation)
 
 	// The first activation, under the creation's reference.
-	first := postAgent(t, a, a.pair, "activations", body)
+	first := postAgent(t, a, a.control, "activations", body)
 	require.Equal(t, http.StatusCreated, first.status, first.raw)
 	assert.Equal(t, executionContract, first.contract)
 	activation, _ := first.body["activationId"].(string)
@@ -173,7 +141,7 @@ func TestActivation_AgainstGaramsExecutionFence(t *testing.T) {
 	assert.Equal(t, "1", first.body["configRevision"])
 
 	// An identical retry: the same activation, a newer token.
-	retry := postAgent(t, a, a.pair, "activations", body)
+	retry := postAgent(t, a, a.control, "activations", body)
 	require.Equal(t, http.StatusOK, retry.status, retry.raw)
 	assert.Equal(t, activation, retry.body["activationId"])
 	assert.Equal(t, float64(2), retry.body["tokenVersion"])
@@ -187,87 +155,94 @@ func TestActivation_AgainstGaramsExecutionFence(t *testing.T) {
 	require.Equal(t, 1, count(t, "SELECT count(*) FROM agent_status WHERE agent = $1 AND applied_revision IS NULL", a.grn))
 
 	// Runtime status: accepted for the activated generation only.
-	accepted := postAgent(t, a, a.pair, "runtime-status", statusOf(activation, a.grn, a.epoch, generation))
+	accepted := postAgent(t, a, a.control, "runtime-status", statusOf(activation, a.grn, a.epoch, generation))
 	assert.Equal(t, http.StatusNoContent, accepted.status, accepted.raw)
 	assert.Equal(t, executionContract, accepted.contract)
-	other := postAgent(t, a, a.pair, "runtime-status", statusOf(activation, a.grn, a.epoch, strings.Repeat("b", 32)))
+	other := postAgent(t, a, a.control, "runtime-status", statusOf(activation, a.grn, a.epoch, strings.Repeat("b", 32)))
 	assert.Equal(t, http.StatusConflict, other.status, other.raw)
 	assert.Equal(t, "generation_not_current", other.body["kind"])
 	assert.Equal(t, 1, count(t, "SELECT count(*) FROM agent_status WHERE agent = $1 AND applied_revision = 1", a.grn))
 
-	// Renewal: the agent renews under its execution token, and the same request under the renewed
-	// leaf remints the same activation.
-	renewed := renew(t, a, a.pair, retry.body["token"].(string))
-	again := postAgent(t, a, renewed, "activations", body)
+	// Refresh: the controller mints the agent's next token, and the same request under it remints
+	// the same activation.
+	refreshed := controlToken(t, a.grn)
+	again := postAgent(t, a, refreshed, "activations", body)
 	require.Equal(t, http.StatusOK, again.status, again.raw)
 	assert.Equal(t, activation, again.body["activationId"])
 	assert.Equal(t, float64(3), again.body["tokenVersion"])
 
+	// A token minted for garam, forwarded to this service, is not the agent's token for it.
+	garamToken, err := real.mintAgentToken(a.grn, "")
+	require.NoError(t, err)
+	forwarded := postAgent(t, a, garamToken, "activations", body)
+	assert.Equal(t, http.StatusForbidden, forwarded.status, forwarded.raw)
+	assert.Equal(t, "credential_fenced", forwarded.body["kind"])
+
 	// An ended activation: garam ends it, and its replay is refused.
-	require.NoError(t, real.machineCall(real.hostedTLS, "/agents/"+a.grn+"/activations/"+activation+"/deactivation",
-		"execution-fence.v1", nil, http.StatusOK, nil))
-	ended := postAgent(t, a, renewed, "activations", body)
+	require.NoError(t, real.machineCall(real.hostedMachine, "/agents/"+a.grn+"/activations/"+activation+"/deactivation",
+		fenceContract, nil, http.StatusOK, nil))
+	ended := postAgent(t, a, refreshed, "activations", body)
 	assert.Equal(t, http.StatusConflict, ended.status, ended.raw)
 	assert.Equal(t, "activation_superseded", ended.body["kind"])
 	assert.Equal(t, 1, count(t, "SELECT count(*) FROM activation_requests WHERE agent = $1", a.grn),
 		"a retry stored a second activation request")
 }
 
-// recover replaces the agent's credential lineage as an administrator's handoff lets the hosted
-// operator (recoverAgentCredential), over a key generated here, and returns the recovered pair.
-func recoverCredential(t *testing.T, a placedAgent) tls.Certificate {
+// recoverCredential replaces the agent's lineage as an administrator's handoff lets the hosted
+// operator (recoverAgentCredential under execution-fence.v2), and returns a control token the
+// controller minted in the new lineage.
+func recoverCredential(t *testing.T, a placedAgent) string {
 	t.Helper()
-	key, csr := certificateRequestPEM(t)
 	requestID := name(t, "recovery")
 	body, err := json.Marshal(struct {
-		RequestID             string `json:"requestId"`
-		Epoch                 string `json:"epoch"`
-		CertificateRequestPEM string `json:"certificateRequestPem"`
-	}{requestID, a.epoch, csr})
+		RequestID string `json:"requestId"`
+		Epoch     string `json:"epoch"`
+	}{requestID, a.epoch})
 	require.NoError(t, err)
 	authority, _, err := real.mintAuthority("agent:recover", a.grn, requestID, sha(string(body)))
 	require.NoError(t, err)
-	target := real.machineURL + "/agents/" + a.grn + "/credential-recovery"
-	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(string(body)))
+	req, err := http.NewRequest(http.MethodPost, real.machineURL+"/agents/"+a.grn+"/credential-recovery",
+		strings.NewReader(string(body)))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Garam-Contract-Version", "execution-fence.v1")
-	req.Header.Set("Authorization", "Garam-Operation "+authority)
-	resp, err := real.hostedTLS.Do(req)
+	req.Header.Set("Garam-Contract-Version", fenceContract)
+	req.Header.Set("Garam-Operation", authority)
+	resp, err := real.hostedMachine.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, string(raw))
-	var recovered struct{ CertificatePem string }
+	var recovered struct{ GRN, Lineage string }
 	require.NoError(t, json.Unmarshal(raw, &recovered))
-	return tls.Certificate{Certificate: [][]byte{parsePEM(t, recovered.CertificatePem).Raw}, PrivateKey: key}
+	require.Equal(t, a.grn, recovered.GRN)
+	require.NotEmpty(t, recovered.Lineage)
+	return controlToken(t, a.grn)
 }
 
 func TestActivation_RecoveredLineageRefused(t *testing.T) {
-	t.Skip(until355Activation)
 	a := placeAgent(t)
 	generation := strings.Repeat("c", 32)
 	body := activationOf(name(t, "activation"), a.epoch, generation)
-	first := postAgent(t, a, a.pair, "activations", body)
+	first := postAgent(t, a, a.control, "activations", body)
 	require.Equal(t, http.StatusCreated, first.status, first.raw)
 	activation := first.body["activationId"].(string)
 	// The runtime reports revision 1 serving, so a later generation needs no reference.
 	require.Equal(t, http.StatusNoContent,
-		postAgent(t, a, a.pair, "runtime-status", statusOf(activation, a.grn, a.epoch, generation)).status)
+		postAgent(t, a, a.control, "runtime-status", statusOf(activation, a.grn, a.epoch, generation)).status)
 
 	recovered := recoverCredential(t, a)
 
-	// The old lineage's leaf is no longer the agent's credential.
-	old := postAgent(t, a, a.pair, "activations", body)
+	// The old lineage's token is no longer the agent's.
+	old := postAgent(t, a, a.control, "activations", body)
 	assert.Equal(t, http.StatusForbidden, old.status, old.raw)
 	assert.Equal(t, "credential_fenced", old.body["kind"])
-	// The recovery ended the activation, so its replay under the recovered leaf is refused too.
+	// The recovery ended the activation, so its replay under the new lineage's token is refused too.
 	ended := postAgent(t, a, recovered, "activations", body)
 	assert.Equal(t, http.StatusConflict, ended.status, ended.raw)
 	assert.Equal(t, "activation_superseded", ended.body["kind"])
 
-	// Control: the runtime's next generation under the recovered leaf is a new activation.
+	// Control: the runtime's next generation under the new lineage's token is a new activation.
 	nextBody := activationOf(name(t, "activation"), a.epoch, strings.Repeat("d", 32))
 	next := postAgent(t, a, recovered, "activations", nextBody)
 	assert.Equal(t, http.StatusCreated, next.status, next.raw)
@@ -280,14 +255,13 @@ func TestActivation_RecoveredLineageRefused(t *testing.T) {
 // creation's reference, which garam takes for a first activation alone: 403 (#218, #1167).
 // Unserialized, both would read the same anchor and garam would refuse one as superseded.
 func TestActivation_ConcurrentGenerationsAreSerialized(t *testing.T) {
-	t.Skip(until355Activation)
 	a := placeAgent(t)
 	reported := strings.Repeat("e", 32)
-	first := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), a.epoch, reported))
+	first := postAgent(t, a, a.control, "activations", activationOf(name(t, "activation"), a.epoch, reported))
 	require.Equal(t, http.StatusCreated, first.status, first.raw)
 	activation := first.body["activationId"].(string)
 	require.Equal(t, http.StatusNoContent,
-		postAgent(t, a, a.pair, "runtime-status", statusOf(activation, a.grn, a.epoch, reported)).status)
+		postAgent(t, a, a.control, "runtime-status", statusOf(activation, a.grn, a.epoch, reported)).status)
 
 	kinds := make([]string, 2)
 	statuses := make([]int, 2)
@@ -295,7 +269,7 @@ func TestActivation_ConcurrentGenerationsAreSerialized(t *testing.T) {
 	for i, generation := range []string{strings.Repeat("1", 32), strings.Repeat("2", 32)} {
 		body := activationOf(name(t, "activation"), a.epoch, generation)
 		wg.Go(func() {
-			answer := postAgent(t, a, a.pair, "activations", body)
+			answer := postAgent(t, a, a.control, "activations", body)
 			statuses[i] = answer.status
 			kinds[i], _ = answer.body["kind"].(string)
 		})

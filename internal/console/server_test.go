@@ -140,7 +140,7 @@ func newEnv(t *testing.T, consoleOrigins ...string) *env {
 	ctx := context.Background()
 	reg := &registrar{}
 	store := repository.NewMemory()
-	definitions := definition.NewService(store, reg, nil)
+	definitions := definition.NewService(store, reg)
 	p, err := definitions.PublishProfile(ctx, org, "small", runnableSettings())
 	require.NoError(t, err)
 	profile := definition.ProfileRef{Name: p.Name, Version: p.Version}

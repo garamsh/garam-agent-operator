@@ -166,87 +166,120 @@ func TestClientClaimDefinitionReportsAConflictAndNoOtherRefusalAsOne(t *testing.
 	g.Expect(err).NotTo(MatchError(garam.ErrClaimConflict))
 }
 
-// agentCertificateAnswer is the shape garam answers an issued agent
-// certificate in, with all six fields its schema requires
-// (garam@5130ca9:api/machine.yaml:455).
-const agentCertificateAnswer = `{
+// sampleToken is an agent token in garam's form; agentTokenAnswer is the shape
+// garam answers a minted one in (garam@afde8b8 api/machine.yaml AgentToken).
+const (
+	sampleToken      = "garam_at_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	agentTokenAnswer = `{
+	"token": "` + sampleToken + `",
 	"grn": "` + string(sampleAgent) + `",
-	"certificatePem": "a certificate",
-	"privateKeyPem": "a key",
-	"issuerPem": "the authority that signed it",
-	"serverRootPem": "the root garam is verified against",
-	"notAfter": "2026-08-26T15:01:43Z"
+	"epoch": 4,
+	"expiresAt": "2026-10-14T15:01:43Z",
+	"serverRootPem": "the root garam is verified against"
 }`
+)
 
-func TestClientIssueAgentCertificateReadsEveryPartOfTheAnswer(t *testing.T) {
-	g := NewWithT(t)
-	stub := newStubListener(t, func(w http.ResponseWriter, _ *http.Request) {
-		answerJSON(w, http.StatusCreated, agentCertificateAnswer)
-	})
-
-	credential, err := garam.NewClient(stub.address(), trustedBy(t, stub)).
-		IssueAgentCertificate(context.Background(), sampleAgent)
-	g.Expect(err).NotTo(HaveOccurred())
-
-	// The issuer and the server root are two different certificates and the
-	// wrong one cannot reach garam at all, so each is read into the field that
-	// says which it is.
-	g.Expect(credential).To(Equal(garam.AgentCredential{
-		CertificatePEM: []byte("a certificate"),
-		KeyPEM:         []byte("a key"),
-		IssuerPEM:      []byte("the authority that signed it"),
-		ServerRootPEM:  []byte("the root garam is verified against"),
-		NotAfter:       time.Date(2026, 8, 26, 15, 1, 43, 0, time.UTC),
-	}))
-	g.Expect(stub.requests()).To(HaveLen(1))
-	g.Expect(stub.requests()[0].method).To(Equal(http.MethodPost))
-
-	// The agent's route and not /identity/certificate, which renews the
-	// caller's own identity and names no agent.
-	g.Expect(stub.requests()[0].path).To(Equal("/agents/" + string(sampleAgent) + "/certificate"))
+// answerMint answers status and body under machine-token.v1, as mintAgentToken
+// answers every request.
+func answerMint(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Garam-Contract-Version", "machine-token.v1")
+	answerJSON(w, status, body)
 }
 
-func TestClientIssueAgentCertificateReportsAForbiddenAndNoOtherRefusalAsNotHeld(t *testing.T) {
+func TestClientMintAgentTokenReadsEveryPartOfTheAnswer(t *testing.T) {
 	g := NewWithT(t)
-	status := http.StatusForbidden
+	var contract string
+	stub := newStubListener(t, func(w http.ResponseWriter, r *http.Request) {
+		contract = r.Header.Get("Garam-Contract-Version")
+		answerMint(w, http.StatusCreated, agentTokenAnswer)
+	})
+
+	token, err := garam.NewClient(stub.address(), trustedBy(t, stub)).
+		MintAgentToken(context.Background(), sampleAgent, "")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(token).To(Equal(garam.AgentToken{
+		Token:         sampleToken,
+		Epoch:         4,
+		ExpiresAt:     time.Date(2026, 10, 14, 15, 1, 43, 0, time.UTC),
+		ServerRootPEM: []byte("the root garam is verified against"),
+	}))
+	g.Expect(contract).To(Equal("machine-token.v1"))
+	g.Expect(stub.requests()).To(HaveLen(1))
+	g.Expect(stub.requests()[0].method).To(Equal(http.MethodPost))
+	g.Expect(stub.requests()[0].path).To(Equal("/agents/" + string(sampleAgent) + "/tokens"))
+	// No audience asks for the token garam itself accepts.
+	g.Expect(stub.requests()[0].body).To(MatchJSON(`{}`))
+}
+
+func TestClientMintAgentTokenAsksForTheAudienceAndRefusesATokenOfAnother(t *testing.T) {
+	g := NewWithT(t)
+	const control = "grn:acme:default:operator:control"
+	audience := control
 	stub := newStubListener(t, func(w http.ResponseWriter, _ *http.Request) {
-		answerJSON(w, status, `{"kind": "permission_denied", "message": "agent is not assigned to this operator"}`)
+		answerMint(w, http.StatusCreated, strings.Replace(agentTokenAnswer, `"epoch"`, `"audience": "`+audience+`", "epoch"`, 1))
 	})
 	client := garam.NewClient(stub.address(), trustedBy(t, stub))
 
-	_, err := client.IssueAgentCertificate(context.Background(), sampleAgent)
+	_, err := client.MintAgentToken(context.Background(), sampleAgent, control)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(stub.requests()[0].body).To(MatchJSON(`{"audience": "` + control + `"}`))
+
+	// A token minted for another audience is not the one asked for.
+	audience = "grn:acme:default:operator:other"
+	_, err = client.MintAgentToken(context.Background(), sampleAgent, control)
+	g.Expect(err).To(MatchError(ContainSubstring("not " + string(sampleAgent))))
+}
+
+func TestClientMintAgentTokenReportsAForbiddenAndNoOtherRefusalAsNotHeld(t *testing.T) {
+	g := NewWithT(t)
+	status := http.StatusForbidden
+	stub := newStubListener(t, func(w http.ResponseWriter, _ *http.Request) {
+		answerMint(w, status, `{"kind": "permission_denied", "message": "agent is not assigned to this operator"}`)
+	})
+	client := garam.NewClient(stub.address(), trustedBy(t, stub))
+
+	_, err := client.MintAgentToken(context.Background(), sampleAgent, "")
 	g.Expect(err).To(MatchError(garam.ErrAgentNotHeld))
 
 	// A refusal that is not a 403, so that the match above is the status and
 	// not every refusal reading as one.
-	status = http.StatusServiceUnavailable
-	_, err = client.IssueAgentCertificate(context.Background(), sampleAgent)
+	status = http.StatusBadRequest
+	_, err = client.MintAgentToken(context.Background(), sampleAgent, "")
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err).NotTo(MatchError(garam.ErrAgentNotHeld))
 }
 
-func TestClientIssueAgentCertificateRefusesAnIncompleteAnswer(t *testing.T) {
+func TestClientMintAgentTokenRefusesAnAnswerTheAdapterCouldNotRead(t *testing.T) {
 	g := NewWithT(t)
-	answer := agentCertificateAnswer
+	answer, contract := agentTokenAnswer, "machine-token.v1"
 	stub := newStubListener(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Garam-Contract-Version", contract)
 		answerJSON(w, http.StatusCreated, answer)
 	})
 	client := garam.NewClient(stub.address(), trustedBy(t, stub))
 
-	// The whole answer, so that each refusal below is the field taken out of it
+	// The whole answer, so that each refusal below is the part taken out of it
 	// and not the shape of the payload around it.
-	_, err := client.IssueAgentCertificate(context.Background(), sampleAgent)
+	_, err := client.MintAgentToken(context.Background(), sampleAgent, "")
 	g.Expect(err).NotTo(HaveOccurred())
 
-	for _, field := range []string{"certificatePem", "privateKeyPem", "issuerPem", "serverRootPem"} {
-		answer = strings.Replace(agentCertificateAnswer, field, "not"+field, 1)
-		_, err = client.IssueAgentCertificate(context.Background(), sampleAgent)
-		g.Expect(err).To(MatchError(ContainSubstring("four PEMs")), "%s was not required", field)
+	for name, broken := range map[string]string{
+		"a token not in garam's form": strings.Replace(agentTokenAnswer, sampleToken, sampleToken+" ", 1),
+		"another agent's token":       strings.Replace(agentTokenAnswer, string(sampleAgent), "grn:acme:default:agent:other", 1),
+		"no epoch":                    strings.Replace(agentTokenAnswer, `"epoch"`, `"notEpoch"`, 1),
+		"no expiry":                   strings.Replace(agentTokenAnswer, `"expiresAt"`, `"notExpiresAt"`, 1),
+		"no server root":              strings.Replace(agentTokenAnswer, `"serverRootPem"`, `"notServerRootPem"`, 1),
+	} {
+		answer = broken
+		_, err = client.MintAgentToken(context.Background(), sampleAgent, "")
+		g.Expect(err).To(HaveOccurred(), "%s was taken", name)
+		g.Expect(err.Error()).NotTo(ContainSubstring(sampleToken), "%s put the token in an error", name)
 	}
 
-	answer = strings.Replace(agentCertificateAnswer, "notAfter", "notNotAfter", 1)
-	_, err = client.IssueAgentCertificate(context.Background(), sampleAgent)
-	g.Expect(err).To(MatchError(ContainSubstring("no expiry")))
+	// An answer under another contract decides nothing.
+	answer, contract = agentTokenAnswer, "machine-token.v2"
+	_, err = client.MintAgentToken(context.Background(), sampleAgent, "")
+	g.Expect(err).To(MatchError(ContainSubstring("under contract")))
 }
 
 // TestClientListDefinitionsRefusesAClaimAtNoEpoch keeps a claim and the epoch
@@ -315,7 +348,7 @@ func TestClientReportProvisioningStateReportsAStaleEpochAsStale(t *testing.T) {
 }
 
 // TestClientReportProvisioningStateReportsAnAgentItDoesNotHoldAsNotHeld pairs
-// with the certificate route, which garam refuses the same way. An agent
+// with the mint, which garam refuses the same way. An agent
 // assigned elsewhere and one that does not exist answer identically here, so
 // this maps both to the one error that says so.
 func TestClientReportProvisioningStateReportsAnAgentItDoesNotHoldAsNotHeld(t *testing.T) {

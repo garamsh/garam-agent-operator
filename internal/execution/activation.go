@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"strings"
 
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
@@ -18,8 +17,6 @@ import (
 const (
 	// maxRequestBytes bounds a request's body on these routes.
 	maxRequestBytes = 4 << 10
-	// placementScheme is the Authorization scheme the placement token is presented under.
-	placementScheme = "Garam-Placement "
 	// credentialCurrent and generationCurrent are introspectAgentExecution's answers that admit.
 	credentialCurrent = "current"
 	generationCurrent = "current"
@@ -52,9 +49,9 @@ type activationResponse struct {
 }
 
 // activate activates the runtime generation the agent's adapter asks for, on the agent's current
-// placement. Placement, credential and authority are checked on every attempt, and an attempt
-// sends garam the request stored under its identifier, so a retry after a lost answer or a restart
-// is the same activation at a higher token version, never a new one.
+// placement. Placement, token and authority are checked on every attempt, and an attempt sends
+// garam the request stored under its identifier, so a retry after a lost answer or a restart is
+// the same activation at a higher token version, never a new one.
 func (s *server) activate(w http.ResponseWriter, r *http.Request) {
 	agent := r.PathValue("agent")
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
@@ -62,13 +59,13 @@ func (s *server) activate(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, errInvalidRequest)
 		return
 	}
-	leafPEM, err := agentLeaf(r, agent)
+	token, err := agentToken(r)
 	if err != nil {
 		s.respondError(w, err)
 		return
 	}
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), placementScheme)
-	if !ok || token == "" {
+	placementToken := r.Header.Get(placementHeader)
+	if placementToken == "" {
 		s.respondError(w, errUnauthenticated)
 		return
 	}
@@ -77,7 +74,7 @@ func (s *server) activate(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, err)
 		return
 	}
-	placement, err := s.currentPlacement(r.Context(), agent, token, in.Epoch)
+	placement, err := s.currentPlacement(r.Context(), agent, placementToken, in.Epoch)
 	if err != nil {
 		s.respondError(w, err)
 		return
@@ -93,10 +90,10 @@ func (s *server) activate(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if err := s.admit(ctx, agent, leafPEM, in.Epoch, placement); err != nil {
+		if err := s.admit(ctx, agent, token, in.Epoch, placement); err != nil {
 			return err
 		}
-		answer, created, err = s.callActivate(ctx, agent, stored, leafPEM)
+		answer, created, err = s.callActivate(ctx, agent, stored, token)
 		if err != nil {
 			return err
 		}
@@ -136,12 +133,15 @@ func (s *server) currentPlacement(ctx context.Context, agent, token, epoch strin
 	return placement, nil
 }
 
-// admit has garam prove, for this attempt, that the leaf is the agent's current credential on the
-// placement's controller at epoch, and that the controller the placement was registered by is still
-// the agent's. A controller proof control cannot ask for refuses the activation by name, as
-// errControllerUnproven. The generation is not asked: it is the one being activated.
-func (s *server) admit(ctx context.Context, agent string, leafPEM []byte, epoch string, placement definition.Placement) error {
-	execution, err := s.garam.Introspect(ctx, agent, leafPEM, "")
+// admit has garam judge, for this attempt, the token the adapter presented, and requires garam's
+// answer to name the placement's controller as the agent's assignee at epoch. That answer is the
+// controller's proof (ADR 0073): garam answers a token current only while it is inside its dates,
+// minted at the agent's current assignee and epoch and in its current lineage, and only the
+// assignee can mint one, so a current token minted for this service proves the controller that
+// holds the agent. Every field compared is garam's, never the request's. The generation is not
+// asked: it is the one being activated.
+func (s *server) admit(ctx context.Context, agent string, token AgentToken, epoch string, placement definition.Placement) error {
+	execution, err := s.garam.Introspect(ctx, agent, token, "")
 	if err != nil {
 		return refusalOf(err, errNotAuthorized)
 	}
@@ -153,25 +153,15 @@ func (s *server) admit(ctx context.Context, agent string, leafPEM []byte, epoch 
 	case execution.Epoch != epoch:
 		return errEpochSuperseded
 	}
-	proof, err := s.garam.ProveController(ctx, placement.Controller, agent)
-	if errors.Is(err, ErrControllerUnprovable) {
-		return errControllerUnproven
-	}
-	if err != nil {
-		return refusalOf(err, errNotAuthorized)
-	}
-	if proof.Operator != placement.Controller || proof.Agent != agent || proof.Epoch != epoch {
-		return errEpochSuperseded
-	}
 	return nil
 }
 
-// callActivate sends garam the stored request under this attempt's leaf, and checks that garam
+// callActivate sends garam the stored request under this attempt's token, and checks that garam
 // answered the binding it was asked for.
-func (s *server) callActivate(ctx context.Context, agent string, stored definition.Activation, leafPEM []byte) (Activation, bool, error) {
+func (s *server) callActivate(ctx context.Context, agent string, stored definition.Activation, token AgentToken) (Activation, bool, error) {
 	answer, created, err := s.garam.Activate(ctx, agent, ActivationCall{
 		RequestID: stored.Request.RequestID, Epoch: stored.Request.Epoch, Generation: stored.Request.Generation,
-		ReplacesActivationID: stored.ReplacesActivationID, OperationRef: stored.OperationRef, CertificatePEM: leafPEM,
+		ReplacesActivationID: stored.ReplacesActivationID, OperationRef: stored.OperationRef, Token: token,
 	})
 	if err != nil {
 		return Activation{}, false, refusalOf(err, errNotAuthorized)
@@ -192,7 +182,7 @@ func refusalOf(err error, forbidden *refusal) error {
 	case errors.Is(err, ErrNotAuthorized):
 		return forbidden
 	case errors.Is(err, ErrCredentialRefused):
-		return errCredentialFenced
+		return errTokenRefused
 	case errors.Is(err, ErrActivationSuperseded):
 		return errActivationSuperseded
 	}

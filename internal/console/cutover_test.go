@@ -168,7 +168,7 @@ type cutoverEnv struct {
 
 func newCutoverEnv(t *testing.T, values map[string]string) *cutoverEnv {
 	t.Helper()
-	definitions := definition.NewService(repository.NewMemory(), &registrar{}, nil)
+	definitions := definition.NewService(repository.NewMemory(), &registrar{})
 	p, err := definitions.PublishProfile(context.Background(), org, "small", runnableSettings())
 	require.NoError(t, err)
 	e := &cutoverEnv{

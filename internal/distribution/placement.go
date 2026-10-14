@@ -17,6 +17,10 @@ const maxPlacementBytes = 4 << 10
 // sha256Pattern is a SHA-256 digest as the manager writes it: 64 lowercase hex digits.
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// errEpochSuperseded is returned when garam proves the agent placed on the controller under
+// another epoch than the request's, or than its latest revision recorded.
+var errEpochSuperseded = errors.New("the agent's assignment epoch is not the one requested")
+
 // placementRequest is the body of a placement registration. Previous is null for an agent's
 // first placement.
 type placementRequest struct {
