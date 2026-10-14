@@ -56,8 +56,7 @@ func registerPlacementAt(base, agent, body string) (int, []byte, error) {
 }
 
 // placeableAgent is an agent garam created for the controller, whose revision 2 a configure through
-// the binary recorded at its assignment, which is what a placement is registered against. It is not
-// created through the binary's create route, which garam refuses beside a token until #355.
+// the binary recorded at its assignment, which is what a placement is registered against.
 func placeableAgent(t *testing.T) (agent, epoch string) {
 	t.Helper()
 	g := requireGaram(t)

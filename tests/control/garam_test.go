@@ -420,6 +420,20 @@ func createThroughConsole(t *testing.T, authority string, body []byte) (int, map
 	return resp.StatusCode, out
 }
 
+// managedAgent creates an agent through the console's create route, as #244's path does, and
+// returns its GRN and epoch.
+func managedAgent(t *testing.T) (agent, epoch string) {
+	t.Helper()
+	profile := publishProfile(t, real.orgID)
+	requestID := name(t, "create")
+	body := createAgentBody(requestID, real.controllerGRN, publishTemplate(t, real.orgID, profile), profile)
+	authority, err := mintCreate(requestID, body)
+	require.NoError(t, err)
+	status, created := createThroughConsole(t, authority, body)
+	require.Equal(t, http.StatusCreated, status, created)
+	return created["agent"], created["epoch"]
+}
+
 // mintCreate has garam mint an agent:create authority on the controller for the exact body.
 func mintCreate(requestID string, body []byte) (string, error) {
 	digest := sha256.Sum256(body)
@@ -428,7 +442,6 @@ func mintCreate(requestID string, body []byte) (string, error) {
 }
 
 func TestCreate_ThroughTheConsoleRouteAgainstGaram(t *testing.T) {
-	t.Skip(until355Creation)
 	profile := publishProfile(t, real.orgID)
 	template := publishTemplate(t, real.orgID, profile)
 	requestID := name(t, "create")
@@ -490,7 +503,6 @@ func count(t *testing.T, query string, args ...any) int {
 }
 
 func TestCreate_AnotherOrganizationsTemplateOrProfileAnswersNotFound(t *testing.T) {
-	t.Skip(until355Creation)
 	tests := []struct {
 		name string
 		// names publishes the template and profile the request names, one of them only in other,

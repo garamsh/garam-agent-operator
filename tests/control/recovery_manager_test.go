@@ -4,8 +4,6 @@ package control_test
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -21,18 +19,12 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/desired"
 )
 
-// managerStore is the manager's recovery store in memory, holding one agent's first credential
-// as the issuer placed it, and nothing of any other agent.
+// managerStore is the manager's recovery store in memory, for one agent and no other.
 type managerStore struct {
-	mu                  sync.Mutex
-	agent               string
-	issuer              []byte
-	request             *desired.PendingRequest
-	key, certificatePEM []byte
-	written             desired.Certificate
-	lineage, refused    string
-	// unplaced is an agent whose first credential was never placed: no chain is kept.
-	unplaced bool
+	mu      sync.Mutex
+	agent   string
+	request *desired.RecoveryRequest
+	lineage string
 }
 
 func (m *managerStore) Recovering(context.Context) ([]string, error) {
@@ -44,16 +36,16 @@ func (m *managerStore) Recovering(context.Context) ([]string, error) {
 	return []string{m.agent}, nil
 }
 
-func (m *managerStore) LoadRecovery(_ context.Context, agent string) (desired.PendingRequest, bool, error) {
+func (m *managerStore) LoadRecovery(_ context.Context, agent string) (desired.RecoveryRequest, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if agent != m.agent || m.request == nil {
-		return desired.PendingRequest{}, false, nil
+		return desired.RecoveryRequest{}, false, nil
 	}
 	return *m.request, true, nil
 }
 
-func (m *managerStore) SaveRecovery(_ context.Context, agent string, request desired.PendingRequest) error {
+func (m *managerStore) SaveRecovery(_ context.Context, agent string, request desired.RecoveryRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if agent != m.agent {
@@ -65,52 +57,30 @@ func (m *managerStore) SaveRecovery(_ context.Context, agent string, request des
 	return nil
 }
 
-func (m *managerStore) KeptIssuer(_ context.Context, agent string) ([]byte, bool, error) {
-	return m.issuer, agent == m.agent && !m.unplaced, nil
-}
-
-func (m *managerStore) RefuseRecovery(_ context.Context, _, reason string) error {
+func (m *managerStore) Recovered(_ context.Context, _, lineage string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.refused = reason
-	return nil
-}
-
-func (m *managerStore) PlaceRecovered(_ context.Context, _ string, key []byte, certificate desired.Certificate,
-	lineage string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.key, m.certificatePEM, m.written, m.lineage, m.request = key, certificate.CertificatePEM, certificate, lineage, nil
+	m.lineage, m.request = lineage, nil
 	return nil
 }
 
 // state is what the store holds, read under its lock.
-func (m *managerStore) state() (request *desired.PendingRequest, certificatePEM []byte, lineage, refused string) {
+func (m *managerStore) state() (request *desired.RecoveryRequest, lineage string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.request, m.certificatePEM, m.lineage, m.refused
+	return m.request, m.lineage
 }
 
 // TestRecovery_TheManagersHalfAgainstGaram is #300's full path through the built control service
-// and a real garam: the console opens a recovery, the manager's recoverer prepares it over a key it
-// persists first, an administrator finalizes it at garam, and the recoverer places the recovered
-// certificate only once it verifies against the issuer kept from the first certificate. garam
-// then fences the first lineage, and the recovered pair activates the next generation.
+// and a real garam, under execution-fence.v2: the console opens a recovery, the manager's recoverer
+// prepares it from a request it persists first, an administrator finalizes it at garam, and the
+// recoverer records the new lineage. garam then refuses the first lineage's tokens, and a token the
+// controller mints in the new one activates the next generation.
 func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
-	t.Skip(until355Recovery)
-	grn, epoch := managedAgent(t)
-	key, csr := certificateRequestPEM(t)
-	status, raw, err := requestCertificate(grn, certificateRequestBody(name(t, "certificate"), epoch, csr))
-	require.NoError(t, err)
-	require.Equal(t, http.StatusCreated, status, string(raw))
-	var first struct{ CertificatePem, IssuerPem, ServerRootPem string }
-	require.NoError(t, json.Unmarshal(raw, &first))
-	a := placedAgent{grn: grn, epoch: epoch, token: name(t, "placement-token"),
-		pair: tls.Certificate{Certificate: [][]byte{parsePEM(t, first.CertificatePem).Raw}, PrivateKey: key}}
-	mustPlace(t, grn, a.placement(t), http.StatusCreated)
+	a := placeAgent(t)
 	activated(t, a, strings.Repeat("9", 32))
 
-	store := &managerStore{agent: grn, issuer: []byte(first.IssuerPem)}
+	store := &managerStore{agent: a.grn}
 	client := desired.NewClient(strings.TrimPrefix(attachedURL, "https://"), real.feedTransport())
 	recoverer := desired.NewRecoverer(client, store)
 	// The recoverer's log is the test's, so a failure shows what it met.
@@ -132,7 +102,7 @@ func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
 		RequestID         string `json:"requestId"`
 		RecoveryRequestID string `json:"recoveryRequestId"`
 	}{openID, recoveryID})
-	status, opened := sendMinted(t, grn, "/recovery", "agent:recover", openID, open)
+	status, opened := sendMinted(t, a.grn, "/recovery", "agent:recover", openID, open)
 	require.Equal(t, http.StatusCreated, status, opened)
 	answer, err := client.Desired(ctx, "", 0)
 	require.NoError(t, err)
@@ -142,54 +112,37 @@ func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
 			offered[agent.GRN] = *agent.Recovery
 		}
 	}
-	require.Equal(t, desired.OpenRecovery{RequestID: recoveryID, Epoch: epoch}, offered[grn],
+	require.Equal(t, desired.OpenRecovery{RequestID: recoveryID, Epoch: a.epoch}, offered[a.grn],
 		"the manager's client does not read the open recovery off the feed")
 	// Earlier tests leave other agents' recoveries open; this manager holds none of their credentials.
-	recoverer.Offer(map[string]desired.OpenRecovery{grn: offered[grn]})
+	recoverer.Offer(map[string]desired.OpenRecovery{a.grn: offered[a.grn]})
 
 	// The recoverer persists its request and prepares the recovery with it.
-	require.Eventually(t, func() bool { return readRecovery(t, grn)["stage"] == "prepared" }, time.Minute, time.Second,
+	require.Eventually(t, func() bool { return readRecovery(t, a.grn)["stage"] == "prepared" }, time.Minute, time.Second,
 		"the recoverer did not prepare the recovery")
-	persisted, _, _, _ := store.state()
+	persisted, _ := store.state()
 	require.NotNil(t, persisted)
-	prepared := []byte(readRecovery(t, grn)["body"].(string))
-	var sent struct {
-		RequestID             string `json:"requestId"`
-		CertificateRequestPEM string `json:"certificateRequestPem"`
-	}
-	require.NoError(t, json.Unmarshal(prepared, &sent))
-	assert.Equal(t, string(persisted.CSRPEM), sent.CertificateRequestPEM,
+	assert.Equal(t, desired.RecoveryRequest{ID: recoveryID, Epoch: a.epoch}, *persisted)
+	prepared := []byte(readRecovery(t, a.grn)["body"].(string))
+	assert.JSONEq(t, recoveryRequestBody(recoveryID, a.epoch), string(prepared),
 		"control was sent another request than the one persisted")
-	assert.Equal(t, recoveryID, sent.RequestID)
 
 	// An administrator finalizes it at garam under a handoff over the prepared bytes.
-	status, finalized := sendMinted(t, grn, "/recovery/finalize", "agent:recover", recoveryID, prepared)
+	status, finalized := sendMinted(t, a.grn, "/recovery/finalize", "agent:recover", recoveryID, prepared)
 	require.Equal(t, http.StatusCreated, status, finalized)
 
-	// The recoverer places what garam recovered once it verifies against the kept issuer.
-	require.Eventually(t, func() bool { _, placed, _, _ := store.state(); return placed != nil }, time.Minute, time.Second,
-		"the recoverer did not place the recovered credential")
-	request, certificatePEM, lineage, refused := store.state()
-	assert.Empty(t, refused)
-	assert.Nil(t, request, "the request outlived the placed credential")
-	assert.NotEmpty(t, lineage)
-	assert.Equal(t, finalized["certificatePem"], string(certificatePEM))
-	// The chain written is the one garam answered the recovery with (garam@f54b9e8, ADR 0062), which
-	// for this organization's authority is the one its first certificate named.
-	store.mu.Lock()
-	written := store.written
-	store.mu.Unlock()
-	assert.Equal(t, finalized["issuerPem"], string(written.IssuerPEM), "the answered issuer is not what is written")
-	assert.Equal(t, finalized["serverRootPem"], string(written.ServerRootPEM),
-		"the answered server root is not what is written")
-	assert.Equal(t, first.IssuerPem, string(written.IssuerPEM))
-	assert.Equal(t, first.ServerRootPem, string(written.ServerRootPEM))
-	recovered, err := tls.X509KeyPair(certificatePEM, persisted.KeyPEM)
-	require.NoError(t, err, "the placed certificate is not over the persisted key")
+	// The recoverer records the lineage garam started.
+	require.Eventually(t, func() bool { _, lineage := store.state(); return lineage != "" }, time.Minute, time.Second,
+		"the recoverer did not record the recovered lineage")
+	request, lineage := store.state()
+	assert.Nil(t, request, "the request outlived the recorded lineage")
+	assert.Equal(t, finalized["lineage"], lineage)
 
-	// garam fenced the first lineage, and the recovered pair activates the next generation.
-	old := postAgent(t, a, a.pair, "activations", activationOf(name(t, "activation"), epoch, strings.Repeat("a", 32)))
+	// garam refuses the first lineage's token, and a token minted in the new one activates the next
+	// generation.
+	old := postAgent(t, a, a.control, "activations", activationOf(name(t, "activation"), a.epoch, strings.Repeat("a", 32)))
 	assert.Equal(t, http.StatusForbidden, old.status, old.raw)
-	next := postAgent(t, a, recovered, "activations", activationOf(name(t, "activation"), epoch, strings.Repeat("b", 32)))
+	next := postAgent(t, a, controlToken(t, a.grn), "activations",
+		activationOf(name(t, "activation"), a.epoch, strings.Repeat("b", 32)))
 	assert.Equal(t, http.StatusCreated, next.status, next.raw)
 }

@@ -38,18 +38,6 @@ func legacyAgent(t *testing.T) string {
 	return created.GRN
 }
 
-// legacyCertificate is the certificate garam's legacy route issues the agent's operator, as the
-// legacy path placed it before any cutover.
-func legacyCertificate(t *testing.T, agent string) tls.Certificate {
-	t.Helper()
-	var issued struct{ CertificatePem, PrivateKeyPem string }
-	require.NoError(t, real.machineCall(controllerMachine(), "/agents/"+agent+"/certificate", "", nil,
-		http.StatusCreated, &issued))
-	pair, err := tls.X509KeyPair([]byte(issued.CertificatePem), []byte(issued.PrivateKeyPem))
-	require.NoError(t, err)
-	return pair
-}
-
 // stageTarget is garam's machine route a stage's reference binds.
 func stageTarget(agent, stage string) string {
 	target := "/agents/" + url.PathEscape(agent) + "/cutover"
@@ -204,11 +192,11 @@ func TestCutover_ImportFreezeSwitchReleasesALegacyAgentAgainstGaram(t *testing.T
 
 // TestCutover_TheSwitchedRevisionIsActivatedAgainstGaram activates the revision 1 a switch released,
 // under the switch's agent:configure reference: garam takes the legacy agent's first activation once
-// its switch is recorded.
+// its switch is recorded. The controller minted the agent's token for this service while it was
+// legacy, where garam admits the mint as it admitted the certificate route.
 func TestCutover_TheSwitchedRevisionIsActivatedAgainstGaram(t *testing.T) {
-	t.Skip(until355Activation)
 	agent := legacyAgent(t)
-	pair := legacyCertificate(t, agent)
+	control := controlToken(t, agent)
 	status, imported := importLegacy(t, agent, publishProfile(t, real.orgID))
 	require.Equal(t, http.StatusCreated, status, imported)
 	freezeID, switchID := name(t, "freeze"), name(t, "switch")
@@ -220,7 +208,7 @@ func TestCutover_TheSwitchedRevisionIsActivatedAgainstGaram(t *testing.T) {
 	var epoch string
 	const importedEpoch = "SELECT epoch FROM cutover_imports WHERE agent = $1"
 	require.NoError(t, pool.QueryRow(t.Context(), importedEpoch, agent).Scan(&epoch))
-	placed := placedAgent{grn: agent, epoch: epoch, token: name(t, "placement-token"), pair: pair}
+	placed := placedAgent{grn: agent, epoch: epoch, token: name(t, "placement-token"), control: control}
 	mustPlace(t, agent, string(requestBody(t, struct {
 		Epoch       string  `json:"epoch"`
 		PodUID      string  `json:"podUid"`
@@ -229,7 +217,7 @@ func TestCutover_TheSwitchedRevisionIsActivatedAgainstGaram(t *testing.T) {
 		Previous    *string `json:"previous"`
 	}{epoch, "pod-1", "pvc-1", sha(placed.token), nil})), http.StatusCreated)
 	activation := activationOf(name(t, "activation"), epoch, strings.Repeat("f", 32))
-	activated := postAgent(t, placed, pair, "activations", activation)
+	activated := postAgent(t, placed, control, "activations", activation)
 	require.Equal(t, http.StatusCreated, activated.status, activated.raw)
 }
 

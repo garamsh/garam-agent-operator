@@ -19,10 +19,10 @@ import (
 // which the suite cannot run, but a stand-in built from test/e2e/agent-image:
 // its entrypoint accepts the command line this operator gives sherlock and
 // refuses one carrying no agent ID, as sherlock does, and then stays up. It
-// keeps a shell that can read the mounted credentials, and runs as the
+// keeps a shell the specs read the container through, and runs as the
 // non-root user the Pod names. That last part is not a detail: an image that
-// keeps root reads a root-owned credential file whatever mode it carries, which
-// is how #31 stayed invisible through every layer.
+// keeps root reads a root-owned file whatever mode it carries, which is how #31
+// stayed invisible through every layer.
 //
 // It is served from a registry on the node's loopback interface because the
 // operator pulls every container of an agent's Pod at every start: an image
