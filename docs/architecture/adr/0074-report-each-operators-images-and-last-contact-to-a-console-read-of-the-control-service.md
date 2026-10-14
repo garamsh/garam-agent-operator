@@ -21,7 +21,8 @@ What this service already holds:
 1. **The control service records each controller's last contact when garam proves the controller's session.**
    - **Where.** On every controller route, once the session proof succeeds and before the store is read for the request.
    - **What.** The controller's GRN, the organization the proof names, and the time.
-   - **Coalesced.** A contact within one minute of the last one this process wrote for that controller is not written. The feed's long poll brings a controller back at least every 30 seconds, so a write per request would be one every few seconds per controller. A person reads "last contact" in minutes, so one minute is what the console can show. Each instance of the service coalesces on its own. A write that fails is forgotten, so the next request writes again.
+   - **Coalesced.** A contact within one minute of the last one this process wrote for that controller is not written. The feed's long poll brings a controller back at least every 30 seconds, so a write per request would be one every few seconds per controller. A person reads "last contact" in minutes, so one minute is what the console can show. Each instance of the service coalesces on its own.
+   - **A failed write fails nothing else.** The contact is bookkeeping for the console, and the request it rides on is how a controller receives desired state. A write that fails is logged once, with the controller's GRN and never its token, and the request proceeds. The failed write is forgotten, so the next request writes again.
    - **Never lowered.** A stored contact is never replaced by an earlier one.
 2. **A controller reports the images it runs at `PUT /v1/operators/self/images`.**
    - **Body.** `{images: [{name, ref, digest?}]}`. Each `ref` is the reference the controller was configured with. `digest` is `sha256:` and 64 hex digits, and is given only where the controller knows one.
@@ -31,6 +32,7 @@ What this service already holds:
    - **Configured images.** It reports each of the four image flags that is set, under `agent`, `adapter`, `copy` and `workspace`. A digest is taken only from an `@sha256:` reference.
    - **Its own image.** It reads its own Pod, named by `POD_NAME` from the downward API, through the API server. The `manager` container's spec image is the reference, reported as `manager`. Its status `imageID` gives the digest where that ends in a sha256 digest. Where `POD_NAME` is unset, or the read fails, the report goes without the manager's entry, and that is logged once. No value is made up.
    - **Retries.** A 5xx or no answer is sent again after a wait doubling from 1 to 30 seconds, and a 4xx after 5 minutes.
+   - **Nothing to report.** Where no image flag is set and its own image cannot be read, it sends nothing, logs that once, and stops: the service refuses a report naming no image, so asking again would never end.
 4. **The console reads them at `GET /v1/orgs/{org}/operators` under `operator:read`, targeting the organization.**
    - **Answer.** Every controller of the organization that reached this service, by GRN, in the agreed shape.
    - **Never reported.** A controller that never reported has `images: []` and no `reportedAt`.
@@ -42,7 +44,7 @@ What this service already holds:
 - **Only controllers that reached this service are listed.** An operator garam holds but that never contacted this service is absent, not listed with an empty entry. The console joins on `grn` against the operators garam lists, so an absent entry reads as never contacted.
 - **A manager whose images change reports again only when it restarts.** Every image source is a flag or its own Pod spec, and either changes only through a new Pod.
 - **`lastContactAt` lags the true last request by up to a minute,** per instance of the service.
-- **A database a development build before ADR 0069 migrated to version 2 is not refused.** ADR 0069 has such a database recreated empty, and refused it as newer than migration 1. This binary takes version 2 as its own, so that database starts without `operators`, and every request that records a contact fails until it is recreated.
+- **A database a development build before ADR 0069 migrated to version 2 is not refused.** ADR 0069 has such a database recreated empty, and refused it as newer than migration 1. This binary takes version 2 as its own, so that database starts without `operators`. Controllers are still served, every contact write fails and is logged, and the console's read fails until the database is recreated.
 - **The manager needs `POD_NAME`.** It is set in `config/manager/manager.yaml`. The manager already holds `get` on Pods.
 
 ## Rejected alternatives
