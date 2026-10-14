@@ -25,7 +25,7 @@ const migrationsTable = "schema_migrations"
 // schemaTables are the tables migration 1 creates.
 var schemaTables = []string{
 	"activation_requests", "agent_activations", "agent_status", "creations", "cutover_imports", "definitions",
-	"initial_certificates", "placements", "positions", "profiles", "publications", "recoveries", "requests",
+	"placements", "positions", "profiles", "publications", "recoveries", "requests",
 	"stops", "templates",
 }
 
