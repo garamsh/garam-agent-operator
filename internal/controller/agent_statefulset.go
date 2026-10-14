@@ -307,10 +307,10 @@ func (r *AgentReconciler) credentialLineage(ctx context.Context, agent *agentv1a
 	return secret.GetAnnotations()[agentname.CredentialLineageAnnotation], nil
 }
 
-// applyLineage carries a recovered credential's lineage on the Pod template, so
-// a credential garam recovered moves the Pod, which copies its credential once,
-// at start (ADR 0010). A credential never recovered carries none and changes
-// nothing in the template.
+// applyLineage carries a recovered lineage on the Pod template, so a recovery
+// moves the Pod to a new placement, whose generation garam activates under the
+// new lineage's token (ADR 0073). An agent never recovered carries none and
+// changes nothing in the template.
 func applyLineage(statefulSet *appsv1.StatefulSet, lineage string) {
 	if lineage == "" {
 		delete(statefulSet.Spec.Template.Annotations, agentname.CredentialLineageAnnotation)
@@ -739,9 +739,8 @@ func (r *AgentReconciler) instructionsFor(agent *agentv1alpha1.Agent, descriptor
 // a name to invent and a permission to hold for a value that is not secret,
 // while the file still had to be copied to be readable at all.
 //
-// It takes no memory-backed volume, which is where this parts from the
-// credential ADR 0010 delivers: that volume answers a rule about key material,
-// and a pin set is public. The mode is not.
+// It takes no memory-backed volume, because a pin set is public. The mode is
+// not.
 func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
 	container *corev1.Container, descriptor agentTypeDescriptor, controlRoot []byte) error {
 	initContainers := &statefulSet.Spec.Template.Spec.InitContainers

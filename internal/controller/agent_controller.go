@@ -30,9 +30,9 @@ type AgentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	// CopyImage is the image the init container runs that copies an agent's
-	// credential out of the volume the kubelet projects it into and into the one
-	// the agent reads. It needs a shell and install, and nothing of the agent.
+	// CopyImage is the image the init containers run that write an agent's
+	// config file and make its outbox, and a memory move's copy runs. It needs a
+	// shell and install, and nothing of the agent.
 	CopyImage string
 
 	// WorkspaceImage is the image the agent's workspace container runs: the

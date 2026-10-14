@@ -135,11 +135,10 @@ func main() {
 			"as a Kubernetes quantity. It is a volume of its own, apart from the agent's state. Unset claims it "+
 			"at agent-storage-size.")
 	flag.StringVar(&agentCopyImage, "agent-copy-image", "",
-		"The image the init container of every agent's Pod runs to copy that agent's credential into the "+
-			"volume the agent reads it from, and the image a memory move's copy and verification Jobs run. "+
-			"It needs a shell, install, cp, sha256sum, flock, stat and find, and nothing of the agent. Name it "+
-			"by digest, so every node runs one build. It has no default and is always required: an agent "+
-			"whose credential arrives any other way is one its reader refuses.")
+		"The image the init containers of an agent's Pod run to write its config file and make its outbox, "+
+			"and the image a memory move's copy and verification Jobs run. It needs a shell, install, cp, "+
+			"sha256sum, flock, stat and find, and nothing of the agent. Name it by digest, so every node runs "+
+			"one build. It has no default and is always required.")
 	flag.StringVar(&agentWorkspaceImage, "agent-workspace-image", "",
 		"The image every agent's Pod runs its workspace container from: the process serving the files an "+
 			"agent reads and writes and the commands it runs. It needs a shell, and the agent's own image "+
