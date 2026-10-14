@@ -13,9 +13,9 @@ import (
 )
 
 // Garam asks garam's machine listener what the agent routes decide on (garam@e81a1e0,
-// api/machine.yaml): introspectAgentExecution and activateAgent under execution-fence.v1, and
-// introspectController under operation-authority.v1. An attempt garam leaves undecided is sent
-// again by the machine client within its bound; activateAgent answers a replay of one requestId
+// api/machine.yaml): introspectAgentExecution and activateAgent under execution-fence.v1, which
+// garam refuses beside this service's token until #355 moves agents to tokens. An attempt garam
+// leaves undecided is sent again by the machine client within its bound; activateAgent answers a replay of one requestId
 // with the same activation, so that is safe too.
 type Garam struct {
 	machine *garammachine.Client
@@ -64,31 +64,12 @@ func (g *Garam) Introspect(ctx context.Context, agent string, leafPEM []byte, ge
 	return i, nil
 }
 
-// ProveController asks introspectController for the agent-bound proof of the controller.
-func (g *Garam) ProveController(ctx context.Context, controller string, leafPEM []byte, agent string) (execution.ControllerProof, error) {
-	in := struct {
-		CertificatePEM string `json:"certificatePem"`
-		Agent          string `json:"agent"`
-	}{string(leafPEM), agent}
-	answer, err := g.post(ctx, garammachine.OperationAuthority, "/operators/"+url.PathEscape(controller)+"/introspection", in)
-	if err != nil {
-		return execution.ControllerProof{}, err
-	}
-	var out struct {
-		Operator string `json:"operator"`
-		Agent    *struct {
-			GRN   string `json:"grn"`
-			Epoch string `json:"epoch"`
-		} `json:"agent"`
-	}
-	if err := decode(answer, http.StatusOK, &out); err != nil {
-		return execution.ControllerProof{}, err
-	}
-	proof := execution.ControllerProof{Operator: out.Operator}
-	if out.Agent != nil {
-		proof.Agent, proof.Epoch = out.Agent.GRN, out.Agent.Epoch
-	}
-	return proof, nil
+// ProveController answers execution.ErrControllerUnprovable and sends nothing: under
+// operation-authority.v2 garam proves a controller over the token that controller exchanged for
+// this service, and an activation carries none (garam@9ba35c3 api/machine.yaml introspectController).
+// The proof moves to agents' tokens with #355.
+func (g *Garam) ProveController(context.Context, string, string) (execution.ControllerProof, error) {
+	return execution.ControllerProof{}, execution.ErrControllerUnprovable
 }
 
 // Activate asks activateAgent, and reports whether garam created the activation.

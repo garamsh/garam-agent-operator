@@ -28,13 +28,14 @@ func NewGaram(machine *garammachine.Client) *Garam {
 	return &Garam{machine: machine}
 }
 
-// Recover sends body as it is, under `Authorization: Garam-Operation <handoff>`. The handoff is
-// never logged.
+// Recover sends body as it is, with the handoff in the Garam-Operation header. The handoff is
+// never logged. It stays on the certificate contract until #355 moves agents' credentials, so
+// garam refuses it beside this service's token.
 func (g *Garam) Recover(ctx context.Context, agent string, handoff console.Authority, body []byte) (definition.RecoveredCredential, error) {
 	answer, err := g.send(ctx, garammachine.Call{
 		Method: http.MethodPost, Contract: garammachine.ExecutionFence,
 		Path: "/agents/" + url.PathEscape(agent) + "/credential-recovery", Raw: body,
-		Authorization: "Garam-Operation " + string(handoff),
+		Operation: string(handoff),
 	})
 	if err != nil {
 		return definition.RecoveredCredential{}, err
@@ -64,7 +65,7 @@ func (g *Garam) Recover(ctx context.Context, agent string, handoff console.Autho
 // Deactivate asks garam to end the activation, if it is still the current one.
 func (g *Garam) Deactivate(ctx context.Context, agent, activationID string) error {
 	answer, err := g.send(ctx, garammachine.Call{
-		Method: http.MethodPost, Contract: garammachine.ExecutionFence,
+		Method: http.MethodPost, Contract: garammachine.ExecutionFenceToken,
 		Path: "/agents/" + url.PathEscape(agent) + "/activations/" + url.PathEscape(activationID) + "/deactivation",
 	})
 	if err != nil {

@@ -2,21 +2,15 @@ package desired
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/pem"
-	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // registerPass is how often the registrar looks at the managed agents'
-// placements and at the leaf it presents. A look reads the manager's cache and
-// one file, so it is cheap.
+// placements. A look reads the manager's cache, so it is cheap.
 const registerPass = time.Second
 
 // The 409 kinds that refuse a placement for good: the Pod it names has been
@@ -40,14 +34,11 @@ type PlacementStore interface {
 	Current(ctx context.Context) ([]CurrentPlacement, error)
 }
 
-// Registrar registers each managed agent's placement with the control service,
-// and presents it again, unchanged, whenever the leaf this manager
-// authenticates with has changed since the control service last accepted it
-// (#212, #218). It is a manager Runnable.
+// Registrar registers each managed agent's placement with the control service
+// once it is accepted (#212, #218). It is a manager Runnable.
 type Registrar struct {
 	client *Client
 	store  PlacementStore
-	leaf   func() (string, error)
 
 	// The waits, held here so a test in the package can shorten them.
 	pass, transientFirst, transientLast, refusedWait time.Duration
@@ -64,9 +55,8 @@ type Registrar struct {
 type registration struct {
 	placement Placement
 
-	// acceptedUnder is the fingerprint of the leaf the control service last
-	// accepted this placement under, empty before it has.
-	acceptedUnder string
+	// accepted is set once the control service accepted this placement.
+	accepted bool
 
 	// superseded is set when this placement was refused for good; it is never
 	// sent again.
@@ -78,10 +68,10 @@ type registration struct {
 }
 
 // NewRegistrar returns a Registrar presenting placements through client, read
-// from store, under the leaf whose fingerprint leaf reads.
-func NewRegistrar(client *Client, store PlacementStore, leaf func() (string, error)) *Registrar {
+// from store.
+func NewRegistrar(client *Client, store PlacementStore) *Registrar {
 	return &Registrar{
-		client: client, store: store, leaf: leaf,
+		client: client, store: store,
 		pass: registerPass, transientFirst: transientFirst, transientLast: transientLast, refusedWait: refusedWait,
 		registrations: map[string]*registration{},
 	}
@@ -100,7 +90,7 @@ func (r *Registrar) Start(ctx context.Context) error {
 }
 
 // registerAll presents every current placement that the control service has
-// not accepted under the leaf presented now.
+// not accepted.
 func (r *Registrar) registerAll(ctx context.Context) {
 	log := logf.FromContext(ctx).WithName("desired")
 	current, err := r.store.Current(ctx)
@@ -109,17 +99,11 @@ func (r *Registrar) registerAll(ctx context.Context) {
 
 		return
 	}
-	leaf, err := r.leaf()
-	if err != nil {
-		log.Error(err, "Failed to read the leaf this manager presents")
-
-		return
-	}
 
 	listed := make(map[string]bool, len(current))
 	for _, c := range current {
 		listed[c.GRN] = true
-		r.register(ctx, c, leaf)
+		r.register(ctx, c)
 	}
 	// An agent with no current placement — its Pod gone, or its Agent
 	// deleted — keeps nothing here.
@@ -131,14 +115,14 @@ func (r *Registrar) registerAll(ctx context.Context) {
 }
 
 // register presents one placement, where it is due.
-func (r *Registrar) register(ctx context.Context, current CurrentPlacement, leaf string) {
+func (r *Registrar) register(ctx context.Context, current CurrentPlacement) {
 	log := logf.FromContext(ctx).WithName("desired").WithValues("agent", current.GRN, "podUID", current.Placement.PodUID)
 	state := r.registrations[current.GRN]
 	if state == nil || !samePlacement(state.placement, current.Placement) {
 		state = &registration{placement: current.Placement}
 		r.registrations[current.GRN] = state
 	}
-	if state.superseded || state.acceptedUnder == leaf || time.Now().Before(state.next) {
+	if state.superseded || state.accepted || time.Now().Before(state.next) {
 		return
 	}
 
@@ -175,14 +159,10 @@ func (r *Registrar) register(ctx context.Context, current CurrentPlacement, leaf
 		return
 	}
 
-	refreshed := state.acceptedUnder != ""
-	state.acceptedUnder, state.backoff, state.refusedAs = leaf, 0, ""
-	switch {
-	case created:
+	state.accepted, state.backoff, state.refusedAs = true, 0, ""
+	if created {
 		log.Info("Registered the agent's placement")
-	case refreshed:
-		log.Info("Presented the agent's placement under a renewed leaf")
-	default:
+	} else {
 		log.Info("The agent's placement was already registered")
 	}
 }
@@ -197,23 +177,4 @@ func samePlacement(a, b Placement) bool {
 	}
 
 	return *a.Previous == *b.Previous
-}
-
-// LeafFingerprint returns a function reading the certificate file at path,
-// which the manager presents at each handshake, and fingerprinting its leaf: the
-// hex SHA-256 of its first certificate's DER.
-func LeafFingerprint(path string) func() (string, error) {
-	return func() (string, error) {
-		file, err := os.ReadFile(path) //nolint:gosec // the manager's own configured certificate file
-		if err != nil {
-			return "", fmt.Errorf("read the certificate file: %w", err)
-		}
-		block, _ := pem.Decode(file)
-		if block == nil || block.Type != "CERTIFICATE" {
-			return "", errors.New("the certificate file holds no PEM CERTIFICATE")
-		}
-		sum := sha256.Sum256(block.Bytes)
-
-		return hex.EncodeToString(sum[:]), nil
-	}
 }

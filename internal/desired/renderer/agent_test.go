@@ -407,7 +407,7 @@ func serveFeed(script ...string) *feedServer {
 func runPuller(feed *feedServer) {
 	roots := x509.NewCertPool()
 	roots.AddCert(feed.server.Certificate())
-	feedClient := desired.NewClient(feed.server.Listener.Addr().String(), &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})
+	feedClient := desired.NewClient(feed.server.Listener.Addr().String(), &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}})
 	puller := desired.NewPuller(feedClient, renderer.NewAgent(k8sClient, namespace, image))
 
 	pullCtx, stop := context.WithCancel(ctx)

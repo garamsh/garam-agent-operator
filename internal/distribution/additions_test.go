@@ -15,7 +15,7 @@ import (
 // rawAgents is the feed's answer for the controller as JSON objects, by agent.
 func (e *env) rawAgents(t *testing.T) map[string]map[string]any {
 	t.Helper()
-	resp, err := e.withCert.Get(e.server.URL + "/v1/operators/self/desired")
+	resp, err := e.withToken.Get(e.server.URL + "/v1/operators/self/desired")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, 200, resp.StatusCode)

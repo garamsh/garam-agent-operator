@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/garamsh/garam-agent-operator/internal/desired"
+	"github.com/garamsh/garam-agent-operator/internal/machinetoken"
 )
 
 // garam is the real garam the suite brought up, with one agent garam created for the test and
@@ -42,15 +42,24 @@ func (g garam) mint(t *testing.T, requestID string, body []byte) string {
 	return authority
 }
 
-// controllerClient presents the certificate garam issued the controller the agent is assigned to.
+// controllerClient presents the token the controller the agent is assigned to exchanged for this
+// service.
 func (g garam) controllerClient() *http.Client { return g.stack.feedClient() }
 
-// feedClient presents the controller's certificate garam issued, trusting the binary's serving root.
+// feedClient presents, as the manager does, a token the controller exchanged under the key garam
+// issued it, minted for the hosted operator, and the controller's GRN beside it. It trusts the
+// binary's serving root.
 func (s *garamStack) feedClient() *http.Client {
-	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		RootCAs:      apiClient.Transport.(*http.Transport).TLSClientConfig.RootCAs,
-		Certificates: []tls.Certificate{s.controller},
-	}}}
+	return &http.Client{Transport: s.feedTransport()}
+}
+
+// feedTransport is feedClient's transport.
+func (s *garamStack) feedTransport() http.RoundTripper {
+	return &machinetoken.Transport{
+		Source:         s.controllerToken,
+		Base:           &http.Transport{TLSClientConfig: apiClient.Transport.(*http.Transport).TLSClientConfig},
+		ClientIDHeader: desired.ControllerHeader,
+	}
 }
 
 // requireGaram has the real garam create an agent for the test, assigned to the controller.
@@ -311,8 +320,7 @@ func TestDesired_TheManagersClientReadsTheRevisionAConfigureStored(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)
 
-	feed := desired.NewClient(strings.TrimPrefix(attachedURL, "https://"),
-		g.controllerClient().Transport.(*http.Transport).TLSClientConfig)
+	feed := desired.NewClient(strings.TrimPrefix(attachedURL, "https://"), g.stack.feedTransport())
 	answer, err := feed.Desired(context.Background(), "", 0)
 	require.NoError(t, err)
 	var revisions []string
@@ -420,6 +428,7 @@ func mintCreate(requestID string, body []byte) (string, error) {
 }
 
 func TestCreate_ThroughTheConsoleRouteAgainstGaram(t *testing.T) {
+	t.Skip(until355Creation)
 	profile := publishProfile(t, real.orgID)
 	template := publishTemplate(t, real.orgID, profile)
 	requestID := name(t, "create")
@@ -481,6 +490,7 @@ func count(t *testing.T, query string, args ...any) int {
 }
 
 func TestCreate_AnotherOrganizationsTemplateOrProfileAnswersNotFound(t *testing.T) {
+	t.Skip(until355Creation)
 	tests := []struct {
 		name string
 		// names publishes the template and profile the request names, one of them only in other,

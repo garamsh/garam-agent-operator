@@ -66,6 +66,11 @@ var (
 	// ErrActivationSuperseded is returned when garam refuses the activation as another than the
 	// one the agent's anchor names, or as one that has ended.
 	ErrActivationSuperseded = errors.New("garam refused the activation as superseded")
+
+	// ErrControllerUnprovable is returned for an agent-bound controller proof control holds nothing
+	// to ask with: garam proves a controller over the token it presented, and an activation carries
+	// none of the controller's. It is the proof #355 moves to agents' tokens.
+	ErrControllerUnprovable = errors.New("control holds no credential of the placement's controller to prove it over")
 )
 
 // GaramContractError is returned when garam answered under a contract version this service does

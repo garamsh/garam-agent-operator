@@ -69,7 +69,7 @@ func (s *server) registerPlacement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stored, first, err := s.definitions.RegisterPlacement(r.Context(), definition.PlacementInput{
-		Agent: definition.GRN(agent), Controller: c.grn, Request: in, LeafDER: c.leafDER,
+		Agent: definition.GRN(agent), Controller: c.grn, Request: in,
 	})
 	if err != nil {
 		s.respondError(w, err)

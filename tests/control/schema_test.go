@@ -216,8 +216,8 @@ func assertViolation(t *testing.T, code string, err error) {
 func TestSchema_SecondCurrentPlacementOfOneAgentRefused(t *testing.T) {
 	agent := name(t, "agent")
 	insert := func(pod string) error {
-		return execute(t, `INSERT INTO placements (agent, pod_uid, controller, epoch, pvc_uid, token_sha256, leaf_der)
-VALUES ($1, $2, 'controller', '1', 'pvc', 'token', '\x00')`, agent, pod)
+		return execute(t, `INSERT INTO placements (agent, pod_uid, controller, epoch, pvc_uid, token_sha256)
+VALUES ($1, $2, 'controller', '1', 'pvc', 'token')`, agent, pod)
 	}
 
 	require.NoError(t, insert("pod-1"))

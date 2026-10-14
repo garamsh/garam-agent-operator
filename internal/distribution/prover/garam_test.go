@@ -16,38 +16,42 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
-const leafPEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+// token is a controller's audience token as garam answers one.
+const token = "garam_ot_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 // sent is what the stand-in garam last received.
 type sent struct {
-	path string
-	body map[string]any
+	path     string
+	contract string
+	body     map[string]any
 }
 
 func prove(t *testing.T, status int, answer, agent string) (distribution.Proof, sent, error) {
 	t.Helper()
 	var got sent
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got.path = r.URL.EscapedPath()
+		got.path, got.contract = r.URL.EscapedPath(), r.Header.Get("Garam-Contract-Version")
 		_ = json.NewDecoder(r.Body).Decode(&got.body)
-		w.Header().Set("Garam-Contract-Version", "operation-authority.v1")
+		w.Header().Set("Garam-Contract-Version", "operation-authority.v2")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(answer))
 	}))
 	t.Cleanup(server.Close)
 	machine := garammachine.New(server.URL, server.Client())
 	machine.Backoff = time.Millisecond
-	p, err := prover.NewGaram(machine).Prove(context.Background(), "grn:root:default:operator:k8s", []byte(leafPEM), agent)
+	p, err := prover.NewGaram(machine).Prove(context.Background(), "grn:root:default:operator:k8s", token, agent)
 	return p, got, err
 }
 
-func TestGaram_ForwardsTheLeafAndReadsTheProof(t *testing.T) {
+func TestGaram_ForwardsTheTokenAndReadsTheProof(t *testing.T) {
 	p, got, err := prove(t, 200,
 		`{"operator":"grn:root:default:operator:k8s","org":"grn:root:default:org:acme","agent":{"grn":"grn:acme:default:agent:a","epoch":"7"}}`,
 		"grn:acme:default:agent:a")
 	require.NoError(t, err)
 	assert.Equal(t, "/operators/grn:root:default:operator:k8s/introspection", got.path)
-	assert.Equal(t, leafPEM, got.body["certificatePem"])
+	assert.Equal(t, "operation-authority.v2", got.contract)
+	assert.Equal(t, token, got.body["token"])
+	assert.NotContains(t, got.body, "certificatePem", "operation-authority.v2 refuses a certificate")
 	assert.Equal(t, "grn:acme:default:agent:a", got.body["agent"])
 	assert.Equal(t, distribution.Proof{
 		Operator: "grn:root:default:operator:k8s", Org: "grn:root:default:org:acme",
@@ -65,15 +69,22 @@ func TestGaram_ASessionProofNamesNoAgent(t *testing.T) {
 }
 
 func TestGaram_EveryRefusalIsNotProved(t *testing.T) {
-	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusUnprocessableEntity} {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			_, _, err := prove(t, status, `{"message":"refused"}`, "")
 			require.ErrorIs(t, err, distribution.ErrNotProved)
+			assert.NotErrorIs(t, err, distribution.ErrTokenRefused)
 		})
 	}
 	// Control: a 200 is a proof, not a refusal.
 	_, _, err := prove(t, 200, `{"operator":"o","org":"g","agent":null}`, "")
 	require.NoError(t, err)
+}
+
+func TestGaram_A422IsTheTokenRefused(t *testing.T) {
+	_, _, err := prove(t, http.StatusUnprocessableEntity, `{"message":"token"}`, "")
+	require.ErrorIs(t, err, distribution.ErrTokenRefused)
+	assert.NotErrorIs(t, err, distribution.ErrNotProved)
 }
 
 func TestGaram_UndecidedIsUndecided(t *testing.T) {

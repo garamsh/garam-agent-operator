@@ -2,35 +2,36 @@ package distribution
 
 import (
 	"context"
-	"encoding/pem"
 	"errors"
 	"net/http"
+	"regexp"
+	"strings"
 )
 
-// controller is the caller of a controller route: the operator GRN its leaf certificate names,
-// and that leaf exactly as presented, as one PEM block and as its DER.
+// controllerHeader names the GRN the controller presents its token under (ADR 0072).
+const controllerHeader = "Controller-Grn"
+
+// operatorToken is the form of a garam operator token (garam@9ba35c3 api/machine.yaml
+// ControllerIntrospection.token); a request presenting another is refused before garam is asked.
+var operatorToken = regexp.MustCompile(`^garam_ot_[0-9a-f]{64}$`)
+
+// controller is the caller of a controller route: the operator GRN it named, and the token it
+// presented, exactly as presented. The token is forwarded to garam and never logged.
 type controller struct {
-	grn     string
-	leafPEM []byte
-	leafDER []byte
+	grn   string
+	token string
 }
 
-// authenticate reads the controller from the request's client certificate and has garam prove it
-// for this request. A proof is never kept past the request it was obtained for.
+// authenticate reads the controller from the request's bearer token and the GRN beside it, and has
+// garam prove them for this request. A proof is never kept past the request it was obtained for.
 func (s *server) authenticate(ctx context.Context, r *http.Request) (controller, error) {
-	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-		return controller{}, ErrNoCertificate
+	scheme, token, found := strings.Cut(r.Header.Get("Authorization"), " ")
+	grn := r.Header.Get(controllerHeader)
+	if !found || !strings.EqualFold(scheme, "Bearer") || !operatorToken.MatchString(token) || grn == "" {
+		return controller{}, ErrNoToken
 	}
-	leaf := r.TLS.PeerCertificates[0]
-	if len(leaf.URIs) != 1 {
-		return controller{}, ErrNoCertificate
-	}
-	c := controller{
-		grn:     leaf.URIs[0].String(),
-		leafPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}),
-		leafDER: leaf.Raw,
-	}
-	proof, err := s.prover.Prove(ctx, c.grn, c.leafPEM, "")
+	c := controller{grn: grn, token: token}
+	proof, err := s.prover.Prove(ctx, c.grn, c.token, "")
 	if err != nil {
 		return controller{}, err
 	}
@@ -56,7 +57,7 @@ func (s *server) placed(ctx context.Context, c controller, agent, epoch string) 
 // provedEpoch has garam prove, for one decision, that agent is assigned to c, and returns the
 // epoch it proved. A refusal, or a proof naming another operator or agent, is ErrNotProved.
 func (s *server) provedEpoch(ctx context.Context, c controller, agent string) (string, error) {
-	proof, err := s.prover.Prove(ctx, c.grn, c.leafPEM, agent)
+	proof, err := s.prover.Prove(ctx, c.grn, c.token, agent)
 	if err != nil {
 		return "", err
 	}

@@ -13,9 +13,10 @@ import (
 )
 
 // Garam carries a legacy agent's cutover stages to garam's machine listener under
-// agent-cutover.v1 (garam@1a5273d, api/machine.yaml §cutover): getAgentCutover,
-// freezeAgentCutover, switchAgentCutover and rollBackAgentCutover. Each is sent under
-// `Authorization: Garam-Operation <ref>`, the durable reference minted for that stage's route, and
+// agent-cutover.v2 (garam@9ba35c3, api/machine.yaml §cutover): getAgentCutover,
+// freezeAgentCutover, switchAgentCutover and rollBackAgentCutover. Each is sent with the durable
+// reference minted for that stage's route in the Garam-Operation header, beside this service's
+// token, and
 // each answers a repeat of one importId with what it recorded, so the machine client's retry of an
 // undecided attempt is safe.
 type Garam struct {
@@ -110,7 +111,7 @@ func (g *Garam) attempt(ctx context.Context, agent string, stage console.Stage, 
 func (g *Garam) send(ctx context.Context, method, agent string, stage console.Stage, ref string, body, out any) error {
 	answer, err := g.machine.Send(ctx, garammachine.Call{
 		Method: method, Contract: garammachine.AgentCutover, Path: path(agent, stage), Body: body,
-		Authorization: "Garam-Operation " + ref,
+		Operation: ref,
 	})
 	var foreign *garammachine.ContractError
 	switch {

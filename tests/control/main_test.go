@@ -47,7 +47,7 @@ var (
 	apiURL string
 	// apiClient trusts the root that signed the binary's serving certificate.
 	apiClient *http.Client
-	// controllerClient is apiClient presenting a controller's client certificate.
+	// controllerClient is apiClient presenting a controller's token under its GRN.
 	controllerClient *http.Client
 	// real is the garam the attached binary calls, and attachedURL that binary's console and
 	// controller routes.
@@ -111,9 +111,7 @@ func run(m *testing.M) (int, error) {
 		return 0, err
 	}
 	apiClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: id.roots}}}
-	controllerClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		RootCAs: id.roots, Certificates: []tls.Certificate{id.controller},
-	}}}
+	controllerClient = bearerClient(id.roots, controllerGRN, controllerToken)
 	binaryPath, controlArgs = binary, []string{
 		"--health-probe-bind-address", probeAddr,
 		"--api-bind-address", apiAddr,
@@ -121,8 +119,9 @@ func run(m *testing.M) (int, error) {
 		"--api-key-file", id.servingKey,
 		"--garam-machine-url", garamURL,
 		"--garam-server-root-file", id.serverRoot,
-		"--operator-certificate-file", id.certificate,
-		"--operator-key-file", id.key,
+		"--operator-private-key-file", id.operatorKeys.PrivateKey,
+		"--operator-client-id-file", id.operatorKeys.ClientID,
+		"--operator-token-url-file", id.operatorKeys.TokenURL,
 	}
 	detachedCmd := exec.Command(binary, controlArgs...)
 	detachedCmd.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+databaseURL)
@@ -250,7 +249,8 @@ func freeAddress() (string, error) {
 }
 
 // startAttached starts a second control binary on the same database, calling the real garam as
-// the hosted operator garam enrolled, and serving under the suite's serving certificate.
+// the hosted operator under the key garam issued it, and serving under the suite's serving
+// certificate.
 func startAttached(binary, dir string, id identity, g *garamStack) (*process, error) {
 	attached, url, err := startControlOn(binary, dir, id, g, "attached control", databaseURL)
 	if err != nil {
@@ -278,8 +278,9 @@ func startControlOn(binary, dir string, id identity, g *garamStack, name, url st
 		"--api-key-file", id.servingKey,
 		"--garam-machine-url", g.machineURL,
 		"--garam-server-root-file", g.hostedFiles.serverRoot,
-		"--operator-certificate-file", g.hostedFiles.certificate,
-		"--operator-key-file", g.hostedFiles.key,
+		"--operator-private-key-file", g.hostedFiles.operatorKeys.PrivateKey,
+		"--operator-client-id-file", g.hostedFiles.operatorKeys.ClientID,
+		"--operator-token-url-file", g.hostedFiles.operatorKeys.TokenURL,
 	)
 	control.Env = append(os.Environ(), "CONTROL_DATABASE_URL="+url)
 	started, err := startProcess(name, dir, control)

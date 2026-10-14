@@ -133,41 +133,22 @@ func serveRoute() *routeDouble {
 	return route
 }
 
-// leaf is the fingerprint the registrar reads as the leaf it presents, which a
-// spec changes to stand for a renewal.
-type leaf struct {
-	mu    sync.Mutex
-	value string
-}
-
-func (l *leaf) read() (string, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	return l.value, nil
-}
-
-func (l *leaf) renew(value string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.value = value
-}
-
 // run runs a registrar against route, reading placements in the spec's
 // namespace, until the spec ends.
-func run(route *routeDouble, presented *leaf) {
-	DeferCleanup(start(route, presented))
+func run(route *routeDouble) {
+	DeferCleanup(start(route))
 }
 
 // start starts a registrar against route, reading placements in the spec's
 // namespace, and returns what stops it, as a manager's exit would: nothing it
 // held in memory survives.
-func start(route *routeDouble, presented *leaf) (stop func()) {
+func start(route *routeDouble) (stop func()) {
 	roots := x509.NewCertPool()
 	roots.AddCert(route.server.Certificate())
 	registrar := desired.NewRegistrar(
-		desired.NewClient(route.server.Listener.Addr().String(), &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}),
-		placement.NewPods(k8sClient, k8sClient, namespace), presented.read)
+		desired.NewClient(route.server.Listener.Addr().String(),
+			&http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}),
+		placement.NewPods(k8sClient, k8sClient, namespace))
 
 	runCtx, cancel := context.WithCancel(ctx)
 	stopped := make(chan struct{})
@@ -228,9 +209,6 @@ func placed(grn string, source agentv1alpha1.DesiredSource, adapter bool, token 
 	return read
 }
 
-// firstLeaf is the leaf each spec starts presenting.
-const firstLeaf = "leaf-a"
-
 // podBefore is the Pod a replacement's placement replaced, as the writer fence recorded it.
 const podBefore = "pod-before"
 
@@ -247,7 +225,7 @@ var _ = Describe("Placement registrar", func() {
 		placed("grn:acme:default:agent:2222222222222222", agentv1alpha1.DesiredSourceGaram, true, "token-two", nil)
 		placed("grn:acme:default:agent:3333333333333333", agentv1alpha1.DesiredSourceControl, false, "token-three", nil)
 		route := serveRoute()
-		run(route, &leaf{value: firstLeaf})
+		run(route)
 
 		Eventually(route.requests, 10*time.Second).Should(HaveLen(1))
 		Consistently(route.requests, 2*time.Second).Should(Equal([]wireBody{{
@@ -264,7 +242,7 @@ var _ = Describe("Placement registrar", func() {
 			agentname.PreviousWriterStoppedAnnotation: digest,
 		})
 		route := serveRoute()
-		run(route, &leaf{value: firstLeaf})
+		run(route)
 
 		Eventually(route.requests, 10*time.Second).Should(HaveLen(1))
 		sent := route.requests()[0]
@@ -285,13 +263,13 @@ var _ = Describe("Placement registrar", func() {
 		route := serveRoute()
 
 		By("a first manager registering the replacement, then exiting")
-		stop := start(route, &leaf{value: firstLeaf})
+		stop := start(route)
 		Eventually(route.creations, 10*time.Second).Should(Equal(1))
 		stop()
 		before := len(route.requests())
 
 		By("a restarted manager, which holds nothing of the first and reads the placement off its objects")
-		run(route, &leaf{value: firstLeaf})
+		run(route)
 		Eventually(func() int { return len(route.requests()) }, 10*time.Second).Should(BeNumerically(">", before))
 		Consistently(route.creations, 3*time.Second).Should(Equal(1), "the restart registered the placement twice")
 		want := wireBody{
@@ -314,25 +292,6 @@ var _ = Describe("Placement registrar", func() {
 		Eventually(route.creations, 10*time.Second).Should(Equal(2))
 	})
 
-	It("presents a placement again, unchanged, only once the leaf it was accepted under is renewed", func() {
-		managed := "grn:acme:default:agent:5555555555555555"
-		placed(managed, agentv1alpha1.DesiredSourceControl, true, "token-one", nil)
-		route := serveRoute()
-		presented := &leaf{value: firstLeaf}
-		run(route, presented)
-
-		By("the control: under one leaf, a registered placement is not presented again")
-		Eventually(route.requests, 10*time.Second).Should(HaveLen(1))
-		Consistently(route.requests, 3*time.Second).Should(HaveLen(1))
-
-		By("the leaf renewed, the same body presented once more, which the route answers as a refresh")
-		presented.renew("leaf-b")
-		Eventually(route.requests, 10*time.Second).Should(HaveLen(2))
-		Consistently(route.requests, 3*time.Second).Should(HaveLen(2))
-		requests := route.requests()
-		Expect(requests[1]).To(Equal(requests[0]))
-	})
-
 	It("presents a superseded placement once and surfaces it, and presents the Pod that replaced it", func() {
 		managed := "grn:acme:default:agent:6666666666666666"
 		superseded := placed(managed, agentv1alpha1.DesiredSourceControl, true, "token-one", nil)
@@ -340,12 +299,10 @@ var _ = Describe("Placement registrar", func() {
 		route.mu.Lock()
 		route.refuse, route.kind = http.StatusConflict, "placement_superseded"
 		route.mu.Unlock()
-		presented := &leaf{value: firstLeaf}
-		run(route, presented)
+		run(route)
 
-		By("refused for good: presented once, and not again under a renewed leaf either")
+		By("refused for good: presented once, and not again")
 		Eventually(route.requests, 10*time.Second).Should(HaveLen(1))
-		presented.renew("leaf-b")
 		Consistently(route.requests, 3*time.Second).Should(HaveLen(1))
 
 		By("the control: the Pod replacing it is a new placement, which is presented and accepted")

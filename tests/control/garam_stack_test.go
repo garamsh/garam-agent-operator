@@ -27,13 +27,28 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/garamsh/garam-agent-operator/internal/machinetoken"
 )
 
-// garamContract is the operation-authority contract version both of garam's listeners speak here.
+// garamContract is the operation-authority contract version garam's browser API speaks here, and its
+// machine listener beside a certificate.
 const garamContract = "operation-authority.v1"
 
 // enrollmentContract is the contract version of garam's managed create.
 const enrollmentContract = "managed-enrollment.v1"
+
+// The reasons the cases garam refuses beside this service's token skip, until #355 moves agents'
+// credentials to garam tokens. Each skipped case calls t.Skip with one of them.
+const (
+	until355Activation = "#355: activation forwards the agent's certificate, " +
+		"which garam refuses beside this service's token until agents hold garam tokens"
+	until355Creation = "#355: managed create and the initial certificate are certificate-only, " +
+		"and garam refuses them beside this service's token"
+	until355Recovery = "#355: credential recovery moves to agents' garam tokens, " +
+		"and garam refuses its certificate form beside this service's token"
+	until355Stop = "#355: a stop ends an activation, and activation is unavailable until agents hold garam tokens"
+)
 
 // garamStack is a real garam built at the revision the Makefile pins: its authz engine, its
 // browser API and its machine listener, over a database garam's test-principal fixture prepared.
@@ -47,11 +62,18 @@ type garamStack struct {
 	// hosted and controllerGRN are the two operators garam enrolled: this service, and the
 	// controller agents are assigned to.
 	hosted, controllerGRN string
-	// hostedFiles are this service's enrolled certificate, its key, and garam's server root.
+	// hostedFiles are the key garam issued this service, and garam's server root.
 	hostedFiles identity
-	machine     *http.Client
-	hostedTLS   *http.Client
-	controller  tls.Certificate
+	// controllerToken exchanges, under the key garam issued the controller, the controller's token
+	// for this service. It is one source for the suite, as the manager holds one: garam admits ten
+	// exchanges a minute per operator.
+	controllerToken *machinetoken.Source
+	machine         *http.Client
+	// hostedTLS and controller are the certificates garam enrolled the two operators with, which
+	// the suite presents itself to make on garam what the binary takes as given: agents created,
+	// and activated, as this service did before #355 moves them to tokens.
+	hostedTLS  *http.Client
+	controller tls.Certificate
 	// processes are garam's three running for the suite.
 	processes []*process
 }
@@ -96,7 +118,10 @@ func startGaram(ctx context.Context, binDir, migrations, serverURL, dir string) 
 		}
 	}
 	garam := filepath.Join(binDir, "garam")
-	common := []string{"GARAM_DATABASE_URL=" + prepared.DatabaseURL, "GARAM_AUTHZ_ADDR=" + addrs["grpc"]}
+	// The token endpoint every issued key's assertions name: garam answers no key without it.
+	tokenURL := "https://" + addrs["machine"] + "/oauth/token"
+	common := []string{"GARAM_DATABASE_URL=" + prepared.DatabaseURL, "GARAM_AUTHZ_ADDR=" + addrs["grpc"],
+		"GARAM_MACHINE_TOKEN_URL=" + tokenURL}
 	for _, p := range []struct {
 		name, ready string
 		env         []string
@@ -108,7 +133,9 @@ func startGaram(ctx context.Context, binDir, migrations, serverURL, dir string) 
 		{"machine", "http://" + addrs["machineHealth"] + "/readyz", []string{
 			"GARAM_MACHINE_ADDR=" + addrs["machine"], "GARAM_MACHINE_HEALTH_ADDR=" + addrs["machineHealth"],
 			"GARAM_MACHINE_TLS_CERT_FILE=" + keys.listenerCert, "GARAM_MACHINE_TLS_KEY_FILE=" + keys.listenerKey,
-			"GARAM_MACHINE_SERVER_ROOT_FILE=" + keys.serverRoot, "GARAM_CA_KEY_FILE=" + keys.kek}},
+			"GARAM_MACHINE_SERVER_ROOT_FILE=" + keys.serverRoot, "GARAM_CA_KEY_FILE=" + keys.kek,
+			// The issuer garam signs messages under, which garam requires and this suite reads nothing of.
+			"GARAM_MACHINE_ISSUER=https://" + addrs["machine"]}},
 	} {
 		cmd := exec.Command(garam, "serve", p.name)
 		cmd.Env = append(append(os.Environ(), common...), p.env...)
@@ -229,7 +256,8 @@ func writeGaramKeys(dir string) (garamKeys, error) {
 }
 
 // setUp makes, through garam's public routes, the organization, the two operators each enrolled
-// over a key generated here, and the hosted operator's delegation over the controller.
+// over a key generated here and issued a key of garam's, and the hosted operator's delegation over
+// the controller.
 func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	var org struct {
 		GRN string `json:"grn"`
@@ -254,17 +282,17 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	s.hostedTLS = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
 		RootCAs: keys.roots, Certificates: []tls.Certificate{hosted.pair},
 	}}}
-	s.hostedFiles = identity{
-		serverRoot:  keys.serverRoot,
-		certificate: filepath.Join(dir, "hosted.pem"),
-		key:         filepath.Join(dir, "hosted-key.pem"),
+	s.hostedFiles = identity{serverRoot: keys.serverRoot}
+	if s.hostedFiles.operatorKeys, err = s.issueKey(dir, "control"); err != nil {
+		return step("issue the hosted operator's key", err, s.processes...)
 	}
-	if err := os.WriteFile(s.hostedFiles.certificate, []byte(hosted.certificatePEM), 0o600); err != nil {
-		return step("write the hosted operator's certificate", err)
+	controllerKeys, err := s.issueKey(dir, "k8s")
+	if err != nil {
+		return step("issue the controller's key", err, s.processes...)
 	}
-	if err := os.WriteFile(s.hostedFiles.key, hosted.keyPEM, 0o600); err != nil {
-		return step("write the hosted operator's key", err)
-	}
+	s.controllerToken = machinetoken.NewSource(machinetoken.Config{
+		Endpoint: s.machineURL + "/oauth/token", Files: controllerKeys, Audience: s.hosted, HTTP: s.machine,
+	})
 
 	delegation := struct {
 		RequestID   string   `json:"requestId"`
@@ -285,10 +313,24 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 
 // enrolled is an operator garam signed a certificate for, over a key generated here.
 type enrolled struct {
-	grn            string
-	certificatePEM string
-	keyPEM         []byte
-	pair           tls.Certificate
+	grn  string
+	pair tls.Certificate
+}
+
+// issueKey has garam issue the operator under identifier a key, as a person does through the
+// console (garam@9ba35c3 api/openapi.yaml issueOperatorKey), and places the answer in dir.
+func (s *garamStack) issueKey(dir, identifier string) (machinetoken.Files, error) {
+	var issued struct {
+		PrivateKeyPEM string `json:"privateKeyPem"`
+		ClientID      string `json:"clientId"`
+		TokenURL      string `json:"tokenUrl"`
+	}
+	if err := s.create(http.MethodPost, "/orgs/"+s.orgID+"/operators/"+identifier+"/keys", "", struct {
+		Rotation string `json:"rotation"`
+	}{Rotation: "immediate"}, &issued); err != nil {
+		return machinetoken.Files{}, err
+	}
+	return writeKeyIssuance(dir, identifier, issued.ClientID, issued.TokenURL, issued.PrivateKeyPEM)
 }
 
 // enroll registers an operator under identifier and enrolls it with the token the registration
@@ -337,7 +379,7 @@ func (s *garamStack) enroll(identifier string) (enrolled, error) {
 	if err != nil {
 		return enrolled{}, fmt.Errorf("enrolled certificate for %s: %w", identifier, err)
 	}
-	return enrolled{grn: issued.GRN, certificatePEM: issued.CertificatePEM, keyPEM: keyPEM, pair: pair}, nil
+	return enrolled{grn: issued.GRN, pair: pair}, nil
 }
 
 // mintAuthority has garam mint, for the signed-in user, an authority handing this service

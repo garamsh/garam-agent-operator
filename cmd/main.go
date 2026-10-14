@@ -4,8 +4,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"flag"
+	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -14,7 +14,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -32,7 +31,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/desired/renderer"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
-	"github.com/garamsh/garam-agent-operator/internal/garam/credentialstore"
+	"github.com/garamsh/garam-agent-operator/internal/machinetoken"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -42,13 +41,15 @@ var (
 )
 
 // podNamespaceVariable names the environment variable the manager's Pod carries
-// its own namespace in. It is where the Secret holding this operator's
-// credential is looked for, and where the agents it constructs are built.
+// its own namespace in. It is where the agents it constructs are built.
 const podNamespaceVariable = "POD_NAMESPACE"
 
-// garamEnrollmentTokenInterval is how often this operator looks for the token it
-// enrolls with, which a person places.
-const garamEnrollmentTokenInterval = 10 * time.Second
+// garamTokenPath is garam's exchangeClientAssertion route on the listener
+// garam-address names.
+const garamTokenPath = "/oauth/token"
+
+// garamExchangeTimeout bounds one exchange of a client assertion for a token.
+const garamExchangeTimeout = 30 * time.Second
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -66,12 +67,12 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var garamAddress, garamCertificateFile, garamKeyFile, garamTrustFile, garamIssuer string
-	var garamCredentialSecret, garamEnrollmentTokenFile string
-	var controlAddress, controlTrustFile string
+	var garamAddress, garamTrustFile, garamIssuer string
+	var garamKeys machinetoken.Files
+	var controlAddress, controlTrustFile, controlGRN string
 	var agentImage, agentStorageSize, agentCopyImage, agentWorkspaceImage, agentAdapterImage string
 	var agentWorkspaceStorageSize string
-	var garamPollInterval, garamRenewalInterval, garamReportInterval time.Duration
+	var garamPollInterval, garamReportInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -92,13 +93,17 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&garamAddress, "garam-address", "",
 		"The host and port of garam's machine listener. Unset leaves this operator reading no definitions.")
-	flag.StringVar(&garamCertificateFile, "garam-certificate-file", "",
-		"The file holding the certificate this operator authenticates to garam with.")
-	flag.StringVar(&garamKeyFile, "garam-key-file", "",
-		"The file holding the private key of the certificate this operator authenticates to garam with.")
+	flag.StringVar(&garamKeys.PrivateKey, "garam-private-key-file", "",
+		"The file holding the private key garam issued this operator, as PKCS#8 PEM. It is read at every "+
+			"exchange, so a key replaced in it signs the next one. Required where garam-address or control-address is set.")
+	flag.StringVar(&garamKeys.ClientID, "garam-client-id-file", "",
+		"The file holding this operator's GRN, the clientId garam answered beside its key. "+
+			"Required where garam-address or control-address is set.")
+	flag.StringVar(&garamKeys.TokenURL, "garam-token-url-file", "",
+		"The file holding the tokenUrl garam answered beside this operator's key, which every assertion names "+
+			"as its audience. Required where garam-address or control-address is set.")
 	flag.StringVar(&garamTrustFile, "garam-trust-file", "",
-		"The file holding what garam's machine listener is verified against. This is not the organization "+
-			"issuer an operator's own certificate arrives with.")
+		"The file holding what garam's machine listener is verified against: garam's server root.")
 	flag.StringVar(&garamIssuer, "garam-issuer", "",
 		"garam's machine issuer, exactly its machine.issuer, rendered byte for byte. Where it is set, every "+
 			"agent whose Pod carries the adapter accepts messages that issuer signs, fetching its keys from "+
@@ -110,21 +115,14 @@ func main() {
 	flag.StringVar(&controlTrustFile, "control-trust-file", "",
 		"The file holding the root the control service's serving certificate is verified against. "+
 			"Required where control-address is set.")
+	flag.StringVar(&controlGRN, "control-grn", "",
+		"The control service's operator GRN, which the token this operator presents to it is minted for. "+
+			"Required where control-address is set.")
 	flag.DurationVar(&garamPollInterval, "garam-poll-interval", time.Minute,
 		"How often this operator reads the definitions garam holds for it.")
 	flag.DurationVar(&garamReportInterval, "garam-report-interval", time.Minute,
 		"How often this operator tells garam what it sees of its agents' pods. garam expires no report, "+
 			"so this bounds how stale that picture gets while this operator is running and not after it stops.")
-	flag.StringVar(&garamCredentialSecret, "garam-credential-secret", "",
-		"The Secret in this Pod's own namespace holding the certificate and key named above, "+
-			"which a renewal is written back to. Unset leaves this operator renewing nothing.")
-	flag.DurationVar(&garamRenewalInterval, "garam-renewal-interval", time.Hour,
-		"How often this operator asks garam to replace the certificate it authenticates with.")
-	flag.StringVar(&garamEnrollmentTokenFile, "garam-enrollment-token-file", "",
-		"The file holding the one-time token this operator obtains its first certificate with, which is "+
-			"a key of the Secret named above. A token is spent by one attempt and expires ten minutes "+
-			"after it is minted, and no file, an empty one, or a certificate this operator already holds "+
-			"leaves it enrolling nothing.")
 	flag.StringVar(&agentImage, "agent-image", "",
 		"The container image every agent this operator constructs runs. It has no default: name the image "+
 			"and the tag or digest explicitly. Every container of an agent's Pod is pulled at every start, so "+
@@ -300,18 +298,36 @@ func main() {
 	}
 	// +kubebuilder:scaffold:builder
 
-	// A deployment that has been given a token to spend and a Secret to write
-	// what it buys. An operator that is enrolling has no certificate for the
-	// startup read to find: its own enrollment writes one where the handshake
-	// reads it, and until then the handshake is what says so. That holds for the
-	// control service's connection as well, which presents the same pair (#267).
-	enrolling := garamAddress != "" && garamEnrollmentTokenFile != "" && garamCredentialSecret != ""
+	if (garamAddress != "" || controlAddress != "") &&
+		(garamAddress == "" || garamTrustFile == "" || garamKeys.PrivateKey == "" || garamKeys.ClientID == "" ||
+			garamKeys.TokenURL == "") {
+		setupLog.Error(errors.New("garam-address, garam-trust-file, garam-private-key-file, garam-client-id-file "+
+			"and garam-token-url-file are all required where garam-address or control-address is set"),
+			"Failed to configure this operator's garam identity")
+		os.Exit(1)
+	}
+	var garamTLS *tls.Config
 	if garamAddress != "" {
-		tlsConfig, err := garam.OperatorTLS(enrolling, garamCertificateFile, garamKeyFile, garamTrustFile)
+		garamTLS, err = garam.ServerTLS(garamTrustFile)
 		if err != nil {
 			setupLog.Error(err, "Failed to configure the connection to garam")
 			os.Exit(1)
 		}
+	}
+	// tokenSource exchanges this operator's assertions at garam for a token
+	// minted for audience, garam's own where it is empty (ADR 0072).
+	tokenSource := func(audience, label string) *machinetoken.Source {
+		return machinetoken.NewSource(machinetoken.Config{
+			Endpoint: "https://" + garamAddress + garamTokenPath,
+			Files:    garamKeys,
+			Audience: audience,
+			HTTP: &http.Client{Timeout: garamExchangeTimeout,
+				Transport: &http.Transport{TLSClientConfig: garamTLS}},
+			Failed: garam.ExchangeFailed(ctrl.Log.WithName("garam"), label),
+		})
+	}
+
+	if garamAddress != "" {
 		// The namespace is the Pod's own and arrives on the downward API: the
 		// deployment cannot state it in an argument, because the kustomize
 		// transformer that sets the namespace does not reach into one.
@@ -345,7 +361,10 @@ func main() {
 			}
 			workspaceStorageSize = &size
 		}
-		garamClient := garam.NewClient(garamAddress, tlsConfig)
+		garamClient := garam.NewClient(garamAddress, &machinetoken.Transport{
+			Source: tokenSource("", "garam"),
+			Base:   &http.Transport{TLSClientConfig: garamTLS},
+		})
 		builder := constructor.NewAgent(mgr.GetClient(), mgr.GetScheme(), namespace, agentImage, storageSize,
 			workspaceStorageSize)
 		if err := mgr.Add(garam.NewPoller(garamClient, builder, garamPollInterval)); err != nil {
@@ -356,45 +375,21 @@ func main() {
 			setupLog.Error(err, "Failed to add the garam reporter", "address", garamAddress)
 			os.Exit(1)
 		}
-		if garamCredentialSecret != "" {
-			// The Secret's keys are the names the kubelet gives the files in
-			// the volume, which is what the two flags above already point at.
-			store := credentialstore.NewSecret(mgr.GetClient(),
-				types.NamespacedName{Namespace: namespace, Name: garamCredentialSecret},
-				filepath.Base(garamCertificateFile), filepath.Base(garamKeyFile))
-			if err := mgr.Add(garam.NewRenewer(garamClient, store, garamRenewalInterval)); err != nil {
-				setupLog.Error(err, "Failed to add the garam renewer", "secret", garamCredentialSecret)
-				os.Exit(1)
-			}
-			if enrolling {
-				// A second client, because this one presents no certificate:
-				// enrollment is the route an operator that has none reaches,
-				// and it verifies garam by the root the deployment supplied.
-				enrollmentTLS, err := garam.EnrollmentTLS(garamTrustFile)
-				if err != nil {
-					setupLog.Error(err, "Failed to configure the connection this operator enrolls over")
-					os.Exit(1)
-				}
-				enroller := garam.NewEnroller(garam.NewClient(garamAddress, enrollmentTLS), store,
-					garamEnrollmentTokenFile, garamCertificateFile, garamKeyFile, garamTrustFile,
-					garamEnrollmentTokenInterval)
-				if err := mgr.Add(enroller); err != nil {
-					setupLog.Error(err, "Failed to add the garam enroller", "file", garamEnrollmentTokenFile)
-					os.Exit(1)
-				}
-			}
-		} else {
-			setupLog.Info("Renewing nothing and enrolling nothing: garam-credential-secret is unset")
-		}
 	} else {
 		setupLog.Info("Reading no definitions and reporting nothing: garam-address is unset")
 	}
 
 	if controlAddress != "" {
-		// This operator is the controller its own certificate names, the same
-		// pair it presents to garam and reads at each handshake; only the root
-		// its peer is verified against differs (ADR 0043).
-		tlsConfig, err := garam.OperatorTLS(enrolling, garamCertificateFile, garamKeyFile, controlTrustFile)
+		// This operator is the controller its own GRN names. It presents a token
+		// garam minted for the control service, which has garam prove it on each
+		// request; only the root the control service is verified against is the
+		// control's (ADR 0043, ADR 0072).
+		if controlGRN == "" {
+			setupLog.Error(errors.New("control-grn is required where control-address is set"),
+				"Failed to configure the connection to the control service")
+			os.Exit(1)
+		}
+		controlTLS, err := garam.ServerTLS(controlTrustFile)
 		if err != nil {
 			setupLog.Error(err, "Failed to configure the connection to the control service")
 			os.Exit(1)
@@ -410,7 +405,11 @@ func main() {
 				"Failed to render agents")
 			os.Exit(1)
 		}
-		controlClient := desired.NewClient(controlAddress, tlsConfig)
+		controlClient := desired.NewClient(controlAddress, &machinetoken.Transport{
+			Source:         tokenSource(controlGRN, "control"),
+			Base:           &http.Transport{TLSClientConfig: controlTLS},
+			ClientIDHeader: desired.ControllerHeader,
+		})
 		puller := desired.NewPuller(controlClient, renderer.NewAgent(mgr.GetClient(), namespace, agentImage))
 		if err := mgr.Add(puller); err != nil {
 			setupLog.Error(err, "Failed to add the desired-state puller", "address", controlAddress)
@@ -434,11 +433,10 @@ func main() {
 			setupLog.Error(err, "Failed to add the managed-credential recoverer", "address", controlAddress)
 			os.Exit(1)
 		}
-		// Each managed agent's placement is registered with the control service,
-		// and presented again under each renewed leaf (#212, #218).
+		// Each managed agent's placement is registered with the control service
+		// (#212, #218).
 		registrar := desired.NewRegistrar(controlClient,
-			placement.NewPods(mgr.GetClient(), mgr.GetAPIReader(), namespace),
-			desired.LeafFingerprint(garamCertificateFile))
+			placement.NewPods(mgr.GetClient(), mgr.GetAPIReader(), namespace))
 		if err := mgr.Add(registrar); err != nil {
 			setupLog.Error(err, "Failed to add the placement registrar", "address", controlAddress)
 			os.Exit(1)

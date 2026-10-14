@@ -3,7 +3,6 @@ package garam
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,28 +21,18 @@ const requestTimeout = 30 * time.Second
 
 // Client reads this operator's definitions from garam's machine listener and
 // claims them. What the caller is scopes both: garam answers the definitions
-// naming the certificate's operator and no others.
+// naming the token's operator and no others.
 type Client struct {
 	address string
 	http    *http.Client
 }
 
 // NewClient returns a Client reaching garam's machine listener at address, a
-// host and port, over the given TLS configuration.
-func NewClient(address string, tlsConfig *tls.Config) *Client {
+// host and port, through transport, which presents this operator's token.
+func NewClient(address string, transport http.RoundTripper) *Client {
 	return &Client{
 		address: address,
-		http: &http.Client{
-			Timeout: requestTimeout,
-			Transport: &http.Transport{
-				TLSClientConfig: tlsConfig,
-				// One connection per call. A reused connection performs no
-				// handshake, and a handshake is where the certificate on disk
-				// is read: kept alive between polls, this client would go on
-				// presenting the certificate it started with.
-				DisableKeepAlives: true,
-			},
-		},
+		http:    &http.Client{Timeout: requestTimeout, Transport: transport},
 	}
 }
 
@@ -121,8 +110,8 @@ func (c *Client) ReportProvisioningState(ctx context.Context, agent GRN, epoch i
 	err := c.send(ctx, http.MethodPost, "/agents/"+url.PathEscape(string(agent))+"/provisioning-state", report, nil)
 
 	// Discriminated the way each refusal allows: by kind where garam answers one
-	// status for two facts, as RenewIdentity does, and by status where it
-	// answers one fact, as IssueAgentCertificate does for this same 403.
+	// status for two facts, and by status where it answers one fact, as
+	// IssueAgentCertificate does for this same 403.
 	var refused *refusal
 	if errors.As(err, &refused) {
 		switch {
@@ -138,76 +127,10 @@ func (c *Client) ReportProvisioningState(ctx context.Context, agent GRN, epoch i
 	return nil
 }
 
-// garam tells its refusals apart by kind rather than by status: a renewal
-// refused as too early and one refused as superseded are both answered 409
-// (garam@1150b88:internal/wire/error.go:16), and the two ask for opposite
-// things — wait, and mint out of band.
-const (
-	kindFailedPrecondition = "failed_precondition"
-	kindAlreadyExists      = "already_exists"
-)
-
-// RenewIdentity replaces the certificate this operator authenticates with, by
-// presenting the one it currently holds. The route names no subject: what is
-// replaced is what the connection authenticated as.
-//
-// A renewal garam admits no sooner answers [ErrRenewalTooEarly], and one of a
-// certificate it has already replaced answers [ErrCredentialSuperseded].
-//
-// The answer also carries the authority that signed the certificate and the
-// root garam is verified against. Neither is read here: what this operator
-// verifies garam against is the deployment's to supply, and moving it is not
-// this call's to do.
-func (c *Client) RenewIdentity(ctx context.Context) (Credential, error) {
-	var answered credentialPayload
-	err := c.send(ctx, http.MethodPost, "/identity/certificate", nil, &answered)
-
-	var refused *refusal
-	if errors.As(err, &refused) {
-		switch refused.kind {
-		case kindFailedPrecondition:
-			return Credential{}, fmt.Errorf("renew the certificate this operator authenticates with: %w: %w", ErrRenewalTooEarly, refused)
-		case kindAlreadyExists:
-			return Credential{}, fmt.Errorf("renew the certificate this operator authenticates with: %w: %w", ErrCredentialSuperseded, refused)
-		}
-	}
-	if err != nil {
-		return Credential{}, fmt.Errorf("renew the certificate this operator authenticates with: %w", err)
-	}
-	return answered.credential()
-}
-
-// Enroll obtains this operator's first certificate: garam signs the request for
-// the operator the token names, and the token is spent
-// (garam@b16a896:api/machine.yaml:147-198). It is the one route on this
-// listener a caller reaches with no certificate, which is what a caller that
-// has none needs.
-//
-// The request's own signature is checked before anything is sent. The token is
-// spent by the attempt whether or not the attempt succeeds, so a request garam
-// would refuse costs a registration rather than a retry.
-//
-// A token garam refuses answers [ErrTokenNotUsable], and nothing retries: one
-// token is one attempt. What comes back is not obtainable again — garam
-// generated no key and holds none — so store it before treating it as obtained.
-func (c *Client) Enroll(ctx context.Context, token string, request CertificateRequest) (EnrolledCertificate, error) {
-	if err := request.checkSignature(); err != nil {
-		return EnrolledCertificate{}, fmt.Errorf("enroll this operator: %w", err)
-	}
-
-	var answered enrolledCertificatePayload
-	presented := enrollment{Token: token, CertificateRequestPEM: string(request.RequestPEM)}
-	err := c.send(ctx, http.MethodPost, "/enrollment", presented, &answered)
-
-	var refused *refusal
-	if errors.As(err, &refused) && refused.status == http.StatusUnauthorized {
-		return EnrolledCertificate{}, fmt.Errorf("enroll this operator: %w: %w", ErrTokenNotUsable, refused)
-	}
-	if err != nil {
-		return EnrolledCertificate{}, fmt.Errorf("enroll this operator: %w", err)
-	}
-	return answered.enrolledCertificate()
-}
+// kindFailedPrecondition is the kind garam answers a report at a superseded
+// epoch under. garam tells its refusals apart by kind rather than by status
+// (garam@1150b88:internal/wire/error.go:16).
+const kindFailedPrecondition = "failed_precondition"
 
 // send performs one request against the machine listener, carrying body where
 // there is one, and decodes what it answered into out.
@@ -368,20 +291,6 @@ func (p assignmentPayload) assignment() (Assignment, error) {
 	return Assignment{Agent: GRN(p.GRN), Operator: GRN(p.Operator), Epoch: p.Epoch}, nil
 }
 
-// credentialPayload is a certificate and its key as the machine listener
-// answers them.
-type credentialPayload struct {
-	CertificatePEM string `json:"certificatePem"`
-	PrivateKeyPEM  string `json:"privateKeyPem"`
-}
-
-func (p credentialPayload) credential() (Credential, error) {
-	if p.CertificatePEM == "" || p.PrivateKeyPEM == "" {
-		return Credential{}, errors.New("a renewal garam answered carries no certificate or no key")
-	}
-	return Credential{CertificatePEM: []byte(p.CertificatePEM), KeyPEM: []byte(p.PrivateKeyPEM)}, nil
-}
-
 // agentCredentialPayload is an agent's certificate as the machine listener
 // answers it.
 type agentCredentialPayload struct {
@@ -403,46 +312,6 @@ func (p agentCredentialPayload) agentCredential() (AgentCredential, error) {
 		CertificatePEM: []byte(p.CertificatePEM),
 		KeyPEM:         []byte(p.PrivateKeyPEM),
 		IssuerPEM:      []byte(p.IssuerPEM),
-		ServerRootPEM:  []byte(p.ServerRootPEM),
-		NotAfter:       p.NotAfter,
-	}, nil
-}
-
-// enrollment is what this operator presents to enroll: the token it was given
-// and the request over the key it generated. The token lives in this value for
-// the length of the call and in nothing that outlives it.
-type enrollment struct {
-	Token                 string `json:"token"`
-	CertificateRequestPEM string `json:"certificateRequestPem"`
-}
-
-// enrolledCertificatePayload is the certificate an enrollment answers. garam
-// answers no private key here, because it generated none
-// (garam@b16a896:api/machine.yaml:813-820).
-type enrolledCertificatePayload struct {
-	GRN            string    `json:"grn"`
-	CertificatePEM string    `json:"certificatePem"`
-	ServerRootPEM  string    `json:"serverRootPem"`
-	NotAfter       time.Time `json:"notAfter"`
-}
-
-// enrolledCertificate reads what an enrollment answered, refusing only an
-// answer with no certificate in it.
-//
-// It is stricter nowhere else on purpose, where [agentCredentialPayload] checks
-// every field: an agent's certificate can be asked for again and an enrollment
-// cannot, so discarding one over a field this operator does not act on would
-// cost the certificate and the token together. The garam server root is carried
-// to be compared and not to be stored, and the issuer that signed the
-// certificate is not carried at all: that authority signs no listener, and what
-// verifies garam is the deployment's to supply.
-func (p enrolledCertificatePayload) enrolledCertificate() (EnrolledCertificate, error) {
-	if p.CertificatePEM == "" {
-		return EnrolledCertificate{}, errors.New("an enrollment garam answered carries no certificate")
-	}
-	return EnrolledCertificate{
-		Operator:       GRN(p.GRN),
-		CertificatePEM: []byte(p.CertificatePEM),
 		ServerRootPEM:  []byte(p.ServerRootPEM),
 		NotAfter:       p.NotAfter,
 	}, nil

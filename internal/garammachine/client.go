@@ -18,14 +18,26 @@ const (
 	// version with 400 (api/machine.yaml).
 	contractHeader = "Garam-Contract-Version"
 
-	// OperationAuthority is the contract of introspection and the controller proof (garam@f2ac780).
-	OperationAuthority = "operation-authority.v1"
-	// ManagedEnrollment is the contract of managed create (garam@7ca51b9).
+	// operationHeader carries an operation authority or reference on a request whose Authorization
+	// carries this service's token (garam@9ba35c3 api/machine.yaml operationHeader).
+	operationHeader = "Garam-Operation"
+
+	// OperationAuthority is the contract of introspection and the controller proof, under a token
+	// (garam@9ba35c3).
+	OperationAuthority = "operation-authority.v2"
+	// AgentCutover is the contract of a legacy agent's cutover stages under a token (garam@9ba35c3,
+	// ADR-0086).
+	AgentCutover = "agent-cutover.v2"
+	// ExecutionFenceToken is the contract of the execution routes that forward no agent credential,
+	// under a token (garam@9ba35c3).
+	ExecutionFenceToken = "execution-fence.v2"
+
+	// ManagedEnrollment and ExecutionFence are the certificate contracts of the calls bound to an
+	// agent's credential: managed create and the first certificate, activation, execution
+	// introspection and credential recovery. garam refuses them beside a token, and they move with
+	// the agents' own credentials (#355).
 	ManagedEnrollment = "managed-enrollment.v1"
-	// ExecutionFence is the contract of garam's activation and execution introspection.
-	ExecutionFence = "execution-fence.v1"
-	// AgentCutover is the contract of a legacy agent's cutover stages (garam@1a5273d, ADR-0086).
-	AgentCutover = "agent-cutover.v1"
+	ExecutionFence    = "execution-fence.v1"
 
 	// maxAnswerBytes bounds an answer read from garam.
 	maxAnswerBytes = 1 << 20
@@ -48,7 +60,7 @@ func (e *ContractError) Error() string {
 	return fmt.Sprintf("%s answered %d under contract %q, want %q", e.Path, e.Status, e.Got, e.Want)
 }
 
-// Client calls garam's machine listener as the operator its client certificate names.
+// Client calls garam's machine listener as the operator its token names.
 type Client struct {
 	baseURL string
 	client  *http.Client
@@ -58,8 +70,8 @@ type Client struct {
 	Backoff  time.Duration
 }
 
-// New returns a Client calling the machine listener at baseURL through client, which carries
-// this service's operator certificate.
+// New returns a Client calling the machine listener at baseURL through client, whose transport
+// presents this service's token.
 func New(baseURL string, client *http.Client) *Client {
 	return &Client{baseURL: strings.TrimSuffix(baseURL, "/"), client: client, Attempts: 3, Backoff: 200 * time.Millisecond}
 }
@@ -90,14 +102,15 @@ func (c *Client) Post(ctx context.Context, contract, path string, body any) (Ans
 
 // Call is one request to garam's machine listener. Body is sent as JSON, and nothing where it is
 // nil; Raw, where set, is sent in its place as exactly these bytes, for a route whose authority
-// binds the digest of the body garam receives. Authorization, where set, is sent as that header.
+// binds the digest of the body garam receives. Operation, where set, is sent in the Garam-Operation
+// header.
 type Call struct {
-	Method        string
-	Contract      string
-	Path          string
-	Body          any
-	Raw           []byte
-	Authorization string
+	Method    string
+	Contract  string
+	Path      string
+	Body      any
+	Raw       []byte
+	Operation string
 }
 
 // Send sends call and returns garam's decided answer, retried as Post is.
@@ -143,8 +156,8 @@ func (c *Client) sendOnce(ctx context.Context, call Call, payload []byte) (Answe
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set(contractHeader, contract)
-	if call.Authorization != "" {
-		req.Header.Set("Authorization", call.Authorization)
+	if call.Operation != "" {
+		req.Header.Set(operationHeader, call.Operation)
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {

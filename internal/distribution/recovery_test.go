@@ -34,7 +34,7 @@ func (e *env) openRecovery(t *testing.T, agent string) {
 // prepareRecovery posts body for agent's recovery with client, and returns the status and the answer.
 func (e *env) prepareRecovery(t *testing.T, agent, body string) (int, map[string]any) {
 	t.Helper()
-	resp, err := e.withCert.Post(e.server.URL+"/v1/operators/self/agents/"+agent+"/recovery-requests",
+	resp, err := e.withToken.Post(e.server.URL+"/v1/operators/self/agents/"+agent+"/recovery-requests",
 		"application/json", strings.NewReader(body))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()

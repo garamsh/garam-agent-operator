@@ -382,11 +382,7 @@ func (m *Memory) RegisterPlacement(_ context.Context, in definition.PlacementInp
 	}
 	switch action {
 	case definition.PlacementRepeat:
-		return clonePlacement(*same), false, nil
-	case definition.PlacementRefresh:
-		same.LeafDER = slices.Clone(in.LeafDER)
-		stored[same.Request.PodUID] = *same
-		return clonePlacement(*same), false, nil
+		return *same, false, nil
 	}
 	if stored == nil {
 		stored = map[string]definition.Placement{}
@@ -396,9 +392,9 @@ func (m *Memory) RegisterPlacement(_ context.Context, in definition.PlacementInp
 		current.Superseded = true
 		stored[current.Request.PodUID] = *current
 	}
-	p := definition.Placement{Agent: in.Agent, Controller: in.Controller, Request: in.Request, LeafDER: slices.Clone(in.LeafDER)}
+	p := definition.Placement{Agent: in.Agent, Controller: in.Controller, Request: in.Request}
 	stored[p.Request.PodUID] = p
-	return clonePlacement(p), true, nil
+	return p, true, nil
 }
 
 func (m *Memory) CurrentPlacement(_ context.Context, agent definition.GRN) (definition.Placement, error) {
@@ -406,7 +402,7 @@ func (m *Memory) CurrentPlacement(_ context.Context, agent definition.GRN) (defi
 	defer m.mu.Unlock()
 	for _, p := range m.placements[agent] {
 		if !p.Superseded {
-			return clonePlacement(p), nil
+			return p, nil
 		}
 	}
 	return definition.Placement{}, definition.ErrNotFound
@@ -672,11 +668,6 @@ func cloneCertificate(c definition.InitialCertificate) definition.InitialCertifi
 		c.Issued = &issued
 	}
 	return c
-}
-
-func clonePlacement(p definition.Placement) definition.Placement {
-	p.LeafDER = slices.Clone(p.LeafDER)
-	return p
 }
 
 func cloneImport(imp definition.CutoverImport) definition.CutoverImport {

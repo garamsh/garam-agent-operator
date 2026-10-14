@@ -76,8 +76,7 @@ func startRegistrar(t *testing.T, status int, kind string, store PlacementStore)
 	t.Cleanup(server.Close)
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate())
-	registrar := NewRegistrar(NewClient(server.Listener.Addr().String(),
-		&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}), store, func() (string, error) { return "leaf-a", nil })
+	registrar := NewRegistrar(NewClient(server.Listener.Addr().String(), &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}), store)
 	registrar.pass, registrar.transientFirst, registrar.transientLast, registrar.refusedWait =
 		time.Millisecond, time.Millisecond, time.Millisecond, time.Millisecond
 
@@ -143,7 +142,7 @@ func TestRegistrarForgetsAnAgentWithNoCurrentPlacement(t *testing.T) {
 
 	store := &fixedPlacements{}
 	store.set(placementOn(firstPod))
-	registrar := NewRegistrar(nil, store, func() (string, error) { return "leaf-a", nil })
+	registrar := NewRegistrar(nil, store)
 	registrar.registrations[agentA] = &registration{placement: placementOn(firstPod).Placement, superseded: true}
 
 	// The control: an agent still listed keeps what is remembered of it.

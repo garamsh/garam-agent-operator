@@ -140,7 +140,7 @@ func startPuller(t *testing.T, renderer Renderer, refused time.Duration, script 
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate())
 
-	puller := NewPuller(NewClient(server.Listener.Addr().String(), &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}), renderer)
+	puller := NewPuller(NewClient(server.Listener.Addr().String(), &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}), renderer)
 	puller.transientFirst, puller.transientLast, puller.refusedWait = time.Millisecond, time.Millisecond, refused
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -314,7 +314,7 @@ func TestPullerOffersEachAnswersOpenRecoveriesWhole(t *testing.T) {
 	server := httptest.NewTLSServer(feed)
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate())
-	puller := NewPuller(NewClient(server.Listener.Addr().String(), &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}),
+	puller := NewPuller(NewClient(server.Listener.Addr().String(), &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}),
 		&recordingRenderer{})
 	puller.OfferRecoveriesTo(offers)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -1,6 +1,6 @@
 # ADR 0022: End the enrollment on a certificate that has not expired, rather than on one this operator can read
 
-> Status: accepted
+> Status: superseded by ADR-0072
 > Date: 2026-09-05
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

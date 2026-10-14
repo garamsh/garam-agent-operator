@@ -22,7 +22,7 @@ const agent = "grn:acme:default:agent:1e9ac1"
 
 // seen is what the stand-in garam last received.
 type seen struct {
-	method, target, contract, authorization, body string
+	method, target, contract, operation, body string
 }
 
 // stand is a stand-in garam answering status and answer under contract, counting its calls.
@@ -32,7 +32,7 @@ func stand(t *testing.T, contract string, status int, answer string) (*lifecycle
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		*calls++
-		*got = seen{r.Method, r.URL.RequestURI(), r.Header.Get("Garam-Contract-Version"), r.Header.Get("Authorization"), string(raw)}
+		*got = seen{r.Method, r.URL.RequestURI(), r.Header.Get("Garam-Contract-Version"), r.Header.Get("Garam-Operation"), string(raw)}
 		w.Header().Set("Garam-Contract-Version", contract)
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(answer))
@@ -55,7 +55,7 @@ func TestGaram_RecoverSendsTheBodyExactlyUnderTheHandoff(t *testing.T) {
 		Lineage: "lineage-2", CertificatePEM: "cert", IssuerPEM: "issuer", ServerRootPEM: "root",
 	}, recovered)
 	assert.Equal(t, seen{http.MethodPost, "/agents/" + agent + "/credential-recovery", garammachine.ExecutionFence,
-		"Garam-Operation recover-handoff", string(body)}, *got)
+		"recover-handoff", string(body)}, *got)
 }
 
 func TestGaram_RecoverAnswersGaramsRefusalUndecidedAndForeignContract(t *testing.T) {
@@ -81,12 +81,12 @@ func TestGaram_RecoverAnswersGaramsRefusalUndecidedAndForeignContract(t *testing
 }
 
 func TestGaram_DeactivateEndsTheActivation(t *testing.T) {
-	g, got, _ := stand(t, garammachine.ExecutionFence, http.StatusOK, `{}`)
+	g, got, _ := stand(t, garammachine.ExecutionFenceToken, http.StatusOK, `{}`)
 	require.NoError(t, g.Deactivate(context.Background(), agent, "activation-1"))
 	assert.Equal(t, seen{http.MethodPost, "/agents/" + agent + "/activations/activation-1/deactivation",
-		garammachine.ExecutionFence, "", ""}, *got)
+		garammachine.ExecutionFenceToken, "", ""}, *got)
 
-	g, _, _ = stand(t, garammachine.ExecutionFence, http.StatusForbidden, `{"kind":"permission_denied","message":"no"}`)
+	g, _, _ = stand(t, garammachine.ExecutionFenceToken, http.StatusForbidden, `{"kind":"permission_denied","message":"no"}`)
 	err := g.Deactivate(context.Background(), agent, "activation-1")
 	var refused *console.LifecycleRefusal
 	require.ErrorAs(t, err, &refused)

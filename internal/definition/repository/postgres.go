@@ -771,12 +771,6 @@ func (p *Postgres) registerPlacement(ctx context.Context, in definition.Placemen
 		case definition.PlacementRepeat:
 			placement = *same
 			return nil
-		case definition.PlacementRefresh:
-			if _, err := tx.Exec(ctx, refreshPlacement, string(in.Agent), in.Request.PodUID, in.LeafDER); err != nil {
-				return err
-			}
-			placement, placement.LeafDER = *same, in.LeafDER
-			return nil
 		}
 		// Revoked first: the index admits one current placement per agent.
 		if _, err := tx.Exec(ctx, revokePlacement, string(in.Agent)); err != nil {
@@ -784,10 +778,10 @@ func (p *Postgres) registerPlacement(ctx context.Context, in definition.Placemen
 		}
 		r := in.Request
 		if _, err := tx.Exec(ctx, insertPlacement, string(in.Agent), r.PodUID, in.Controller, r.Epoch, r.PVCUID,
-			r.TokenSHA256, r.Previous.PodUID, r.Previous.WriterStoppedSHA256, in.LeafDER); err != nil {
+			r.TokenSHA256, r.Previous.PodUID, r.Previous.WriterStoppedSHA256); err != nil {
 			return err
 		}
-		placement = definition.Placement{Agent: in.Agent, Controller: in.Controller, Request: r, LeafDER: in.LeafDER}
+		placement = definition.Placement{Agent: in.Agent, Controller: in.Controller, Request: r}
 		stored = true
 		return nil
 	})
@@ -806,7 +800,7 @@ func scanPlacement(row pgx.Row, agent definition.GRN) (*definition.Placement, er
 	p := definition.Placement{Agent: agent}
 	r := &p.Request
 	err := row.Scan(&p.Controller, &r.Epoch, &r.PVCUID, &r.TokenSHA256, &r.Previous.PodUID,
-		&r.Previous.WriterStoppedSHA256, &p.LeafDER, &p.Superseded, &r.PodUID)
+		&r.Previous.WriterStoppedSHA256, &p.Superseded, &r.PodUID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

@@ -40,7 +40,7 @@ func (g *garam) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := g.statuses[min(n, len(g.statuses)-1)]
-	w.Header().Set("Garam-Contract-Version", "operation-authority.v1")
+	w.Header().Set("Garam-Contract-Version", "operation-authority.v2")
 	w.WriteHeader(status)
 	if status == http.StatusOK {
 		_, _ = w.Write([]byte(bindingAnswer))
@@ -62,7 +62,7 @@ func TestGaram_ReadsTheBinding(t *testing.T) {
 	g := &garam{statuses: []int{200}}
 	b, err := introspect(t, g)
 	require.NoError(t, err)
-	assert.Equal(t, "operation-authority.v1", g.contract)
+	assert.Equal(t, "operation-authority.v2", g.contract)
 	assert.Equal(t, console.Binding{
 		OperationRef: "ref-1", GrantID: "grant-1", Org: "grn:root:default:org:acme",
 		Actor: "grn:acme:default:user:7c1d", Audience: "grn:root:default:operator:control",
@@ -112,7 +112,7 @@ func TestGaram_ContractErrorIsNotARefusal(t *testing.T) {
 func TestIntrospect_ReadsTheBoundRequestTarget(t *testing.T) {
 	answerWith := func(binding string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Garam-Contract-Version", "operation-authority.v1")
+			w.Header().Set("Garam-Contract-Version", "operation-authority.v2")
 			_, _ = w.Write([]byte(binding))
 		}
 	}

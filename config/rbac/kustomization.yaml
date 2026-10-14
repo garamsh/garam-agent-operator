@@ -9,8 +9,6 @@ resources:
 - role_binding.yaml
 - leader_election_role.yaml
 - leader_election_role_binding.yaml
-- garam_credential_role.yaml
-- garam_credential_role_binding.yaml
 - garam_construction_role.yaml
 - garam_construction_role_binding.yaml
 # The following RBAC configurations are used to protect

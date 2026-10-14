@@ -58,7 +58,7 @@ func TestDesired_GaramsProofUnderAnotherContractOrNoneIsRefused503(t *testing.T)
 		kind     string
 	}{
 		{name: "the contract asked", contract: garammachine.OperationAuthority, status: http.StatusOK},
-		{name: "another contract", contract: "operation-authority.v2", status: http.StatusServiceUnavailable,
+		{name: "another contract", contract: "operation-authority.v1", status: http.StatusServiceUnavailable,
 			kind: kindGaramContractUnsupported},
 		{name: "no contract", omit: true, status: http.StatusServiceUnavailable, kind: kindGaramContractUnsupported},
 	} {
@@ -77,7 +77,7 @@ func TestDesired_GaramsProofUnderAnotherContractOrNoneIsRefused503(t *testing.T)
 			t.Cleanup(server.Close)
 			e.server = server
 			// Every httptest TLS server serves one certificate, so the env's client trusts this one.
-			got := e.desired(t, e.withCert, "")
+			got := e.desired(t, e.withToken, "")
 			assert.Equal(t, tc.status, got.status, got.message)
 			assert.Equal(t, tc.kind, got.kind)
 			if tc.status == http.StatusOK {
@@ -94,13 +94,13 @@ func TestRequestCertificate_GaramsIssuanceUnderAnotherContractIsRefused503AndRet
 	body := certificateBody("c1", epoch, csrPEM(t, p256))
 	e.issuer.answer(fmt.Errorf("issue initial certificate: %w", definition.ErrGaramContractUnsupported))
 
-	status, raw, out := e.requestCertificate(t, e.withCert, agentA, body)
+	status, raw, out := e.requestCertificate(t, e.withToken, agentA, body)
 	assert.Equal(t, http.StatusServiceUnavailable, status, string(raw))
 	assert.Equal(t, kindGaramContractUnsupported, out["kind"])
 
 	// Control: once garam answers under the contract, the same request is issued: nothing was
 	// cleared or decided by the unread answer.
 	e.issuer.answer(nil)
-	status, raw, _ = e.requestCertificate(t, e.withCert, agentA, body)
+	status, raw, _ = e.requestCertificate(t, e.withToken, agentA, body)
 	assert.Equal(t, http.StatusCreated, status, string(raw))
 }

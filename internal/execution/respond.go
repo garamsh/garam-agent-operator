@@ -48,6 +48,10 @@ var (
 	errActivationSuperseded = &refusal{http.StatusConflict, kindActivationSuperseded, "garam refused the activation as superseded"}
 	errGenerationNotCurrent = &refusal{http.StatusConflict, kindGenerationNotCurrent, "the report is not of the agent's active generation"}
 	errUndecided            = &refusal{http.StatusServiceUnavailable, kindUndecided, "garam or the store could not decide"}
+	// errControllerUnproven answers ErrControllerUnprovable, under agent-execution.v1's closed list
+	// of kinds.
+	errControllerUnproven = &refusal{http.StatusForbidden, kindNotAuthorized,
+		"control cannot prove the placement's controller for an activation until agents hold garam tokens (#355)"}
 )
 
 // errorBody is every refusal's answer.

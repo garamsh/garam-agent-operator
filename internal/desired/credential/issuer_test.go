@@ -198,7 +198,7 @@ func issuer(route *routeDouble, store desired.CredentialStore) *desired.Issuer {
 	roots := x509.NewCertPool()
 	roots.AddCert(route.server.Certificate())
 	return desired.NewIssuer(desired.NewClient(route.server.Listener.Addr().String(),
-		&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}), store)
+		&http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}), store)
 }
 
 // run runs i until stop is called or the spec ends, and returns stop, which
