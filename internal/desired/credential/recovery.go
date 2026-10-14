@@ -79,9 +79,14 @@ func (s *Secrets) SaveRecovery(ctx context.Context, agent string, request desire
 // lineage; its own write of tokens it minted before is refused, because that
 // write names the version it read (ADR 0073).
 func (s *Secrets) Recovered(ctx context.Context, agent, lineage string) error {
-	placed, err := s.exists(ctx, agentname.CredentialsSecret(agent))
-	if err != nil {
-		return err
+	// Read uncached: a credential the cache does not show yet would go
+	// unrecorded, and keep tokens of the lineage the recovery ended.
+	secret := &metav1.PartialObjectMetadata{}
+	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
+	err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: agentname.CredentialsSecret(agent)}, secret)
+	placed := err == nil
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("get the credential of %s: %w", agent, err)
 	}
 	if placed {
 		patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]any{
