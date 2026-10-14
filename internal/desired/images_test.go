@@ -144,3 +144,12 @@ func TestImageReporterReportsAgainAfterAFailureOrARefusalUntilAccepted(t *testin
 	g.Expect(returned).To(BeTrue())
 	g.Expect(route.received()).To(HaveLen(3), "a 503 and a 403 are each asked again, and the 204 ends it")
 }
+
+func TestImageReporterSendsNothingAndStopsWhereThereIsNoImageToReport(t *testing.T) {
+	g := NewWithT(t)
+
+	route, returned := runReporter(t, fixedManager{err: errors.New("no Pod")}, nil, http.StatusBadRequest)
+
+	g.Expect(returned).To(BeTrue(), "the reporter returns rather than sending a report the service refuses")
+	g.Expect(route.received()).To(BeEmpty())
+}

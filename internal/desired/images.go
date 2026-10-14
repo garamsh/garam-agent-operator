@@ -97,8 +97,9 @@ func NewImageReporter(client *Client, manager ManagerImager, configured []Image)
 	}
 }
 
-// Start reports until one report is accepted or ctx is cancelled. It returns no
-// error, because an error from a Runnable stops the manager.
+// Start reports until one report is accepted or ctx is cancelled, and sends
+// nothing where there is no image to report. It returns no error, because an
+// error from a Runnable stops the manager.
 func (r *ImageReporter) Start(ctx context.Context) error {
 	log := logf.FromContext(ctx).WithName("desired")
 	var backoff time.Duration
@@ -112,6 +113,13 @@ func (r *ImageReporter) Start(ctx context.Context) error {
 		case !omitted:
 			omitted = true
 			log.Error(err, "Reporting the images this operator runs without the manager's own")
+		}
+
+		if len(images) == 0 {
+			// The service refuses a report naming no image, so asking again would never end.
+			log.Info("Reporting no images: no image flag is set and the manager's own image cannot be read")
+
+			return nil
 		}
 
 		err = r.client.ReportImages(ctx, images)
