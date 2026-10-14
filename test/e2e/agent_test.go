@@ -555,12 +555,67 @@ var _ = Describe("Agent workload", Ordered, func() {
 		// #311, ADR 0061. A Pod scheduled to a node whose writers were never
 		// created shows no terminated container, so the fence held it for a hand
 		// release. It is released on the kubelet's terminal phase instead.
+		//
+		// The stall is a state volume the kubelet refuses to mount: a hostPath
+		// volume that has mount options set. Mounting can block every container,
+		// the workspace included. A missing credential no longer does, because a
+		// Pod with no adapter mounts no credential (ADR 0073).
 		const (
-			stuck       = "e2e-never-created"
-			stuckPod    = stuck + "-0"
-			stuckSecret = stuck + "-credentials"
+			stuck        = "e2e-never-created"
+			stuckPod     = stuck + "-0"
+			stuckSecret  = stuck + "-credentials"
+			stuckClaim   = "state-" + stuckPod
+			stuckVolume  = stuck + "-state"
+			stuckOptions = "e2e-unsupported"
 		)
-		_, err := kubectlIn("create", "secret", "generic", stuckSecret, "--from-literal=token="+credentialsToken)
+		// Runs last, once nothing mounts the claim any more.
+		DeferCleanup(func() {
+			_, _ = kubectlIn("delete", "pvc", stuckClaim, "--ignore-not-found", "--wait=false")
+			_, _ = utils.Run(exec.Command("kubectl", "delete", "pv", stuckVolume, "--ignore-not-found", "--wait=false"))
+		})
+		// The claim the StatefulSet would make for the agent's state, bound in
+		// advance to a volume of this spec's own. The class has no StorageClass
+		// object, so no provisioner serves it and nothing else binds the volume.
+		volume := exec.Command("kubectl", "apply", "-f", "-")
+		volume.Stdin = strings.NewReader(fmt.Sprintf(`
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: %[1]s
+spec:
+  capacity:
+    storage: 64Mi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: %[1]s
+  claimRef:
+    namespace: %[2]s
+    name: %[3]s
+  hostPath:
+    path: /tmp/%[1]s
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: %[3]s
+  namespace: %[2]s
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: %[1]s
+  volumeName: %[1]s
+  resources:
+    requests:
+      storage: 64Mi
+`, stuckVolume, agentTestNamespace, stuckClaim))
+		_, err := utils.Run(volume)
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			g.Expect(kubectlIn("get", "pvc", stuckClaim, "-o", "jsonpath={.status.phase}")).To(Equal("Bound"))
+			g.Expect(kubectlIn("get", "pvc", stuckClaim, "-o", "jsonpath={.spec.volumeName}")).To(Equal(stuckVolume))
+		}, time.Minute, time.Second).Should(Succeed())
+
+		_, err = kubectlIn("create", "secret", "generic", stuckSecret, "--from-literal=token="+credentialsToken)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { _, _ = kubectlIn("delete", "secret", stuckSecret, "--ignore-not-found") })
 		// Runs after deleteAgent below. Where the fence held the Pod, which is
@@ -576,7 +631,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 			"credentialsSecretName: "+credentialsSecret, "credentialsSecretName: "+stuckSecret, 1))
 		_, err = utils.Run(apply)
 		Expect(err).NotTo(HaveOccurred())
-		// Registered after both cleanups above, so it runs first, while the
+		// Registered after every cleanup above, so it runs first, while the
 		// manager runs.
 		DeferCleanup(func() { deleteAgent(stuck) })
 		podField := func(path string) (string, error) {
@@ -591,11 +646,21 @@ var _ = Describe("Agent workload", Ordered, func() {
 			g.Expect(phase).To(Equal("Running"))
 			first, err = podField("{.metadata.uid}")
 			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(podField(`{.spec.volumes[?(@.name=="state")].persistentVolumeClaim.claimName}`)).
+				To(Equal(stuckClaim), "the agent's state is not on the claim this spec bound")
 		}, 3*time.Minute, time.Second).Should(Succeed())
 
-		By("removing the credential, then the Pod, so the next one is scheduled and can create no container")
-		_, err = kubectlIn("delete", "secret", stuckSecret)
+		By("setting mount options on the state volume, then deleting the Pod, so the next one can create no container")
+		// spec.mountOptions is one of the few fields of a PersistentVolume that
+		// can be changed after it is created. The kubelet reads the volume when
+		// it mounts it for a new Pod, and refuses to mount a hostPath volume
+		// that has mount options. The running Pod is already mounted and does
+		// not notice.
+		_, err = utils.Run(exec.Command("kubectl", "patch", "pv", stuckVolume, "--type", "merge", "-p",
+			`{"spec":{"mountOptions":["`+stuckOptions+`"]}}`))
 		Expect(err).NotTo(HaveOccurred())
+		Expect(utils.Run(exec.Command("kubectl", "get", "pv", stuckVolume, "-o", "jsonpath={.spec.mountOptions[*]}"))).
+			To(Equal(stuckOptions))
 		_, err = kubectlIn("delete", "pod", stuckPod, "--wait=false")
 		Expect(err).NotTo(HaveOccurred())
 		var stuckUID string
@@ -614,6 +679,9 @@ var _ = Describe("Agent workload", Ordered, func() {
 			g.Expect(waiting).NotTo(BeEmpty(), "the agent's container is not reported waiting")
 			g.Expect(podField(`{.status.containerStatuses[*].containerID}`)).To(BeEmpty(),
 				"a writer of the replacement was created")
+			g.Expect(kubectlIn("get", "events", "--field-selector", "involvedObject.uid="+stuckUID+",reason=FailedMount",
+				"-o", "jsonpath={.items[*].message}")).To(ContainSubstring("mount options are not supported"),
+				"the replacement is not stalled on its state volume")
 		}, 3*time.Minute, time.Second).Should(Succeed())
 
 		By("deleting the Pod no writer was created in, which is released once the kubelet marks it Failed")
