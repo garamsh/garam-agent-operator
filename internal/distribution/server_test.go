@@ -50,12 +50,17 @@ type prover struct {
 	epochs   map[string]string
 	tokens   []string
 	sessions int
+	// refused holds the tokens garam refuses as not live, its 422.
+	refused map[string]bool
 }
 
 func (p *prover) Prove(_ context.Context, c, token, agent string) (distribution.Proof, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.tokens = append(p.tokens, token)
+	if p.refused[token] {
+		return distribution.Proof{}, distribution.ErrTokenRefused
+	}
 	if agent == "" {
 		p.sessions++
 		if p.session != nil {

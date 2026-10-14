@@ -48,6 +48,7 @@ The calls bound to an agent's credential are different: managed create and the i
    - The control service refuses 401, without asking garam, a request with no bearer token of garam's operator form or no GRN.
    - Otherwise it calls `introspectController` for that GRN under `operation-authority.v2`, presenting its own token and forwarding the manager's as `token`.
    - The proof must name that GRN, and is taken per decision as ADR 0040 decides.
+   - garam's 422, a token that is not live or names another controller or audience, is answered 401, so the manager's transport exchanges one fresh token and asks once more. Without it, a token revoked by a key's rotation or withdrawal would be refused until the manager's own refresh, up to about 40 minutes later. garam's 403 and 404 refuse the authority, not the token, and stay 403.
    - The API listener requests no client certificate.
 4. **Contract values.** The calls kept are sent under a token:
    - `introspectOperationAuthority` and `introspectController` under `operation-authority.v2`;
@@ -64,7 +65,7 @@ The calls bound to an agent's credential are different: managed create and the i
 
    It replaces `garam_operator_certificate_not_after_timestamp_seconds`. `garam_operator_refusals_total` loses the `handshake` kind and the `renewer` and `enroller` runnables.
 
-This supersedes ADR 0008, ADR 0022 and ADR 0030. ADR 0020 and ADR 0021 were already superseded; the enrolment they and ADR 0022 describe is removed here. It supersedes ADR 0040's controller principal, the client certificate, and ADR 0043's client certificate.
+This supersedes ADR 0008 and ADR 0022, and ADR 0030's certificate-expiry gauge; ADR 0030's refusal counter stands, with the labels decision 8 amends. ADR 0020 and ADR 0021 were already superseded; the enrolment they and ADR 0022 describe is removed here. It supersedes ADR 0040's controller principal, the client certificate, and ADR 0043's client certificate.
 
 ## Consequences
 

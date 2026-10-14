@@ -104,6 +104,25 @@ func TestDesired_AnswersUndecidedWhileGaramIs(t *testing.T) {
 	})
 }
 
+func TestDesired_ATokenGaramRefusesIsUnauthenticated(t *testing.T) {
+	e := newEnv(t)
+
+	// garam's 422 on the session proof: the token is not live, or names another controller or audience.
+	e.prover.setSession(verdict{err: distribution.ErrTokenRefused})
+	refused := e.desired(t, e.withToken, "")
+	assert.Equal(t, 401, refused.status, refused.message)
+
+	// The same refusal on an agent-bound proof refuses the request, rather than withholding the agent.
+	e.prover.setSession(verdict{proof: distribution.Proof{Operator: controller, Org: org}})
+	e.prover.setAgentB(verdict{err: distribution.ErrTokenRefused})
+	refused = e.desired(t, e.withToken, "")
+	assert.Equal(t, 401, refused.status, refused.message)
+
+	// Control: garam refusing the authority, not the token, stays 403.
+	e.prover.setSession(verdict{err: distribution.ErrNotProved})
+	assert.Equal(t, 403, e.desired(t, e.withToken, "").status)
+}
+
 func TestDesired_WithholdsAnAgentAssignedElsewhere(t *testing.T) {
 	e := newEnv(t)
 	e.prover.setAgentB(verdict{err: distribution.ErrNotProved})

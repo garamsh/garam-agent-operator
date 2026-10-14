@@ -41,9 +41,9 @@ type proofJSON struct {
 	} `json:"agent"`
 }
 
-// Prove forwards token exactly as the controller presented it. Every answer but 200 refuses; 403,
-// 404 and 422 are garam's refusals — 422 for a token that is not live, names another controller or
-// another audience — and 500 and 503 are retried by the machine client within its bound.
+// Prove forwards token exactly as the controller presented it. Every answer but 200 refuses: 422 is
+// garam refusing the token — not live, naming another controller or another audience — and 403
+// and 404 refuse the authority. 500 and 503 are retried by the machine client within its bound.
 func (g *Garam) Prove(ctx context.Context, controller, token, agent string) (distribution.Proof, error) {
 	in := introspectionJSON{Token: token}
 	if agent != "" {
@@ -62,7 +62,9 @@ func (g *Garam) Prove(ctx context.Context, controller, token, agent string) (dis
 	}
 	switch answer.Status {
 	case http.StatusOK:
-	case http.StatusForbidden, http.StatusNotFound, http.StatusUnprocessableEntity:
+	case http.StatusUnprocessableEntity:
+		return distribution.Proof{}, fmt.Errorf("%w: garam answered %d", distribution.ErrTokenRefused, answer.Status)
+	case http.StatusForbidden, http.StatusNotFound:
 		return distribution.Proof{}, fmt.Errorf("%w: garam answered %d", distribution.ErrNotProved, answer.Status)
 	default:
 		return distribution.Proof{}, fmt.Errorf("prove controller answered %d: %s", answer.Status, garammachine.FirstLine(answer.Body))

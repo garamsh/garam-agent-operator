@@ -21,8 +21,13 @@ var (
 	// form, or named no controller GRN beside it.
 	ErrNoToken = errors.New("no controller token presented")
 
-	// ErrNotProved is returned when garam does not prove what was asked: the token does not prove
-	// the controller, the controller or agent is unknown, or current authority refuses.
+	// ErrTokenRefused is returned when garam refuses the token the controller presented: it is not
+	// live, names another controller or names another audience (introspectController's 422). The
+	// controller is answered 401, so it exchanges a fresh token and asks once more.
+	ErrTokenRefused = errors.New("garam refused the controller's token")
+
+	// ErrNotProved is returned when garam does not prove what was asked: the controller or agent
+	// is unknown, or current authority refuses.
 	ErrNotProved = errors.New("controller authority not proved")
 
 	// ErrUndecided is returned when garam could not decide the proof from current state.

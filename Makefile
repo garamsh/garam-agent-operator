@@ -102,12 +102,19 @@ setup-test-e2e: kind ## Set up a Kind cluster for e2e tests if it does not exist
 	esac
 
 # Builds cmd/control and runs it against a PostgreSQL container testcontainers-go
-# starts on the Docker daemon DOCKER_HOST names; it needs no cluster.
+# starts on the Docker daemon DOCKER_HOST names; it needs no cluster. It ends by
+# counting the top-level tests that passed, failed and skipped, because a run
+# whose cases all skipped exits zero as the one that ran them does.
 .PHONY: test-e2e-control
 test-e2e-control: garam-e2e ## Run the control service's e2e tests: the built binary against PostgreSQL and garam at GARAM_REVISION.
 	@echo "test-e2e-control: garam at $(GARAM_REVISION), from $$(cat "$(GARAM_DIR)/provenance")"
+	@log=$$(mktemp); status=0; \
 	GARAM_BIN_DIR="$(GARAM_DIR)" GARAM_MIGRATIONS_DIR="$(GARAM_DIR)/_migrations" \
-		go test -tags=e2e ./tests/control/ -v -count=1
+		go test -tags=e2e ./tests/control/ -v -count=1 2>&1 | tee "$$log" || status=$$?; \
+	echo "test-e2e-control: every test in ./tests/control with -tags=e2e:" \
+		"$$(grep -c '^--- PASS' "$$log") passed, $$(grep -c '^--- FAIL' "$$log") failed," \
+		"$$(grep -c '^--- SKIP' "$$log") skipped"; \
+	rm -f "$$log"; exit $$status
 
 # How long `go test` may run the Kind suite, every phase included. Without it
 # go test's default of 10 minutes applies, and AfterSuite was killed past it
@@ -446,10 +453,10 @@ $(LOCALBIN):
 # from that repository: CI's, through the role test-e2e.yml assumes, or a local
 # `aws ecr get-login-password | docker login`.
 #
-# The image is bound by digest alone. Its tags, the commit's 12 hex digits and
-# pinned-garam-agent-operator, are informational; garam's lifecycle policy keeps
-# it while pinned-garam-agent-operator names it (garamsh/garam@d6874d2
-# tests/testprincipal/README.md §The test image).
+# The image is bound by digest alone. Its tags, the commit's 12 hex digits
+# (9ba35c37bfe3) and pinned-garam-agent-operator, are informational; garam's
+# lifecycle policy keeps it while pinned-garam-agent-operator names it
+# (garamsh/garam@9ba35c3 tests/testprincipal/README.md §The test image).
 #
 # Pinning (#271): GARAM_REVISION, GARAM_TEST_REPOSITORY and
 # GARAM_TEST_IMAGE_DIGEST move together, in one pull request, by hand; no
@@ -459,7 +466,7 @@ $(LOCALBIN):
 GARAM_REVISION ?= 9ba35c37bfe3d1b68c481884825338d171d2cb6b
 GARAM_TEST_REGISTRY ?= 486152169996.dkr.ecr.ap-northeast-2.amazonaws.com
 GARAM_TEST_REPOSITORY ?= garam-dev/garam-test
-GARAM_TEST_IMAGE_DIGEST ?= sha256:7a8fc22f7abb7fc653241a1eb1d0779eab41e97f9f26419de9f0ba201f1dc328
+GARAM_TEST_IMAGE_DIGEST ?= sha256:3be4b7af61d0280e5220148ebdcbfbc4426b182578f5e8b9997d5c7b8ac25f37
 GARAM_REPOSITORY ?= https://github.com/garamsh/garam.git
 GARAM_DIR = $(LOCALBIN)/garam-$(GARAM_REVISION)
 

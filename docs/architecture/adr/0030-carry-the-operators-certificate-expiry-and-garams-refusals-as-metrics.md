@@ -1,6 +1,6 @@
 # ADR 0030: Carry the operator's certificate expiry and garam's refusals as metrics, under names an alert can depend on
 
-> Status: superseded by ADR-0072
+> Status: accepted; the certificate-expiry gauge superseded by ADR-0072; the refusal labels amended by ADR-0072
 > Date: 2026-09-28
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

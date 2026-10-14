@@ -69,15 +69,22 @@ func TestGaram_ASessionProofNamesNoAgent(t *testing.T) {
 }
 
 func TestGaram_EveryRefusalIsNotProved(t *testing.T) {
-	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusUnprocessableEntity} {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			_, _, err := prove(t, status, `{"message":"refused"}`, "")
 			require.ErrorIs(t, err, distribution.ErrNotProved)
+			assert.NotErrorIs(t, err, distribution.ErrTokenRefused)
 		})
 	}
 	// Control: a 200 is a proof, not a refusal.
 	_, _, err := prove(t, 200, `{"operator":"o","org":"g","agent":null}`, "")
 	require.NoError(t, err)
+}
+
+func TestGaram_A422IsTheTokenRefused(t *testing.T) {
+	_, _, err := prove(t, http.StatusUnprocessableEntity, `{"message":"token"}`, "")
+	require.ErrorIs(t, err, distribution.ErrTokenRefused)
+	assert.NotErrorIs(t, err, distribution.ErrNotProved)
 }
 
 func TestGaram_UndecidedIsUndecided(t *testing.T) {
