@@ -86,11 +86,17 @@ func (t *Tokens) readDue(ctx context.Context, holder *garam.TokenHolder) error {
 		// No token for the control service is placed: due at once.
 		return nil
 	}
-	if due, ok := secret.Annotations[agentname.TokensRefreshAnnotation]; ok {
+	due, ok := secret.Annotations[agentname.TokensRefreshAnnotation]
+	if !ok {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339, due)
+	if err != nil {
 		// A value this operator did not write is due at once: the next write
 		// replaces it.
-		holder.Due, _ = time.Parse(time.RFC3339, due)
+		return nil
 	}
+	holder.Due = parsed
 	return nil
 }
 
