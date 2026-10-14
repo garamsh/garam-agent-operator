@@ -34,14 +34,14 @@ type sent struct {
 	body     map[string]any
 }
 
-// stand is a stand-in garam answering status and answer under contract.
-func stand(t *testing.T, contract string, status int, answer string) (*executiongaram.Garam, *sent) {
+// stand is a stand-in garam answering status and answer under execution-fence.v2.
+func stand(t *testing.T, status int, answer string) (*executiongaram.Garam, *sent) {
 	t.Helper()
 	got := &sent{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got.path, got.contract = r.URL.EscapedPath(), r.Header.Get("Garam-Contract-Version")
 		_ = json.NewDecoder(r.Body).Decode(&got.body)
-		w.Header().Set("Garam-Contract-Version", contract)
+		w.Header().Set("Garam-Contract-Version", garammachine.ExecutionFence)
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(answer))
 	}))
@@ -52,7 +52,7 @@ func stand(t *testing.T, contract string, status int, answer string) (*execution
 }
 
 func TestGaram_IntrospectsUnderTheExecutionFence(t *testing.T) {
-	g, got := stand(t, garammachine.ExecutionFence, http.StatusOK,
+	g, got := stand(t, http.StatusOK,
 		`{"grn":"`+agent+`","org":"o","assignee":"c","epoch":"7","mode":"fenced","credential":"current","generation":"current","activationId":"a1"}`)
 	i, err := g.Introspect(context.Background(), agent, token, gen)
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestGaram_IntrospectsUnderTheExecutionFence(t *testing.T) {
 	assert.Equal(t, map[string]any{keyToken: token, keyGeneration: gen}, got.body)
 
 	// Without a generation, none is sent.
-	g, got = stand(t, garammachine.ExecutionFence, http.StatusOK, `{"activationId":null}`)
+	g, got = stand(t, http.StatusOK, `{"activationId":null}`)
 	_, err = g.Introspect(context.Background(), agent, token, "")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{keyToken: token, keyGeneration: nil}, got.body)
@@ -72,7 +72,7 @@ func TestGaram_IntrospectsUnderTheExecutionFence(t *testing.T) {
 func TestGaram_ActivatesUnderTheExecutionFence(t *testing.T) {
 	answer := `{"activationId":"a1","token":"t","tokenVersion":2,"grn":"` + agent + `","epoch":"7","generation":"gen","lineage":null}`
 	for status, created := range map[int]bool{http.StatusCreated: true, http.StatusOK: false} {
-		g, got := stand(t, garammachine.ExecutionFence, status, answer)
+		g, got := stand(t, status, answer)
 		a, wasCreated, err := g.Activate(context.Background(), agent, execution.ActivationCall{
 			RequestID: "r", Epoch: "7", Generation: gen, Token: token,
 		})
@@ -100,13 +100,13 @@ func TestGaram_RefusalsAreTold(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g, _ := stand(t, garammachine.ExecutionFence, tt.status, `{"kind":"k","message":"m"}`)
+			g, _ := stand(t, tt.status, `{"kind":"k","message":"m"}`)
 			_, _, err := g.Activate(context.Background(), agent, execution.ActivationCall{RequestID: "r"})
 			require.ErrorIs(t, err, tt.want)
 		})
 	}
 	// Control: a 400 is the call's own failure, none of the refusals.
-	g, _ := stand(t, garammachine.ExecutionFence, http.StatusBadRequest, `{"kind":"invalid_argument","message":"m"}`)
+	g, _ := stand(t, http.StatusBadRequest, `{"kind":"invalid_argument","message":"m"}`)
 	_, _, err := g.Activate(context.Background(), agent, execution.ActivationCall{RequestID: "r"})
 	require.Error(t, err)
 	for _, refusal := range []error{execution.ErrNotAuthorized, execution.ErrCredentialRefused, execution.ErrActivationSuperseded, execution.ErrUndecided} {

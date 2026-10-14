@@ -346,7 +346,8 @@ func TestStop_AgainstGaram(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, started)
 	assert.Equal(t, false, started["stopped"])
 	assert.NotContains(t, desiredOf(t, a.grn), "stopped")
-	next := postAgent(t, a, a.control, "activations", activationOf(name(t, "activation"), a.epoch, strings.Repeat("f", 32)))
+	next := postAgent(t, a, a.control, "activations",
+		activationOf(name(t, "activation"), a.epoch, strings.Repeat("f", 32)))
 	assert.Equal(t, http.StatusCreated, next.status, next.raw)
 	assert.Equal(t, 1, count(t, "SELECT count(*) FROM stops WHERE agent = $1 AND started_at IS NOT NULL", a.grn),
 		"the ended stop was not kept")

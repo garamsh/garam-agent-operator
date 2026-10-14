@@ -104,12 +104,12 @@ func (r *Refresher) Refresh(ctx context.Context) {
 			continue
 		}
 		if err := r.refresh(ctx, holder); err != nil {
-			wait := failedWait
+			pause := failedWait
 			if errors.Is(err, ErrAgentNotHeld) || errors.Is(err, ErrMintEpochSuperseded) {
-				wait = refusedWait
+				pause = refusedWait
 			}
-			r.waiting[holder.Agent] = now.Add(wait)
-			log.Error(err, "Failed to refresh an agent's tokens", "agent", holder.Agent, "wait", wait)
+			r.waiting[holder.Agent] = now.Add(pause)
+			log.Error(err, "Failed to refresh an agent's tokens", "agent", holder.Agent, "wait", pause)
 			continue
 		}
 		delete(r.waiting, holder.Agent)

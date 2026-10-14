@@ -99,7 +99,7 @@ func TestActivate_RefusesWhatTheContractRefuses(t *testing.T) {
 			e.garam.set(func(g *garam) { g.foreign[e.adapter.token] = true })
 		}, activate, http.StatusForbidden, kindCredentialFenced},
 		{"an agent garam answers assigned elsewhere", func(_ *testing.T, e *env) {
-			e.garam.set(func(g *garam) { g.assignee = "grn:acme:default:operator:other" })
+			e.garam.set(func(g *garam) { g.assignee = otherController })
 		}, activate, http.StatusForbidden, kindPlacementNotCurrent},
 		{"garam's epoch another than the placement's", func(_ *testing.T, e *env) {
 			e.garam.set(func(g *garam) { g.epoch = "8" })
@@ -248,7 +248,7 @@ func TestActivate_RefreshExpiryAndRecovery(t *testing.T) {
 // controller, so garam is not asked to activate (ADR 0073).
 func TestActivate_TheControllerIsProvedByGaramsAnswerAboutTheToken(t *testing.T) {
 	e := newEnv(t)
-	e.garam.set(func(g *garam) { g.assignee = "grn:acme:default:operator:other" })
+	e.garam.set(func(g *garam) { g.assignee = otherController })
 	refused := e.activate(t, e.adapter, requestID, generation, "1")
 	assert.Equal(t, http.StatusForbidden, refused.status, refused.raw)
 	assert.Equal(t, kindPlacementNotCurrent, refused.kind())

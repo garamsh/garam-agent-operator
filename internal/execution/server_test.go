@@ -55,6 +55,9 @@ const (
 	token      = "placement-token-1"
 	createRef  = "create-ref"
 	generation = "0123456789abcdef0123456789abcdef"
+
+	// otherController is an operator the agent is not placed on.
+	otherController = "grn:acme:default:operator:other"
 )
 
 // registrar registers the creation of agent at epoch.

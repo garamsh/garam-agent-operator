@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -29,6 +30,9 @@ const (
 
 	// window is the point in the refresh window the refresher under test picks.
 	window = 0.7
+
+	// garamAudience is how mints lists a token minted with no audience.
+	garamAudience = "garam"
 )
 
 // memoryTokens is a garam.TokenStore holding what a refresher wrote, and
@@ -73,9 +77,7 @@ func (m *memoryTokens) written() map[garam.GRN]storedTokens {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	held := map[garam.GRN]storedTokens{}
-	for agent, s := range m.stored {
-		held[agent] = s
-	}
+	maps.Copy(held, m.stored)
 	return held
 }
 
@@ -135,7 +137,7 @@ func (m *mintStub) mints() map[string][]string {
 		}
 		_ = json.Unmarshal([]byte(request.body), &body)
 		if body.Audience == "" {
-			body.Audience = "garam"
+			body.Audience = garamAudience
 		}
 		agent := strings.TrimSuffix(strings.TrimPrefix(request.path, "/agents/"), "/tokens")
 		asked[agent] = append(asked[agent], body.Audience)
@@ -168,8 +170,8 @@ func TestRefresherMintsWhereNoTokensArePlacedAndIsDueInGaramsWindow(t *testing.T
 	// An unfenced agent gets garam's token alone; a fenced one the control
 	// service's beside it, minted for the control service's GRN.
 	g.Expect(stub.mints()).To(Equal(map[string][]string{
-		string(sampleAgent): {"garam"},
-		string(fenced):      {"garam", controlGRN},
+		string(sampleAgent): {garamAudience},
+		string(fenced):      {garamAudience, controlGRN},
 	}))
 	due := mintedAt.Add(time.Duration(float64(lifetime) * window))
 	g.Expect(store.written()[sampleAgent]).To(Equal(storedTokens{

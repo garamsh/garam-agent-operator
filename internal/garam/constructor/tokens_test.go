@@ -74,15 +74,13 @@ func holderOf(store *constructor.Tokens, grn string) garam.TokenHolder {
 	return garam.TokenHolder{}
 }
 
-// tokensOf is what one refresh mints for an agent, the control token where
-// fenced.
-func tokensOf(token string, fenced bool) garam.Tokens {
-	tokens := garam.Tokens{Garam: garam.AgentToken{Token: token, ServerRootPEM: []byte("a root")}}
-	if fenced {
-		tokens.Control = &garam.AgentToken{Token: "control " + token}
+// tokensOf is what one refresh mints for a fenced agent: its token, and the one
+// for the control service.
+func tokensOf(token string) garam.Tokens {
+	return garam.Tokens{
+		Garam:   garam.AgentToken{Token: token, ServerRootPEM: []byte("a root")},
+		Control: &garam.AgentToken{Token: "control " + token},
 	}
-
-	return tokens
 }
 
 var _ = Describe("Token store", func() {
@@ -109,7 +107,7 @@ var _ = Describe("Token store", func() {
 		due := time.Date(2026, 10, 14, 15, 40, 0, 0, time.UTC)
 
 		By("creating it where none is placed")
-		Expect(store.Store(ctx, holderOf(store, grn), tokensOf("first", true), due)).To(Succeed())
+		Expect(store.Store(ctx, holderOf(store, grn), tokensOf("first"), due)).To(Succeed())
 		created := credentialOf(grn)
 		Expect(created.Data).To(Equal(map[string][]byte{
 			garam.TokenKey: []byte("first"), garam.ControlTokenKey: []byte("control first"), garam.ServerRootKey: []byte("a root"),
@@ -122,7 +120,7 @@ var _ = Describe("Token store", func() {
 		Expect(k8sClient.Patch(ctx, created, client.RawPatch(types.MergePatchType,
 			[]byte(`{"metadata":{"annotations":{"`+agentname.CredentialLineageAnnotation+`":"lineage-2"}}}`)))).To(Succeed())
 		later := due.Add(time.Hour)
-		Expect(store.Store(ctx, holderOf(store, grn), tokensOf("second", true), later)).To(Succeed())
+		Expect(store.Store(ctx, holderOf(store, grn), tokensOf("second"), later)).To(Succeed())
 		replaced := credentialOf(grn)
 		Expect(replaced.Data).To(Equal(map[string][]byte{
 			garam.TokenKey: []byte("second"), garam.ControlTokenKey: []byte("control second"), garam.ServerRootKey: []byte("a root"),
@@ -136,7 +134,7 @@ var _ = Describe("Token store", func() {
 		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceControl})
 		store := constructor.NewTokens(k8sClient, scheme.Scheme, tokensNamespace)
 		due := time.Date(2026, 10, 14, 15, 40, 0, 0, time.UTC)
-		Expect(store.Store(ctx, holderOf(store, grn), tokensOf("old lineage", true), due)).To(Succeed())
+		Expect(store.Store(ctx, holderOf(store, grn), tokensOf("old lineage"), due)).To(Succeed())
 
 		read := holderOf(store, grn)
 		// The recoverer records the new lineage and removes the refresh time
@@ -145,13 +143,13 @@ var _ = Describe("Token store", func() {
 			`{"metadata":{"annotations":{"`+agentname.CredentialLineageAnnotation+`":"lineage-2","`+
 				agentname.TokensRefreshAnnotation+`":null}}}`)))).To(Succeed())
 
-		err := store.Store(ctx, read, tokensOf("minted before the recovery", true), due.Add(time.Hour))
+		err := store.Store(ctx, read, tokensOf("minted before the recovery"), due.Add(time.Hour))
 		Expect(apierrors.IsConflict(err)).To(BeTrue(), "a write over the recovered credential was taken: %v", err)
 		Expect(credentialOf(grn).Data[garam.TokenKey]).To(Equal([]byte("old lineage")))
 		Expect(holderOf(store, grn).Due).To(BeZero(), "the recovered agent is not due at once")
 
 		// Control: the same write under the version read after the recovery is taken.
-		Expect(store.Store(ctx, holderOf(store, grn), tokensOf("new lineage", true), due.Add(time.Hour))).To(Succeed())
+		Expect(store.Store(ctx, holderOf(store, grn), tokensOf("new lineage"), due.Add(time.Hour))).To(Succeed())
 		Expect(credentialOf(grn).Data[garam.TokenKey]).To(Equal([]byte("new lineage")))
 	})
 })

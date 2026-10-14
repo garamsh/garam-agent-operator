@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
 // testGaramIssuer is the issuer the specs give the manager: the dev cluster's
@@ -77,7 +78,7 @@ var _ = Describe("Message issuer", func() {
 			Expect(renderedConfig(pod)).To(HaveKeyWithValue("issuers", ConsistOf(map[string]any{
 				"issuer":       testGaramIssuer,
 				"keys-url":     "https://" + testGaramAddress + "/message-signing-keys",
-				"keys-ca-file": "/run/sherlock/credentials/server-root.pem",
+				"keys-ca-file": "/run/sherlock/credentials/" + garam.ServerRootKey,
 			})))
 
 			By("the keys-ca-file in the server root the agent container mounts, and nothing else of its credential")
@@ -85,11 +86,11 @@ var _ = Describe("Message issuer", func() {
 				corev1.VolumeMount{Name: serverRootVolumeName, MountPath: agentTypeSherlock.credentialsMountPath, ReadOnly: true}))
 			Expect(agentTypeSherlock.credentialsMountPath).To(Equal("/run/sherlock/credentials"))
 			Expect(volumeNamed(pod, serverRootVolumeName).Secret.Items).To(Equal(
-				[]corev1.KeyToPath{{Key: "server-root.pem", Path: "server-root.pem"}}))
+				[]corev1.KeyToPath{{Key: garam.ServerRootKey, Path: garam.ServerRootKey}}))
 			By("the same file the adapter reads as its server root, from the same Secret")
 			adapter := initContainerOf(pod, adapterContainerName)
 			Expect(environmentOf(adapter)).To(HaveKeyWithValue(adapterServerRootSetting,
-				adapterCredentialsMountPath+"/server-root.pem"))
+				adapterCredentialsMountPath+"/"+garam.ServerRootKey))
 			Expect(volumeNamed(pod, credentialsVolumeName).Secret.SecretName).
 				To(Equal(volumeNamed(pod, serverRootVolumeName).Secret.SecretName))
 		}

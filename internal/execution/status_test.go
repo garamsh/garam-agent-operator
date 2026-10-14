@@ -101,7 +101,7 @@ func TestReportStatus_RefusesWhatTheContractRefuses(t *testing.T) {
 		{"another epoch than garam's", func(e *env) { e.garam.set(func(g *garam) { g.epoch = "8" }) }, valid,
 			http.StatusConflict, kindGenerationNotCurrent},
 		{"an agent assigned elsewhere", func(e *env) {
-			e.garam.set(func(g *garam) { g.assignee = "grn:acme:default:operator:other" })
+			e.garam.set(func(g *garam) { g.assignee = otherController })
 		}, valid, http.StatusConflict, kindGenerationNotCurrent},
 		{"an ended activation", func(e *env) { e.garam.end() }, valid, http.StatusConflict, kindGenerationNotCurrent},
 		{"garam answering the generation not current", func(e *env) {

@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
 // testPinnedTool is the tool the specs declare a pin for. It is sherlock's one
@@ -204,7 +205,7 @@ var _ = Describe("Agent workload", func() {
 		serverRoot := volumeNamed(pod, serverRootVolumeName)
 		Expect(serverRoot.Secret).NotTo(BeNil())
 		Expect(serverRoot.Secret.SecretName).To(Equal(agent.Spec.CredentialsSecretName))
-		Expect(serverRoot.Secret.Items).To(Equal([]corev1.KeyToPath{{Key: "server-root.pem", Path: "server-root.pem"}}))
+		Expect(serverRoot.Secret.Items).To(Equal([]corev1.KeyToPath{{Key: garam.ServerRootKey, Path: garam.ServerRootKey}}))
 		Expect(containerOf(pod, agentContainerName).VolumeMounts).To(ContainElement(
 			corev1.VolumeMount{Name: serverRootVolumeName, MountPath: agentTypeSherlock.credentialsMountPath, ReadOnly: true}))
 	})
@@ -528,7 +529,7 @@ var _ = Describe("Agent workload", func() {
 			adapterMachineURLSetting: "https://" + testGaramAddress,
 			adapterGatewayURLSetting: "http://" + gatewayAddress,
 			adapterTokenFileSetting:  adapterCredentialsMountPath + "/token",
-			adapterServerRootSetting: adapterCredentialsMountPath + "/server-root.pem",
+			adapterServerRootSetting: adapterCredentialsMountPath + "/" + garam.ServerRootKey,
 			adapterOutboxDirSetting:  outboxMountPath,
 		}))
 
