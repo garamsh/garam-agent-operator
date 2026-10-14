@@ -22,6 +22,7 @@ const (
 	routeStatus           = "status"
 	routePlacements       = "placements"
 	routeRecoveryRequests = "recovery_requests"
+	routeImages           = "images"
 )
 
 // requestMargin is how long past a long poll's wait a request may take before
@@ -123,6 +124,14 @@ type (
 	wirePreviousPlacement struct {
 		PodUID              string `json:"podUid"`
 		WriterStoppedSHA256 string `json:"writerStoppedSha256"`
+	}
+	wireImages struct {
+		Images []wireImage `json:"images"`
+	}
+	wireImage struct {
+		Name   string  `json:"name"`
+		Ref    string  `json:"ref"`
+		Digest *string `json:"digest,omitempty"`
 	}
 	wireError struct {
 		Kind    string `json:"kind"`
@@ -275,8 +284,32 @@ func (c *Client) RegisterPlacement(ctx context.Context, agent string, placement 
 	return status == http.StatusCreated, err
 }
 
+// ReportImages reports the images this operator runs, replacing its earlier
+// report (ADR 0074). A 4xx answer is a *RefusalError.
+func (c *Client) ReportImages(ctx context.Context, images []Image) error {
+	wire := wireImages{Images: make([]wireImage, 0, len(images))}
+	for _, image := range images {
+		wire.Images = append(wire.Images, wireImage(image))
+	}
+	body, err := json.Marshal(wire)
+	if err != nil {
+		return fmt.Errorf("render the image report: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, requestMargin)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		"https://"+c.address+"/v1/operators/self/images", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build the image report: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	return c.do(request, routeImages, nil)
+}
+
 // do sends request and decodes a 200 or 201 into answer where answer is not
-// nil. A 4xx is counted and returned as a *RefusalError.
+// nil; a 204 carries none. A 4xx is counted and returned as a *RefusalError.
 func (c *Client) do(request *http.Request, route string, answer any) error {
 	_, err := c.send(request, route, answer)
 
@@ -302,7 +335,7 @@ func (c *Client) send(request *http.Request, route string, answer any) (int, err
 		return response.StatusCode, refusal
 	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated &&
-		response.StatusCode != http.StatusAccepted {
+		response.StatusCode != http.StatusAccepted && response.StatusCode != http.StatusNoContent {
 		return response.StatusCode, fmt.Errorf("the control service's %s route answered %d", route, response.StatusCode)
 	}
 	if answer == nil {

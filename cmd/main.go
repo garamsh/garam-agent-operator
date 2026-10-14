@@ -29,6 +29,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/desired/credential"
 	"github.com/garamsh/garam-agent-operator/internal/desired/placement"
 	"github.com/garamsh/garam-agent-operator/internal/desired/renderer"
+	"github.com/garamsh/garam-agent-operator/internal/desired/self"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 	"github.com/garamsh/garam-agent-operator/internal/garam/constructor"
 	"github.com/garamsh/garam-agent-operator/internal/machinetoken"
@@ -43,6 +44,10 @@ var (
 // podNamespaceVariable names the environment variable the manager's Pod carries
 // its own namespace in. It is where the agents it constructs are built.
 const podNamespaceVariable = "POD_NAMESPACE"
+
+// podNameVariable names the environment variable the manager's Pod carries its
+// own name in. The image report reads the image the manager runs off that Pod.
+const podNameVariable = "POD_NAME"
 
 // garamTokenPath is garam's exchangeClientAssertion route on the listener
 // garam-address names.
@@ -439,6 +444,15 @@ func main() {
 			placement.NewPods(mgr.GetClient(), mgr.GetAPIReader(), namespace))
 		if err := mgr.Add(registrar); err != nil {
 			setupLog.Error(err, "Failed to add the placement registrar", "address", controlAddress)
+			os.Exit(1)
+		}
+		// The images this operator runs are reported to the control service once
+		// it starts (ADR 0074).
+		reporter := desired.NewImageReporter(controlClient,
+			self.NewPod(mgr.GetAPIReader(), namespace, os.Getenv(podNameVariable)),
+			desired.ConfiguredImages(agentImage, agentAdapterImage, agentCopyImage, agentWorkspaceImage))
+		if err := mgr.Add(reporter); err != nil {
+			setupLog.Error(err, "Failed to add the image reporter", "address", controlAddress)
 			os.Exit(1)
 		}
 	} else {
