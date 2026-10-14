@@ -41,6 +41,11 @@ const (
 // refresh.
 var ErrMintEpochSuperseded = errors.New("garam minted the token at another epoch than the agent's spec names")
 
+// ErrNoControlAudience is a fenced agent this operator names no control
+// service for, so its adapter's token for that service cannot be minted. It
+// waits as a refusal does.
+var ErrNoControlAudience = errors.New("no control service is named to mint a fenced agent's control token for")
+
 // Refresher keeps the tokens of every agent this operator holds current in the
 // file its adapter reads (ADR 0073). It mints an agent's tokens where none are
 // placed, where a recovery was finalized, and at a random point in garam's
@@ -65,6 +70,21 @@ type Refresher struct {
 
 	// waiting is when each agent a mint failed for is tried again.
 	waiting map[GRN]time.Time
+
+	// unwritten holds the tokens minted for an agent that no write has placed
+	// yet. garam keeps only an agent's newest five tokens per audience, so a
+	// retry writes these rather than minting again: minting on every failed
+	// attempt would push the token the adapter holds out of garam.
+	unwritten map[GRN]unwritten
+}
+
+// unwritten is tokens minted against one version of an agent's credential
+// Secret, and when. A recovery changes that version, so its tokens, minted in
+// the lineage it ended, are not written over it.
+type unwritten struct {
+	version string
+	minted  time.Time
+	tokens  Tokens
 }
 
 // NewRefresher returns a Refresher minting through client and writing through
@@ -74,7 +94,7 @@ func NewRefresher(client *Client, store TokenStore, controlAudience string) *Ref
 		client: client, store: store, controlAudience: controlAudience,
 		Now:     time.Now,
 		Window:  func() float64 { return windowStart + rand.Float64()*(windowEnd-windowStart) },
-		waiting: map[GRN]time.Time{},
+		waiting: map[GRN]time.Time{}, unwritten: map[GRN]unwritten{},
 	}
 }
 
@@ -105,7 +125,7 @@ func (r *Refresher) Refresh(ctx context.Context) {
 		}
 		if err := r.refresh(ctx, holder); err != nil {
 			pause := failedWait
-			if errors.Is(err, ErrAgentNotHeld) || errors.Is(err, ErrMintEpochSuperseded) {
+			if errors.Is(err, ErrAgentNotHeld) || errors.Is(err, ErrMintEpochSuperseded) || errors.Is(err, ErrNoControlAudience) {
 				pause = refusedWait
 			}
 			r.waiting[holder.Agent] = now.Add(pause)
@@ -119,32 +139,53 @@ func (r *Refresher) Refresh(ctx context.Context) {
 			delete(r.waiting, agent)
 		}
 	}
+	for agent := range r.unwritten {
+		if !listed[agent] {
+			delete(r.unwritten, agent)
+		}
+	}
 }
 
 // refresh mints the holder's tokens and writes them, due again at a point in
-// the refresh window of the one that expires first.
+// the refresh window of the one that expires first. A token an earlier attempt
+// minted against the same version of the Secret, and that has not expired, is
+// written rather than minted again.
 func (r *Refresher) refresh(ctx context.Context, holder TokenHolder) error {
-	minted := r.Now()
-	tokens := Tokens{}
-	var err error
-	if tokens.Garam, err = r.mint(ctx, holder, ""); err != nil {
-		return err
+	if holder.Fenced && r.controlAudience == "" {
+		return fmt.Errorf("mint the tokens of %s: %w", holder.Agent, ErrNoControlAudience)
 	}
-	expires := tokens.Garam.ExpiresAt
-	if holder.Fenced && r.controlAudience != "" {
-		control, err := r.mint(ctx, holder, r.controlAudience)
+	now := r.Now()
+	held, ok := r.unwritten[holder.Agent]
+	if !ok || held.version != holder.Version || !now.Before(held.tokens.Garam.ExpiresAt) {
+		held = unwritten{version: holder.Version, minted: now}
+	}
+	if held.tokens.Garam.Token == "" {
+		token, err := r.mint(ctx, holder, "")
 		if err != nil {
 			return err
 		}
-		tokens.Control = &control
-		if control.ExpiresAt.Before(expires) {
-			expires = control.ExpiresAt
+		held.tokens.Garam = token
+		r.unwritten[holder.Agent] = held
+	}
+	expires := held.tokens.Garam.ExpiresAt
+	if holder.Fenced {
+		if held.tokens.Control == nil {
+			control, err := r.mint(ctx, holder, r.controlAudience)
+			if err != nil {
+				return err
+			}
+			held.tokens.Control = &control
+			r.unwritten[holder.Agent] = held
+		}
+		if held.tokens.Control.ExpiresAt.Before(expires) {
+			expires = held.tokens.Control.ExpiresAt
 		}
 	}
-	due := minted.Add(time.Duration(float64(expires.Sub(minted)) * r.Window()))
-	if err := r.store.Store(ctx, holder, tokens, due); err != nil {
+	due := held.minted.Add(time.Duration(float64(expires.Sub(held.minted)) * r.Window()))
+	if err := r.store.Store(ctx, holder, held.tokens, due); err != nil {
 		return fmt.Errorf("write the tokens of %s: %w", holder.Agent, err)
 	}
+	delete(r.unwritten, holder.Agent)
 	return nil
 }
 

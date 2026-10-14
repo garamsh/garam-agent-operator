@@ -42,6 +42,8 @@ type memoryTokens struct {
 	mu      sync.Mutex
 	holders []garam.TokenHolder
 	stored  map[garam.GRN]storedTokens
+	// refuseWrites, where set, is what every write answers instead.
+	refuseWrites error
 }
 
 // storedTokens is one agent's tokens as written, with when they are due.
@@ -59,6 +61,9 @@ func (m *memoryTokens) Holders(context.Context) ([]garam.TokenHolder, error) {
 func (m *memoryTokens) Store(_ context.Context, holder garam.TokenHolder, tokens garam.Tokens, due time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.refuseWrites != nil {
+		return m.refuseWrites
+	}
 	for i := range m.holders {
 		if m.holders[i].Agent != holder.Agent {
 			continue
@@ -96,6 +101,8 @@ type mintStub struct {
 	clock   time.Time
 	epoch   int64
 	notHeld map[string]bool
+	// refuseControl answers every mint for an audience 400.
+	refuseControl bool
 }
 
 func newMintStub(t *testing.T, clock time.Time) *mintStub {
@@ -113,6 +120,10 @@ func newMintStub(t *testing.T, clock time.Time) *mintStub {
 			Audience string `json:"audience"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&asked)
+		if asked.Audience != "" && m.refuseControl {
+			answerMint(w, http.StatusBadRequest, `{"kind": "invalid_argument", "message": "audience"}`)
+			return
+		}
 		token := sampleToken
 		if asked.Audience != "" {
 			token = controlToken
@@ -279,4 +290,95 @@ func TestRefresherReportsAMintRefusedForAStaleEpochAndDoesNotRetryItAsARefresh(t
 			g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(2))
 		})
 	}
+}
+
+// TestRefresherWritesTheTokensItMintedRatherThanMintingAgain is garam's limit of
+// five tokens per audience: a refresh that keeps failing must not mint a sixth
+// and push out the token the adapter holds.
+func TestRefresherWritesTheTokensItMintedRatherThanMintingAgain(t *testing.T) {
+	t.Run("a write that fails", func(t *testing.T) {
+		g := NewWithT(t)
+		clock := mintedAt
+		stub := newMintStub(t, clock)
+		store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{{Agent: sampleAgent, Epoch: 4}},
+			refuseWrites: errors.New("the API server refused the write")}
+		refresher := refresherFor(t, stub, store, &clock)
+		for i := range 6 {
+			clock = mintedAt.Add(time.Duration(i) * time.Minute)
+			refresher.Refresh(context.Background())
+		}
+		g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(1), "a failed write minted again")
+
+		// Control: once the write is taken, the tokens minted first are written.
+		store.mu.Lock()
+		store.refuseWrites = nil
+		store.mu.Unlock()
+		clock = mintedAt.Add(7 * time.Minute)
+		refresher.Refresh(context.Background())
+		g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(1))
+		g.Expect(store.written()[sampleAgent].tokens.Garam.Token).To(Equal(sampleToken))
+	})
+
+	t.Run("a control mint that fails", func(t *testing.T) {
+		g := NewWithT(t)
+		clock := mintedAt
+		stub := newMintStub(t, clock)
+		stub.refuseControl = true
+		store := &memoryTokens{stored: map[garam.GRN]storedTokens{},
+			holders: []garam.TokenHolder{{Agent: sampleAgent, Epoch: 4, Fenced: true}}}
+		refresher := refresherFor(t, stub, store, &clock)
+		for i := range 6 {
+			clock = mintedAt.Add(time.Duration(i) * time.Minute)
+			refresher.Refresh(context.Background())
+		}
+		mints := stub.mints()[string(sampleAgent)]
+		g.Expect(mints).To(HaveLen(7), "the control mint was not retried")
+		g.Expect(mints).To(HaveEach(Or(Equal(garamAudience), Equal(controlGRN))))
+		g.Expect(slicesCount(mints, garamAudience)).To(Equal(1), "the garam token was minted again")
+	})
+
+	t.Run("a recovery between attempts", func(t *testing.T) {
+		g := NewWithT(t)
+		clock := mintedAt
+		stub := newMintStub(t, clock)
+		store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{{Agent: sampleAgent, Epoch: 4}},
+			refuseWrites: errors.New("the API server refused the write")}
+		refresher := refresherFor(t, stub, store, &clock)
+		refresher.Refresh(context.Background())
+		store.mu.Lock()
+		store.refuseWrites, store.holders[0].Version = nil, "recovered"
+		store.mu.Unlock()
+		clock = mintedAt.Add(time.Minute)
+		refresher.Refresh(context.Background())
+		g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(2), "a token of the ended lineage was written")
+	})
+}
+
+func TestRefresherRefusesAFencedAgentNoControlServiceIsNamedFor(t *testing.T) {
+	g := NewWithT(t)
+	clock := mintedAt
+	stub := newMintStub(t, clock)
+	store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{
+		{Agent: sampleAgent, Epoch: 4, Fenced: true}, {Agent: "grn:acme:default:agent:other", Epoch: 4},
+	}}
+	refresher := garam.NewRefresher(garam.NewClient(stub.address(), trustedBy(t, stub.stubListener)), store, "")
+	refresher.Now = func() time.Time { return clock }
+	for i := range 3 {
+		clock = mintedAt.Add(time.Duration(i) * 10 * time.Second)
+		refresher.Refresh(context.Background())
+	}
+	g.Expect(stub.mints()).NotTo(HaveKey(string(sampleAgent)))
+	// Control: the unfenced agent beside it is minted for.
+	g.Expect(stub.mints()).To(HaveKey("grn:acme:default:agent:other"))
+}
+
+// slicesCount is how many of values equal value.
+func slicesCount(values []string, value string) int {
+	n := 0
+	for _, v := range values {
+		if v == value {
+			n++
+		}
+	}
+	return n
 }
