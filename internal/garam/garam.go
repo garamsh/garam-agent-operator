@@ -59,7 +59,7 @@ type Claim struct {
 }
 
 // Assignment binds an agent to the operator that runs it, and is what admits
-// this operator to that agent's certificate route.
+// this operator to mint that agent's tokens.
 type Assignment struct {
 	// Agent is the agent the assignment binds.
 	Agent GRN
@@ -71,45 +71,40 @@ type Assignment struct {
 	Epoch int64
 }
 
-// AgentCredential is what garam issues an agent: the certificate it
-// authenticates as, the private key it was issued with, the authority that
-// signed it, and the root it verifies garam's listener by.
-//
-// The last two are different certificates and are not interchangeable. garam is
-// verified against ServerRootPEM and against nothing else; IssuerPEM is the
-// authority that signed this certificate, which signs no listener
-// (garam@5130ca9:api/machine.yaml:467-479).
-type AgentCredential struct {
-	// CertificatePEM is the certificate, PEM-encoded.
-	CertificatePEM []byte
+// AgentToken is a token garam minted for an agent this operator holds
+// (mintAgentToken, garam@afde8b8 api/machine.yaml): the token its adapter
+// presents, the epoch it was minted at, when garam stops accepting it, and the
+// garam server root the adapter verifies garam's listener by. The token is
+// answered once and is never logged.
+type AgentToken struct {
+	// Token is the token itself, garam_at_ and 64 lowercase hex digits, the
+	// whole of the file the adapter reads it from.
+	Token string
 
-	// KeyPEM is the private key it was issued with, PEM-encoded. garam stores
-	// none, so this arrives once and a holder that loses it asks for another
-	// certificate.
-	KeyPEM []byte
+	// Epoch is the assignment epoch garam minted it at.
+	Epoch int64
 
-	// IssuerPEM is the authority that signed the certificate, PEM-encoded.
-	IssuerPEM []byte
+	// ExpiresAt is when garam stops accepting it.
+	ExpiresAt time.Time
 
 	// ServerRootPEM is the root garam's listener is verified against,
 	// PEM-encoded.
 	ServerRootPEM []byte
-
-	// NotAfter is when the certificate stops being valid. garam answers it, so
-	// nothing here parses a PEM to learn it.
-	NotAfter time.Time
 }
 
-// The keys an agent's credential is placed under, which are also the names the
-// kubelet gives the files in the volume its workload mounts. They are the names
-// garam's own mint writes the three public-and-private files under
-// (garam@5130ca9:internal/cli/issue_certificate.go:113-115), with the server
-// root that arrives beside them named for what it is.
+// The keys an agent's tokens are kept under in its credential Secret, which
+// are also the names the kubelet gives the files in the volume its adapter
+// mounts (ADR 0073).
 const (
-	CertificateKey = "certificate.pem"
-	KeyKey         = "key.pem"
-	IssuerKey      = "issuer.pem"
-	ServerRootKey  = "server-root.pem"
+	// TokenKey holds the agent token minted with no audience, which garam
+	// accepts.
+	TokenKey = "token"
+	// ControlTokenKey holds the agent token minted with the control service as
+	// its audience, on a fenced agent alone.
+	ControlTokenKey = "control-token"
+	// ServerRootKey holds the garam server root the mint answered beside the
+	// token.
+	ServerRootKey = "server-root.pem"
 )
 
 // ErrAgentNotHeld is what garam answers an agent this operator does not hold at

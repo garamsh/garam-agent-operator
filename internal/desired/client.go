@@ -18,11 +18,10 @@ import (
 // The routes a refusal is counted against, which is the value of the route
 // label on refusalsTotal.
 const (
-	routeDesired             = "desired"
-	routeStatus              = "status"
-	routeCertificateRequests = "certificate_requests"
-	routePlacements          = "placements"
-	routeRecoveryRequests    = "recovery_requests"
+	routeDesired          = "desired"
+	routeStatus           = "status"
+	routePlacements       = "placements"
+	routeRecoveryRequests = "recovery_requests"
 )
 
 // requestMargin is how long past a long poll's wait a request may take before
@@ -78,9 +77,6 @@ type (
 		Epoch             string `json:"epoch"`
 		Stage             string `json:"stage"`
 		Lineage           string `json:"lineage"`
-		CertificatePEM    string `json:"certificatePem"`
-		IssuerPEM         string `json:"issuerPem"`
-		ServerRootPEM     string `json:"serverRootPem"`
 	}
 	wireProfile struct {
 		Name             string                      `json:"name"`
@@ -113,18 +109,9 @@ type (
 		ObservedRevision string `json:"observedRevision"`
 		RenderedRevision string `json:"renderedRevision"`
 	}
-	wireCertificateRequest struct {
-		RequestID             string `json:"requestId"`
-		Epoch                 string `json:"epoch"`
-		CertificateRequestPEM string `json:"certificateRequestPem"`
-	}
-	wireCertificate struct {
-		Agent          string    `json:"agent"`
-		Epoch          string    `json:"epoch"`
-		CertificatePEM string    `json:"certificatePem"`
-		IssuerPEM      string    `json:"issuerPem"`
-		ServerRootPEM  string    `json:"serverRootPem"`
-		NotAfter       time.Time `json:"notAfter"`
+	wireRecoveryRequest struct {
+		RequestID string `json:"requestId"`
+		Epoch     string `json:"epoch"`
 	}
 	wirePlacement struct {
 		Epoch       string                 `json:"epoch"`
@@ -215,50 +202,12 @@ func (c *Client) ReportStatus(ctx context.Context, agent, observed, rendered str
 	return c.do(request, routeStatus, nil)
 }
 
-// RequestCertificate asks the control service to have garam sign a managed
-// agent's first certificate over the key csrPEM names (#218). requestID and
-// epoch identify the request: the same three again answer the stored result. A
-// 4xx answer is a *RefusalError, its Kind "epoch_superseded" where the epoch is
-// no longer the agent's.
-func (c *Client) RequestCertificate(ctx context.Context, agent, requestID, epoch string, csrPEM []byte) (Certificate, error) {
-	body, err := json.Marshal(wireCertificateRequest{
-		RequestID: requestID, Epoch: epoch, CertificateRequestPEM: string(csrPEM),
-	})
-	if err != nil {
-		return Certificate{}, fmt.Errorf("render the certificate request of %s: %w", agent, err)
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, requestMargin)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://"+c.address+"/v1/operators/self/agents/"+url.PathEscape(agent)+"/certificate-requests",
-		bytes.NewReader(body))
-	if err != nil {
-		return Certificate{}, fmt.Errorf("build the certificate request of %s: %w", agent, err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-
-	var answer wireCertificate
-	if err := c.do(request, routeCertificateRequests, &answer); err != nil {
-		return Certificate{}, err
-	}
-
-	return Certificate{
-		Agent: answer.Agent, Epoch: answer.Epoch,
-		CertificatePEM: []byte(answer.CertificatePEM), IssuerPEM: []byte(answer.IssuerPEM),
-		ServerRootPEM: []byte(answer.ServerRootPEM), NotAfter: answer.NotAfter,
-	}, nil
-}
-
-// PrepareRecovery sends the certificate request persisted for agent's open
-// recovery (ADR 0057, ADR 0059). The control service answers 202 while the
-// recovery waits for its finalize, and 200 with the recovered credential once
-// garam answered it: Recovered is nil before that. A 4xx answer is a
-// *RefusalError.
-func (c *Client) PrepareRecovery(ctx context.Context, agent string, request PendingRequest) (Recovered, error) {
-	body, err := json.Marshal(wireCertificateRequest{
-		RequestID: request.ID, Epoch: request.Epoch, CertificateRequestPEM: string(request.CSRPEM),
-	})
+// PrepareRecovery sends the request persisted for agent's open recovery (ADR
+// 0057, ADR 0073). The control service answers 202 while the recovery waits for
+// its finalize, and 200 with the agent's new lineage once garam answered it:
+// Lineage is empty before that. A 4xx answer is a *RefusalError.
+func (c *Client) PrepareRecovery(ctx context.Context, agent string, request RecoveryRequest) (Recovered, error) {
+	body, err := json.Marshal(wireRecoveryRequest{RequestID: request.ID, Epoch: request.Epoch})
 	if err != nil {
 		return Recovered{}, fmt.Errorf("render the recovery request of %s: %w", agent, err)
 	}
@@ -280,10 +229,7 @@ func (c *Client) PrepareRecovery(ctx context.Context, agent string, request Pend
 	}
 	recovered := Recovered{Agent: answer.Agent, RequestID: answer.RecoveryRequestID, Epoch: answer.Epoch}
 	if status == http.StatusOK {
-		recovered.Lineage, recovered.CertificatePEM = answer.Lineage, []byte(answer.CertificatePEM)
-		if answer.IssuerPEM != "" && answer.ServerRootPEM != "" {
-			recovered.IssuerPEM, recovered.ServerRootPEM = []byte(answer.IssuerPEM), []byte(answer.ServerRootPEM)
-		}
+		recovered.Lineage = answer.Lineage
 	}
 
 	return recovered, nil

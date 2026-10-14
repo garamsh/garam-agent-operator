@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -42,12 +41,12 @@ type Agent struct {
 	Stopped bool
 
 	// Recovery is the agent's open credential recovery, nil where none is open:
-	// this operator prepares its certificate request (ADR 0057, ADR 0059).
+	// this operator prepares its request (ADR 0057, ADR 0073).
 	Recovery *OpenRecovery
 }
 
-// OpenRecovery is what an open recovery's certificate request is made under:
-// the recovery's request id on garam, and the epoch it was opened at.
+// OpenRecovery is what an open recovery's request is made under: the
+// recovery's request id on garam, and the epoch it was opened at.
 type OpenRecovery struct {
 	RequestID string
 	Epoch     string
@@ -95,18 +94,6 @@ type Embedding struct {
 	BaseURL   string
 	Name      string
 	APIKeyRef string
-}
-
-// Certificate is a managed agent's first certificate as the control service
-// answers it: the certificate, the authority that signed it, and the root garam's
-// listener is verified against. Its private key never leaves this operator.
-type Certificate struct {
-	Agent          string
-	Epoch          string
-	CertificatePEM []byte
-	IssuerPEM      []byte
-	ServerRootPEM  []byte
-	NotAfter       time.Time
 }
 
 // Placement is one placement of a managed agent as the control service

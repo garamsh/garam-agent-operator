@@ -375,6 +375,15 @@ func main() {
 			setupLog.Error(err, "Failed to add the garam reporter", "address", garamAddress)
 			os.Exit(1)
 		}
+		// Every agent this operator holds, on either source, has its tokens minted
+		// and kept current here, a fenced agent's control token for the control
+		// service's GRN (ADR 0073).
+		refresher := garam.NewRefresher(garamClient,
+			constructor.NewTokens(mgr.GetClient(), mgr.GetScheme(), namespace), controlGRN)
+		if err := mgr.Add(refresher); err != nil {
+			setupLog.Error(err, "Failed to add the token refresher", "address", garamAddress)
+			os.Exit(1)
+		}
 	} else {
 		setupLog.Info("Reading no definitions and reporting nothing: garam-address is unset")
 	}
@@ -415,17 +424,9 @@ func main() {
 			setupLog.Error(err, "Failed to add the desired-state puller", "address", controlAddress)
 			os.Exit(1)
 		}
-		// A managed agent's first certificate is requested through the control
-		// service over a key generated and persisted here first (#218).
-		issuer := desired.NewIssuer(controlClient,
-			credential.NewSecrets(mgr.GetClient(), mgr.GetAPIReader(), mgr.GetScheme(), namespace))
-		if err := mgr.Add(issuer); err != nil {
-			setupLog.Error(err, "Failed to add the managed-credential issuer", "address", controlAddress)
-			os.Exit(1)
-		}
-		// A managed agent's recovered credential is prepared over a key generated
-		// and persisted here first, and placed only once it verifies against the
-		// issuer kept from its first certificate (#300, ADR 0059).
+		// A managed agent's recovery is prepared from a request persisted here
+		// first, and its new lineage recorded on the agent's credential, where the
+		// refresher mints the agent's tokens again (#300, ADR 0073).
 		recoverer := desired.NewRecoverer(controlClient,
 			credential.NewSecrets(mgr.GetClient(), mgr.GetAPIReader(), mgr.GetScheme(), namespace))
 		puller.OfferRecoveriesTo(recoverer)

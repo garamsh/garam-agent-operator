@@ -28,10 +28,6 @@ import (
 const (
 	agentContainerName = "agent"
 
-	// credentialsContainerName is the init container that copies the projected
-	// credential into the volume the agent reads it from.
-	credentialsContainerName = "credentials"
-
 	// configContainerName is the init container that writes the config file an
 	// agent resolves its settings from, and its ego file. It is built only where
 	// an Agent declares something to write into one.
@@ -50,18 +46,19 @@ const (
 	adapterContainerName = agentname.AdapterContainer
 
 	// adapterCredentialsMountPath is where the adapter reads the agent's
-	// credential. It is this operator's path for garam's process, the same
-	// for every agent type, so it is not the descriptor's.
+	// tokens and the garam server root. It is this operator's path for garam's
+	// process, the same for every agent type, so it is not the descriptor's.
 	adapterCredentialsMountPath = "/run/garam/credentials"
 
 	// placementMountPath is where the adapter reads the placement token, as the
-	// file named placementTokenKey; placementSecretMountPath is where the copying
-	// init container reads the Secret's projection.
-	placementMountPath       = "/run/garam/placement"
-	placementSecretMountPath = "/etc/garam/placement"
+	// file named placementTokenKey.
+	placementMountPath = "/run/garam/placement"
 
-	credentialsVolumeName       = "credentials"
-	credentialsSecretVolumeName = "credentials-secret"
+	// credentialsVolumeName is the credential Secret's projection, which only
+	// the adapter mounts; serverRootVolumeName projects the garam server root
+	// out of the same Secret, and nothing else of it, for the agent (ADR 0073).
+	credentialsVolumeName = "credentials"
+	serverRootVolumeName  = "server-root"
 
 	// controlRootMountPath is where the adapter reads the root the control
 	// service's serving certificate chains to, as controlRootFile; outboxMountPath
@@ -92,22 +89,10 @@ const (
 	// is (sherlock@44aaa55:tools/message_send/message_send.go:108).
 	outboxDirMode = "0770"
 
-	// memoryPageBytes is the largest page a Linux node's kernel runs with (64 KiB
-	// on arm64 and ppc64le, 4 KiB on amd64). A memory volume is tmpfs, which
-	// charges each file whole pages, so its sizeLimit is counted in pages (#265).
-	memoryPageBytes = 64 << 10
-
-	// placementVolumeFiles is what the placement volume holds: the token, copied
-	// alone by the credentials init container (ADR 0042). The token is
-	// placementTokenBytes of randomness hex-encoded, 64 bytes, inside one page.
-	placementVolumeFiles = 1
-
-	// placementVolumeName holds the copy of the placement token, which only the
-	// adapter mounts; placementSecretVolumeName is the Secret's projection, which
-	// only the init container that copies it mounts.
-	placementVolumeName       = "placement"
-	placementSecretVolumeName = "placement-secret"
-	configVolumeName          = "config"
+	// placementVolumeName is the placement token's Secret projected, which only
+	// the adapter mounts (ADR 0042, ADR 0073).
+	placementVolumeName = "placement"
+	configVolumeName    = "config"
 
 	// stateVolumeName is the claim the agent's state is kept on: its memory store
 	// and the outbox beside it. Only the agent's container mounts it. The name is
@@ -153,29 +138,25 @@ const (
 
 	// credentialsFileMode keeps the projected credential files readable by the
 	// group the Pod carries and by nothing else. A Secret volume's files are
-	// owned by root, so owner-only would leave them unreadable to the init
-	// container that copies them, which does not run as root. Tightening it back
-	// to owner-only would not survive the kubelet anyway: where a Pod carries a
-	// group, it ORs group-read into every file it writes into the volume.
+	// owned by root, so owner-only would leave them unreadable to the adapter,
+	// which does not run as root. Tightening it back to owner-only would not
+	// survive the kubelet anyway: where a Pod carries a group, it ORs group-read
+	// into every file it writes into the volume. What confines an agent's tokens
+	// is which containers mount the volume, not the mode: every container of the
+	// Pod runs as one user, so an owner-only copy would exclude none of them
+	// (ADR 0073).
 	credentialsFileMode = 0o440
-
-	// credentialsCopyMode is the mode the copy carries. garam's reader refuses a
-	// key file any group or other bit is set on.
-	credentialsCopyMode = "0600"
 
 	// agentFSGroup is the group the kubelet gives every volume in the Pod and
 	// adds to the supplementary groups of each container's initial process. It is
-	// what lets the init container open the projection, whose files the kubelet
-	// writes root-owned at 0440. It buys no write: the destination emptyDir
-	// arrives world-writable, so a measurement finding the copy writes without
-	// the group has not shown the group unearned.
+	// what lets the adapter and the agent open the Secret projections, whose
+	// files the kubelet writes root-owned at 0440.
 	agentFSGroup = 65532
 
-	// agentRunAsUser is the user every container of the Pod runs as, so that the
-	// copy the init container makes is owned by the process that reads it. The
-	// operator names it rather than reading it off the image: an owner has to be
-	// one value for the whole Pod, and no image can be asked what the others run
-	// as.
+	// agentRunAsUser is the user every container of the Pod runs as, so that
+	// what one container writes another reads as its owner. The operator names
+	// it rather than reading it off the image: an owner has to be one value for
+	// the whole Pod, and no image can be asked what the others run as.
 	agentRunAsUser = 65532
 )
 
@@ -185,11 +166,11 @@ const (
 	adapterAgentSetting          = "GARAM_ADAPTER_AGENT"
 	adapterMachineURLSetting     = "GARAM_ADAPTER_MACHINE_URL"
 	adapterGatewayURLSetting     = "GARAM_ADAPTER_GATEWAY_URL"
-	adapterCertFileSetting       = "GARAM_ADAPTER_TLS_CERT_FILE"
-	adapterKeyFileSetting        = "GARAM_ADAPTER_TLS_KEY_FILE"
+	adapterTokenFileSetting      = "GARAM_ADAPTER_TOKEN_FILE"
 	adapterServerRootSetting     = "GARAM_ADAPTER_SERVER_ROOT_FILE"
 	adapterControlURLSetting     = "GARAM_ADAPTER_CONTROL_URL"
 	adapterControlRootSetting    = "GARAM_ADAPTER_CONTROL_ROOT_FILE"
+	adapterControlTokenSetting   = "GARAM_ADAPTER_CONTROL_TOKEN_FILE"
 	adapterPlacementTokenSetting = "GARAM_ADAPTER_PLACEMENT_TOKEN_FILE"
 	adapterOutboxDirSetting      = "GARAM_ADAPTER_OUTBOX_DIR"
 )
@@ -209,28 +190,9 @@ func containerSecurityContext() *corev1.SecurityContext {
 	}
 }
 
-// copyCredentialsCommand copies each projected credential file into the volume
-// the agent reads, at a mode only its owner can reach, and the placement token
-// the same way into the volume the adapter reads where placement is set. The
-// glob skips the kubelet's dot-prefixed bookkeeping entries and names no key,
-// so a Secret whose keys change does not change the workload.
-func copyCredentialsCommand(descriptor agentTypeDescriptor, placement bool) []string {
-	script := copyFilesCommand(descriptor.credentialsSecretMountPath, descriptor.credentialsMountPath)
-	if placement {
-		script += "; " + copyFilesCommand(placementSecretMountPath, placementMountPath)
-	}
-
-	return shellCommand(script)
-}
-
 // shellCommand runs script in a shell that stops at the first command to fail.
 func shellCommand(script string) []string {
 	return []string{"/bin/sh", "-ec", script}
-}
-
-// copyFilesCommand is the shell that copies every file in from into to.
-func copyFilesCommand(from, to string) string {
-	return fmt.Sprintf("for f in %s/*; do install -m %s \"$f\" %s/; done", from, credentialsCopyMode, to)
 }
 
 // writeConfigCommand writes the agent's config file into dir, its ego file where
@@ -572,7 +534,7 @@ func describeStorageClass(class *string) string {
 // leaves every other field as it found it, so that an unchanged Agent produces
 // an unchanged object. The fields a StatefulSet refuses a change to are written
 // at creation only. What the workload carries that no Agent names — the image
-// the credential's init container runs and the image its workspace runs — is
+// its init containers run and the image its workspace runs — is
 // read off the reconciler, which is where this operator's own configuration
 // reaches the workload. Every path and variable name that belongs to the agent
 // binary is read off descriptor.
@@ -620,71 +582,20 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	podSecurity.RunAsNonRoot = ptr.To(true)
 	podSecurity.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
 
-	statefulSet.Spec.Template.Spec.Volumes = []corev1.Volume{{
-		Name: credentialsSecretVolumeName,
-		VolumeSource: corev1.VolumeSource{
-			Secret: &corev1.SecretVolumeSource{
-				SecretName:  agent.Spec.CredentialsSecretName,
-				DefaultMode: ptr.To[int32](credentialsFileMode),
-			},
-		},
-	}, {
-		Name: credentialsVolumeName,
-		VolumeSource: corev1.VolumeSource{
-			// Memory-backed, so the copy never reaches the node's disk, and
-			// bounded, because a memory volume that names no limit is bounded
-			// only by the node.
-			EmptyDir: &corev1.EmptyDirVolumeSource{
-				Medium:    corev1.StorageMediumMemory,
-				SizeLimit: resource.NewQuantity(1<<20, resource.BinarySI),
-			},
-		},
-	}}
+	statefulSet.Spec.Template.Spec.Volumes = nil
 	if plan.claim != "" {
 		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes,
 			claimVolume(stateVolumeName, plan.claim, false))
 	}
 
-	// The placement token reaches the adapter by the credential's route: the
-	// same init container copies it out of its Secret into a memory volume the
-	// Pod's user owns, and only the adapter mounts that copy.
-	placement := r.adapterBuilt(agent)
-	if placement {
-		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: placementSecretVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName:  placementSecretName(agent),
-					DefaultMode: ptr.To[int32](credentialsFileMode),
-				},
-			},
-		}, corev1.Volume{
-			Name: placementVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{
-					Medium:    corev1.StorageMediumMemory,
-					SizeLimit: resource.NewQuantity(placementVolumeFiles*memoryPageBytes, resource.BinarySI),
-				},
-			},
-		})
-	}
-
-	credentials := containerNamed(&statefulSet.Spec.Template.Spec.InitContainers, credentialsContainerName)
-	credentials.Image = r.CopyImage
-	// Always on this operator's own ground: the copy image is the deployer's and
-	// nothing here requires its tag to name one build, so a node's cache would
-	// leave two agents copying a credential with different tools under one name.
-	credentials.ImagePullPolicy = corev1.PullAlways
-	credentials.Command = copyCredentialsCommand(descriptor, placement)
-	credentials.SecurityContext = containerSecurityContext()
-	credentials.VolumeMounts = []corev1.VolumeMount{
-		{Name: credentialsSecretVolumeName, MountPath: descriptor.credentialsSecretMountPath, ReadOnly: true},
-		{Name: credentialsVolumeName, MountPath: descriptor.credentialsMountPath},
-	}
-	if placement {
-		credentials.VolumeMounts = append(credentials.VolumeMounts,
-			corev1.VolumeMount{Name: placementSecretVolumeName, MountPath: placementSecretMountPath, ReadOnly: true},
-			corev1.VolumeMount{Name: placementVolumeName, MountPath: placementMountPath})
+	// The agent's tokens and its placement token reach the adapter as the
+	// kubelet projects their Secrets, which it swaps by rename, so a token the
+	// refresher replaces is read on the adapter's next call with no restart
+	// (ADR 0073). Only the adapter mounts either.
+	if r.adapterBuilt(agent) {
+		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes,
+			secretVolume(credentialsVolumeName, agent.Spec.CredentialsSecretName),
+			secretVolume(placementVolumeName, placementSecretName(agent)))
 	}
 
 	container := containerNamed(&statefulSet.Spec.Template.Spec.Containers, agentContainerName)
@@ -697,12 +608,22 @@ func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *ap
 	container.ImagePullPolicy = corev1.PullAlways
 	container.Resources = agent.Spec.Resources
 	container.SecurityContext = containerSecurityContext()
-	// The copy is not mounted read-only: the rule it satisfies has the reader
-	// owning the file, and garam's contract expects whatever refreshes a copy to
-	// do so in the Pod that reads it.
 	container.VolumeMounts = []corev1.VolumeMount{
-		{Name: credentialsVolumeName, MountPath: descriptor.credentialsMountPath},
 		{Name: stateVolumeName, MountPath: descriptor.stateMountPath},
+	}
+	// The garam server root, and no token: the agent verifies the listener it
+	// fetches garam's signing keys from against it (ADR 0071).
+	if r.issuerFor(agent, descriptor) != nil {
+		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: serverRootVolumeName,
+			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName:  agent.Spec.CredentialsSecretName,
+				Items:       []corev1.KeyToPath{{Key: garam.ServerRootKey, Path: garam.ServerRootKey}},
+				DefaultMode: ptr.To[int32](credentialsFileMode),
+			}},
+		})
+		container.VolumeMounts = append(container.VolumeMounts,
+			corev1.VolumeMount{Name: serverRootVolumeName, MountPath: descriptor.credentialsMountPath, ReadOnly: true})
 	}
 	// Written on every pass, so that an operator that stops naming an image
 	// stops pointing the agent at what the Pod no longer carries.
@@ -968,12 +889,14 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 	// (garam@fdfb76d:docs/architecture/deployment-contract.md:473-477).
 	adapter.Args = []string{"adapter"}
 	adapter.SecurityContext = containerSecurityContext()
+	// The token mode: the token file in place of a certificate and key, which
+	// garam refuses beside it (garam@afde8b8:docs/architecture/adapter.md
+	// §Token mode).
 	adapter.Env = []corev1.EnvVar{
 		{Name: adapterAgentSetting, Value: grn},
 		{Name: adapterMachineURLSetting, Value: "https://" + r.GaramAddress},
 		{Name: adapterGatewayURLSetting, Value: "http://" + descriptor.gatewayAddress},
-		{Name: adapterCertFileSetting, Value: adapterCredentialsMountPath + "/" + garam.CertificateKey},
-		{Name: adapterKeyFileSetting, Value: adapterCredentialsMountPath + "/" + garam.KeyKey},
+		{Name: adapterTokenFileSetting, Value: adapterCredentialsMountPath + "/" + garam.TokenKey},
 		{Name: adapterServerRootSetting, Value: adapterCredentialsMountPath + "/" + garam.ServerRootKey},
 	}
 	adapter.VolumeMounts = adapterVolumeMounts()
@@ -997,10 +920,12 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 	// Fenced (garam@e81a1e0, ADR-0084): the three control settings together, and
 	// the outbox beside them, which that adapter requires
 	// (garam@e81a1e0:internal/cli/cli.go:79-91,188-191;
-	// internal/cli/delivery.go:94-109).
+	// internal/cli/delivery.go:94-109). In the token mode the control token
+	// goes beside them and nowhere else (garam@afde8b8, ADR-0100).
 	adapter.Env = append(adapter.Env,
 		corev1.EnvVar{Name: adapterControlURLSetting, Value: "https://" + r.ControlAddress},
 		corev1.EnvVar{Name: adapterControlRootSetting, Value: controlRootMountPath + "/" + controlRootFile},
+		corev1.EnvVar{Name: adapterControlTokenSetting, Value: adapterCredentialsMountPath + "/" + garam.ControlTokenKey},
 		corev1.EnvVar{Name: adapterPlacementTokenSetting, Value: placementMountPath + "/" + placementTokenKey},
 		corev1.EnvVar{Name: adapterOutboxDirSetting, Value: outboxMountPath})
 	adapter.VolumeMounts = append(adapter.VolumeMounts,
@@ -1014,7 +939,7 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 // or normalises it. The keys are fetched from the machine listener the
 // adapter is given, not from the issuer: in-cluster that address is a Service
 // name the issuer origin need not be. The fetch is verified against the garam
-// server root in the agent's own copy of its credential, which it already mounts.
+// server root, which the agent mounts out of its credential Secret alone.
 func (r *AgentReconciler) issuerFor(agent *agentv1alpha1.Agent, descriptor agentTypeDescriptor) *messageIssuer {
 	if r.GaramIssuer == "" || !r.adapterBuilt(agent) {
 		return nil
@@ -1082,19 +1007,30 @@ func makeOutboxCommand(dir string) []string {
 }
 
 // adapterVolumeMounts is what the adapter reads, and nothing the agent alone
-// does: the copy of the agent's credential, read-only, because the adapter is
-// the agent to garam and reads the same key file the agent renews. It owns that
-// copy for the reason the agent does — every container runs as the Pod's user.
+// does: the agent's credential Secret, read-only, holding its tokens and the
+// garam server root, which the adapter alone mounts (ADR 0073).
 //
-// It also mounts the copy of the placement token, which the adapter alone
-// reads, and which it is told of only where it activates through the control
-// service (ADR 0049); there it mounts the control root too. Every adapter mounts
-// the outbox (ADR 0060).
+// It also mounts the placement token, which the adapter alone reads, and which
+// it is told of only where it activates through the control service (ADR
+// 0049); there it mounts the control root too. Every adapter mounts the outbox
+// (ADR 0060).
 func adapterVolumeMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{
 		{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true},
 		// The placement token, which only the adapter reads (ADR 0042).
 		{Name: placementVolumeName, MountPath: placementMountPath, ReadOnly: true},
+	}
+}
+
+// secretVolume is the volume called name projecting the Secret secretName,
+// readable by the Pod's group (credentialsFileMode).
+func secretVolume(name, secretName string) corev1.Volume {
+	return corev1.Volume{
+		Name: name,
+		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName:  secretName,
+			DefaultMode: ptr.To[int32](credentialsFileMode),
+		}},
 	}
 }
 

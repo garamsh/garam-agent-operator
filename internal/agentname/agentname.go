@@ -9,12 +9,11 @@ import (
 )
 
 // credentialsSecretSuffix is what an agent's credential Secret is named after
-// the Agent it belongs to, and credentialRequestSecretSuffix the Secret its first
-// certificate request is persisted in until the credential is placed.
+// the Agent it belongs to, and recoveryRequestSecretSuffix the Secret its
+// recovery request is persisted in until the recovery is finalized.
 const (
-	credentialsSecretSuffix       = "-credentials"
-	credentialRequestSecretSuffix = "-credential-request"
-	recoveryRequestSecretSuffix   = "-recovery-request"
+	credentialsSecretSuffix     = "-credentials"
+	recoveryRequestSecretSuffix = "-recovery-request"
 )
 
 // Agent is what the Agent built for a GRN is called. It is the digest of the
@@ -33,33 +32,28 @@ func CredentialsSecret(grn string) string {
 	return Agent(grn) + credentialsSecretSuffix
 }
 
-// CredentialRequestSecret is what the Secret persisting a managed agent's first
-// certificate request is called, until its credential is placed.
-func CredentialRequestSecret(grn string) string {
-	return Agent(grn) + credentialRequestSecretSuffix
-}
-
 // RecoveryRequestSecret is what the Secret persisting a managed agent's recovery
-// certificate request is called, until the recovered credential is placed
-// (ADR 0059).
+// request is called, until the recovery is finalized (ADR 0057, ADR 0073).
 func RecoveryRequestSecret(grn string) string {
 	return Agent(grn) + recoveryRequestSecretSuffix
 }
 
-// The names the recoverer writes onto an agent's Secrets and the workload's
-// controller reads off them (ADR 0059). Both are the manager's, in different
-// domains, so the names sit below both.
+// The names the recoverer and the token refresher write onto an agent's
+// credential Secret, and the workload's controller and the refresher read off
+// it (ADR 0073). They are the manager's, in different domains, so the names sit
+// below them.
 const (
 	// CredentialLineageAnnotation records on an agent's credential Secret the
-	// lineage garam recovered it under. It is absent on a first credential, and
-	// the workload's Pod template carries it, so a recovered credential moves
-	// the Pod and one never recovered moves nothing.
+	// lineage garam recovered it under. It is absent where no recovery was
+	// finalized, and the workload's Pod template carries it, so a recovery moves
+	// the Pod and an agent never recovered moves nothing.
 	CredentialLineageAnnotation = "agent.garam.sh/credential-lineage"
 
-	// RecoveryRefusedAnnotation records on an agent's recovery request Secret
-	// why the recovered certificate was not placed. Its value is a condition
-	// reason.
-	RecoveryRefusedAnnotation = "agent.garam.sh/recovery-refused"
+	// TokensRefreshAnnotation records on an agent's credential Secret when its
+	// tokens are next minted, in RFC 3339. A Secret without it is minted for on
+	// the refresher's next pass: the recoverer removes it once a recovery is
+	// finalized, so the agent's tokens are minted again in the new lineage.
+	TokensRefreshAnnotation = "agent.garam.sh/tokens-refresh-at"
 )
 
 // The names the workload's controller writes onto an agent's objects and the

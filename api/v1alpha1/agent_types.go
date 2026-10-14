@@ -522,22 +522,16 @@ const (
 )
 
 // ConditionRecovery is the condition type reporting whether a recovery of the
-// agent's credential is in progress (ADR 0059). True means this operator holds
-// a recovery request for it: the recovered certificate is not placed yet, or
-// was refused, which its reason says.
+// agent's credential is in progress (ADR 0057, ADR 0073). True means this
+// operator holds a recovery request for it, whose new lineage is not recorded
+// yet.
 const ConditionRecovery = "Recovery"
 
 // Reasons for the Recovery condition.
 const (
 	// ReasonRecovering is set while a recovery request is persisted and its
-	// recovered certificate is not placed.
+	// new lineage is not recorded.
 	ReasonRecovering = "Recovering"
-
-	// ReasonRecoveredCertificateUnverified is set when the recovered
-	// certificate does not chain to the issuer kept from the agent's first
-	// certificate, is not signed over the persisted key, or names another
-	// agent. Nothing is placed, and the request is kept.
-	ReasonRecoveredCertificateUnverified = "RecoveredCertificateUnverified"
 
 	// ReasonNotRecovering is set while no recovery request is persisted.
 	ReasonNotRecovering = "NotRecovering"

@@ -95,7 +95,7 @@ func (p *Poller) poll(ctx context.Context) {
 // identity an agent constructed before the spec carried one has only in its
 // status.
 //
-// It runs before the credential is looked at rather than beside the certificate,
+// It runs before the credential is looked at rather than beside the mint,
 // because construction is what places a credential and the agents this repairs
 // have one already: gated on a missing credential it would repair nothing.
 func (p *Poller) correct(ctx context.Context, agent GRN) {
@@ -133,18 +133,14 @@ func (p *Poller) claim(ctx context.Context, agent GRN) (Assignment, bool) {
 }
 
 // construct builds the agent a claim admits this operator to, where the cluster
-// does not already carry its credential.
-//
-// The certificate is asked for only here, where what comes back can be stored
-// at once: garam generates the private key per certificate and stores none, so
-// a credential that reaches nothing is gone. What recovers one is another
-// certificate rather than another write, which the next pass asks for.
+// does not already carry its credential: the Agent, and the Secret holding the
+// agent's first token, which the refresher keeps current from then on.
 //
 // This is also the only place epoch is written, and it is written because the
-// certificate route just proved it: that route answers for an agent assigned to
-// this operator at the current epoch and refuses every other caller, so an
-// answer here means the epoch in hand is the one this operator holds the agent
-// at. Nowhere else can say that. A definition's claim reports the assignment's
+// mint just proved it: mintAgentToken answers for an agent assigned to this
+// operator at the current epoch and refuses every other caller, so an answer
+// here means the epoch in hand is the one this operator holds the agent at.
+// Nowhere else can say that. A definition's claim reports the assignment's
 // epoch whoever holds it, so an epoch refreshed from a later poll would read
 // current however long ago this operator was replaced — and a report carrying
 // it could never be found stale, which is what the epoch is on the report for.
@@ -161,7 +157,7 @@ func (p *Poller) construct(ctx context.Context, definition Definition, epoch int
 		return
 	}
 
-	credential, err := p.client.IssueAgentCertificate(ctx, agent)
+	token, err := p.client.MintAgentToken(ctx, agent, "")
 	countRefusal(runnablePoller, err)
 	switch {
 	case errors.Is(err, ErrAgentNotHeld):
@@ -171,14 +167,13 @@ func (p *Poller) construct(ctx context.Context, definition Definition, epoch int
 		log.Error(err, "Constructed nothing: garam does not hold this agent for this operator", "agent", agent)
 		return
 	case err != nil:
-		log.Error(err, "Failed to obtain an agent's credential", "agent", agent)
+		log.Error(err, "Failed to mint an agent's token", "agent", agent)
 		return
 	}
 
-	if err := p.constructor.Construct(ctx, definition, epoch, credential); err != nil {
-		log.Error(err, "Lost a certificate garam issued an agent: it exists nowhere else, and the next "+
-			"pass asks for another rather than retrying this write", "agent", agent)
+	if err := p.constructor.Construct(ctx, definition, epoch, token); err != nil {
+		log.Error(err, "Failed to place an agent's first token; the next pass mints another", "agent", agent)
 		return
 	}
-	log.Info("Constructed an agent", "agent", agent, "epoch", epoch, "notAfter", credential.NotAfter)
+	log.Info("Constructed an agent", "agent", agent, "epoch", epoch, "expiresAt", token.ExpiresAt)
 }
