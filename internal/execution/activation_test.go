@@ -37,7 +37,7 @@ func TestActivate_ActivatesAndRemintsTheSameActivationOnRetry(t *testing.T) {
 	require.Equal(t, 2, e.garam.callCount())
 	assert.Equal(t, e.garam.calls[0], e.garam.calls[1])
 	assert.Equal(t, execution.ActivationCall{RequestID: requestID, Epoch: epoch, Generation: generation,
-		OperationRef: createRef, CertificatePEM: e.leafPEM}, e.garam.calls[0])
+		OperationRef: createRef, Token: execution.AgentToken(e.adapter.token)}, e.garam.calls[0])
 }
 
 func TestActivate_UndecidedIsRetriedAsTheSameActivation(t *testing.T) {
@@ -69,13 +69,16 @@ func TestActivate_RefusesWhatTheContractRefuses(t *testing.T) {
 			return e.post(t, e.adapter, "activations", activationBody(requestID, generation, "1"), token,
 				map[string]string{"Garam-Contract-Version": "agent-execution.v0"})
 		}, http.StatusBadRequest, kindInvalidRequest},
-		{"no agent certificate", nil, func(t *testing.T, e *env) answer {
-			return e.post(t, e.server.Client(), "activations", activationBody(requestID, generation, "1"), token, nil)
+		{"no agent token", nil, func(t *testing.T, e *env) answer {
+			return e.activate(t, caller{}, requestID, generation, "1")
 		}, http.StatusUnauthorized, kindUnauthenticated},
-		{"a certificate naming another agent", nil, func(t *testing.T, e *env) answer {
-			other, _ := e.leaf(t, "grn:acme:default:agent:other")
-			return e.activate(t, other, requestID, generation, "1")
-		}, http.StatusForbidden, kindNotAuthorized},
+		{"a token not in garam's form", nil, func(t *testing.T, e *env) answer {
+			return e.activate(t, caller{token: "garam_ot_" + strings.Repeat("0", 64)}, requestID, generation, "1")
+		}, http.StatusUnauthorized, kindUnauthenticated},
+		{"the placement token in Authorization, as agent-execution.v1 sent it", nil, func(t *testing.T, e *env) answer {
+			return e.post(t, caller{}, "activations", activationBody(requestID, generation, "1"), "",
+				map[string]string{"Authorization": "Garam-Placement " + token})
+		}, http.StatusUnauthorized, kindUnauthenticated},
 		{"no placement token", nil, func(t *testing.T, e *env) answer {
 			return e.post(t, e.adapter, "activations", activationBody(requestID, generation, "1"), "", nil)
 		}, http.StatusUnauthorized, kindUnauthenticated},
@@ -89,23 +92,20 @@ func TestActivate_RefusesWhatTheContractRefuses(t *testing.T) {
 		{"a revision the agent does not have", nil, func(t *testing.T, e *env) answer {
 			return e.activate(t, e.adapter, requestID, generation, "9")
 		}, http.StatusBadRequest, kindInvalidRequest},
-		{"a fenced credential", func(_ *testing.T, e *env) { e.garam.set(func(g *garam) { g.fenced[string(e.leafPEM)] = true }) },
-			activate, http.StatusForbidden, kindCredentialFenced},
-		{"a leaf garam refuses as not the agent's", func(_ *testing.T, e *env) {
-			e.garam.set(func(g *garam) { g.introspect = execution.ErrCredentialRefused })
+		{"a token garam holds not current", func(_ *testing.T, e *env) {
+			e.garam.set(func(g *garam) { g.fenced[e.adapter.token] = true })
 		}, activate, http.StatusForbidden, kindCredentialFenced},
-		{"an agent assigned elsewhere", func(_ *testing.T, e *env) {
+		{"a token minted for garam, which garam refuses forwarded", func(_ *testing.T, e *env) {
+			e.garam.set(func(g *garam) { g.foreign[e.adapter.token] = true })
+		}, activate, http.StatusForbidden, kindCredentialFenced},
+		{"an agent garam answers assigned elsewhere", func(_ *testing.T, e *env) {
 			e.garam.set(func(g *garam) { g.assignee = "grn:acme:default:operator:other" })
 		}, activate, http.StatusForbidden, kindPlacementNotCurrent},
 		{"garam's epoch another than the placement's", func(_ *testing.T, e *env) {
-			e.garam.set(func(g *garam) { g.epoch, g.proveEpoch = "8", epoch })
-		},
-			activate, http.StatusConflict, kindEpochSuperseded},
+			e.garam.set(func(g *garam) { g.epoch = "8" })
+		}, activate, http.StatusConflict, kindEpochSuperseded},
 		{"garam refusing control's authority", func(_ *testing.T, e *env) {
 			e.garam.set(func(g *garam) { g.introspect = execution.ErrNotAuthorized })
-		}, activate, http.StatusForbidden, kindNotAuthorized},
-		{"garam refusing the controller's proof", func(_ *testing.T, e *env) {
-			e.garam.set(func(g *garam) { g.prove = execution.ErrNotAuthorized })
 		}, activate, http.StatusForbidden, kindNotAuthorized},
 		{"garam undecided on the introspection", func(_ *testing.T, e *env) {
 			e.garam.set(func(g *garam) { g.introspect = execution.ErrUndecided })
@@ -125,11 +125,11 @@ func TestActivate_RefusesWhatTheContractRefuses(t *testing.T) {
 			assert.Equal(t, tt.kind, refused.kind())
 			assert.Equal(t, execution.Contract, refused.contract, "a refusal was answered without the contract")
 
-			// Control: the same activation, from the agent's current leaf on its placement, as garam
+			// Control: the same activation, under the agent's current token on its placement, as garam
 			// answers it unrefused.
 			e.garam.set(func(g *garam) {
-				g.fenced, g.assignee, g.epoch = map[string]bool{}, controller, epoch
-				g.introspect, g.prove, g.activate, g.proveEpoch = nil, nil, nil, ""
+				g.fenced, g.foreign, g.assignee, g.epoch = map[string]bool{}, map[string]bool{}, controller, epoch
+				g.introspect, g.activate = nil, nil
 			})
 			accepted := e.activate(t, e.adapter, requestID, generation, "1")
 			assert.Contains(t, []int{http.StatusCreated, http.StatusOK}, accepted.status, accepted.raw)
@@ -198,61 +198,66 @@ func TestActivate_SendsTheReferenceOfTheRevisionItRuns(t *testing.T) {
 	assert.Equal(t, "activation-2", e.garam.calls[3].ReplacesActivationID)
 }
 
-// TestActivate_RenewalExpiryAndRestart is #218's required sequence: a renewed leaf remints the same
-// activation at a higher token version; the expired first leaf, the recovered old lineage and an
-// ended activation all refuse.
-func TestActivate_RenewalExpiryAndRestart(t *testing.T) {
+// TestActivate_RefreshExpiryAndRecovery is #218's required sequence under tokens: a refreshed token
+// remints the same activation at a higher token version; the expired first token, the old lineage's
+// token after a recovery and an ended activation all refuse.
+func TestActivate_RefreshExpiryAndRecovery(t *testing.T) {
 	e := newEnv(t)
 	first := e.activate(t, e.adapter, requestID, generation, "1")
 	require.Equal(t, http.StatusCreated, first.status, first.raw)
 
-	// The agent renews its certificate: the renewed leaf remints the same activation.
-	renewed, renewedPEM := e.leaf(t, agent)
-	again := e.activate(t, renewed, requestID, generation, "1")
+	// The assignee refreshes the token: the refreshed token remints the same activation.
+	refreshed := newCaller(t)
+	again := e.activate(t, refreshed, requestID, generation, "1")
 	require.Equal(t, http.StatusOK, again.status, again.raw)
 	assert.Equal(t, first.body["activationId"], again.body["activationId"])
 	assert.Equal(t, float64(2), again.body["tokenVersion"])
-	assert.Equal(t, renewedPEM, e.garam.calls[1].CertificatePEM, "the leaf forwarded was not this request's")
+	assert.Equal(t, execution.AgentToken(refreshed.token), e.garam.calls[1].Token, "the token forwarded was not this request's")
 
-	// The first leaf expires: garam holds it fenced.
-	e.garam.set(func(g *garam) { g.fenced[string(e.leafPEM)] = true })
+	// The first token expires: garam holds it fenced.
+	e.garam.set(func(g *garam) { g.fenced[e.adapter.token] = true })
 	expired := e.activate(t, e.adapter, requestID, generation, "1")
 	assert.Equal(t, http.StatusForbidden, expired.status, expired.raw)
 	assert.Equal(t, kindCredentialFenced, expired.kind())
 
-	// The adapter restarts and replays its own activation under the renewed leaf.
-	restarted := e.activate(t, renewed, requestID, generation, "1")
+	// The adapter restarts and replays its own activation under the refreshed token.
+	restarted := e.activate(t, refreshed, requestID, generation, "1")
 	require.Equal(t, http.StatusOK, restarted.status, restarted.raw)
 	assert.Equal(t, float64(3), restarted.body["tokenVersion"])
 
-	// A recovered lineage fences the renewed leaf and ends the activation it held.
-	recovered, _ := e.leaf(t, agent)
-	e.garam.set(func(g *garam) { g.fenced[string(renewedPEM)] = true })
+	// A recovery fences every token of the old lineage and ends the activation it held; the
+	// assignee mints again in the new one.
+	recovered := newCaller(t)
+	e.garam.set(func(g *garam) { g.fenced[refreshed.token] = true })
 	e.garam.end()
-	oldLineage := e.activate(t, renewed, requestID, generation, "1")
+	oldLineage := e.activate(t, refreshed, requestID, generation, "1")
 	assert.Equal(t, http.StatusForbidden, oldLineage.status, oldLineage.raw)
 	assert.Equal(t, kindCredentialFenced, oldLineage.kind())
 	ended := e.activate(t, recovered, requestID, generation, "1")
 	assert.Equal(t, http.StatusConflict, ended.status, ended.raw)
 	assert.Equal(t, kindActivationSuperseded, ended.kind())
 
-	// Control: a new generation under the recovered lineage is a new activation, anchored on the ended one.
+	// Control: a new generation under the new lineage's token is a new activation, anchored on the ended one.
 	fresh := e.activate(t, recovered, "request-fresh", strings.Repeat("e", 32), "1")
 	assert.Equal(t, http.StatusCreated, fresh.status, fresh.raw)
 	assert.Equal(t, firstActivation, e.garam.calls[len(e.garam.calls)-1].ReplacesActivationID)
 }
 
-func TestActivate_ControllerProvedUnderAnotherEpochRefused(t *testing.T) {
+// TestActivate_TheControllerIsProvedByGaramsAnswerAboutTheToken has garam answer the token minted
+// by another assignee than the placement's controller: nothing the request carries proves the
+// controller, so garam is not asked to activate (ADR 0073).
+func TestActivate_TheControllerIsProvedByGaramsAnswerAboutTheToken(t *testing.T) {
 	e := newEnv(t)
-	e.garam.set(func(g *garam) { g.proveEpoch = "8" })
+	e.garam.set(func(g *garam) { g.assignee = "grn:acme:default:operator:other" })
 	refused := e.activate(t, e.adapter, requestID, generation, "1")
-	assert.Equal(t, http.StatusConflict, refused.status, refused.raw)
-	assert.Equal(t, kindEpochSuperseded, refused.kind())
-	assert.Equal(t, 0, e.garam.callCount())
+	assert.Equal(t, http.StatusForbidden, refused.status, refused.raw)
+	assert.Equal(t, kindPlacementNotCurrent, refused.kind())
+	assert.Equal(t, 0, e.garam.callCount(), "garam was asked to activate with the controller unproved")
 
-	// Control: the controller proved under the placement's epoch.
-	e.garam.set(func(g *garam) { g.proveEpoch = "" })
-	assert.Equal(t, http.StatusCreated, e.activate(t, e.adapter, requestID, generation, "1").status)
+	// Control: garam answering the placement's controller as the assignee proves it.
+	e.garam.set(func(g *garam) { g.assignee = controller })
+	accepted := e.activate(t, e.adapter, requestID, generation, "1")
+	assert.Equal(t, http.StatusCreated, accepted.status, accepted.raw)
 }
 
 func TestActivate_AnActivationOfAnotherBindingIsNotPassedOn(t *testing.T) {
@@ -282,22 +287,4 @@ func TestActivate_ConcurrentActivationsAreSerialized(t *testing.T) {
 	assert.Equal(t, []int{http.StatusCreated, http.StatusCreated}, statuses)
 	anchors := []string{e.garam.calls[0].ReplacesActivationID, e.garam.calls[1].ReplacesActivationID}
 	assert.ElementsMatch(t, []string{"", firstActivation}, anchors)
-}
-
-// TestActivate_RefusedByNameWhereTheControllerCannotBeProved is the state between #354 and #355:
-// garam proves a controller over its token, and an activation carries none of the controller's.
-func TestActivate_RefusedByNameWhereTheControllerCannotBeProved(t *testing.T) {
-	e := newEnv(t)
-	e.garam.set(func(g *garam) { g.prove = execution.ErrControllerUnprovable })
-
-	refused := e.activate(t, e.adapter, requestID, generation, "1")
-	assert.Equal(t, http.StatusForbidden, refused.status, refused.raw)
-	assert.Equal(t, kindNotAuthorized, refused.kind())
-	assert.Contains(t, refused.raw, "#355", "the refusal does not say why")
-	assert.Equal(t, 0, e.garam.callCount(), "garam was asked to activate with the controller unproved")
-
-	// Control: the same activation with the controller proved is accepted.
-	e.garam.set(func(g *garam) { g.prove = nil })
-	accepted := e.activate(t, e.adapter, requestID, generation, "1")
-	assert.Equal(t, http.StatusCreated, accepted.status, accepted.raw)
 }

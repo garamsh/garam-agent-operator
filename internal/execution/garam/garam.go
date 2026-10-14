@@ -12,11 +12,11 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
-// Garam asks garam's machine listener what the agent routes decide on (garam@e81a1e0,
-// api/machine.yaml): introspectAgentExecution and activateAgent under execution-fence.v1, which
-// garam refuses beside this service's token until #355 moves agents to tokens. An attempt garam
-// leaves undecided is sent again by the machine client within its bound; activateAgent answers a replay of one requestId
-// with the same activation, so that is safe too.
+// Garam asks garam's machine listener what the agent routes decide on (garam@afde8b8,
+// api/machine.yaml): introspectAgentExecution and activateAgent under execution-fence.v2, each
+// forwarding the agent's token minted for this service as token. An attempt garam leaves undecided
+// is sent again by the machine client within its bound; activateAgent answers a replay of one
+// requestId with the same activation, so that is safe too.
 type Garam struct {
 	machine *garammachine.Client
 }
@@ -28,12 +28,12 @@ func NewGaram(machine *garammachine.Client) *Garam {
 	return &Garam{machine: machine}
 }
 
-// Introspect asks introspectAgentExecution about the leaf, and the generation where one is given.
-func (g *Garam) Introspect(ctx context.Context, agent string, leafPEM []byte, generation string) (execution.Introspection, error) {
+// Introspect asks introspectAgentExecution about the token, and the generation where one is given.
+func (g *Garam) Introspect(ctx context.Context, agent string, token execution.AgentToken, generation string) (execution.Introspection, error) {
 	in := struct {
-		CertificatePEM string  `json:"certificatePem"`
-		Generation     *string `json:"generation"`
-	}{CertificatePEM: string(leafPEM)}
+		Token      string  `json:"token"`
+		Generation *string `json:"generation"`
+	}{Token: string(token)}
 	if generation != "" {
 		in.Generation = &generation
 	}
@@ -64,14 +64,6 @@ func (g *Garam) Introspect(ctx context.Context, agent string, leafPEM []byte, ge
 	return i, nil
 }
 
-// ProveController answers execution.ErrControllerUnprovable and sends nothing: under
-// operation-authority.v2 garam proves a controller over the token that controller exchanged for
-// this service, and an activation carries none (garam@9ba35c3 api/machine.yaml introspectController).
-// The proof moves to agents' tokens with #355.
-func (g *Garam) ProveController(context.Context, string, string) (execution.ControllerProof, error) {
-	return execution.ControllerProof{}, execution.ErrControllerUnprovable
-}
-
 // Activate asks activateAgent, and reports whether garam created the activation.
 func (g *Garam) Activate(ctx context.Context, agent string, call execution.ActivationCall) (execution.Activation, bool, error) {
 	in := struct {
@@ -80,8 +72,8 @@ func (g *Garam) Activate(ctx context.Context, agent string, call execution.Activ
 		Generation           string  `json:"generation"`
 		ReplacesActivationID *string `json:"replacesActivationId"`
 		OperationRef         *string `json:"operationRef"`
-		CertificatePEM       string  `json:"certificatePem"`
-	}{RequestID: call.RequestID, Epoch: call.Epoch, Generation: call.Generation, CertificatePEM: string(call.CertificatePEM)}
+		Token                string  `json:"token"`
+	}{RequestID: call.RequestID, Epoch: call.Epoch, Generation: call.Generation, Token: string(call.Token)}
 	if call.ReplacesActivationID != "" {
 		in.ReplacesActivationID = &call.ReplacesActivationID
 	}

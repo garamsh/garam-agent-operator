@@ -39,7 +39,7 @@ func (l *lifecycle) Recover(_ context.Context, _ string, handoff console.Authori
 	if l.recoverErr != nil {
 		return definition.RecoveredCredential{}, l.recoverErr
 	}
-	return definition.RecoveredCredential{Lineage: "lineage-2", CertificatePEM: "recovered certificate"}, nil
+	return definition.RecoveredCredential{Lineage: "lineage-2"}, nil
 }
 
 func (l *lifecycle) Deactivate(_ context.Context, _, activationID string) error {
@@ -100,14 +100,12 @@ func openBody(requestID, recoveryID string) []byte {
 	return []byte(`{"requestId":"` + requestID + `","recoveryRequestId":"` + recoveryID + `"}`)
 }
 
-// prepare stores k8s's certificate request for recovery recoveryID, as its controller would, and
-// returns the prepared body.
+// prepare stores k8s's request for recovery recoveryID, as its controller would, and returns the
+// prepared body.
 func (e *env) prepare(t *testing.T, recoveryID string) []byte {
 	t.Helper()
-	r, err := e.definitions.PrepareRecovery(context.Background(), definition.InitialCertificateInput{
-		Agent: agent, Controller: controllerGRN,
-		Request: definition.CertificateRequest{RequestID: recoveryID, Epoch: "1", CSRPEM: "csr of " + recoveryID},
-	})
+	r, err := e.definitions.PrepareRecovery(context.Background(), agent,
+		definition.RecoveryRequest{RequestID: recoveryID, Epoch: "1"})
 	require.NoError(t, err)
 	return r.Body
 }
@@ -139,7 +137,7 @@ func TestRecovery_FinalizeSendsGaramThePreparedBytesUnderTheHandoff(t *testing.T
 	finalized := e.lifecycleCall(t, "/recovery/finalize", handoff, prepared)
 	require.Equal(t, http.StatusCreated, finalized.status, finalized.body)
 	assert.Equal(t, "finalized", finalized.body["stage"])
-	assert.Equal(t, "recovered certificate", finalized.body["certificatePem"])
+	assert.Equal(t, "lineage-2", finalized.body["lineage"])
 	sent, _ := e.lifecycle.calls()
 	require.Len(t, sent, 1)
 	assert.Equal(t, prepared, sent[0].body, "garam was not sent the prepared bytes")
@@ -156,14 +154,14 @@ func TestRecovery_FinalizeRefusesAnythingButThePreparedRequest(t *testing.T) {
 	e := newEnv(t)
 	open := openBody("open-1", "rec-1")
 	require.Equal(t, http.StatusCreated, e.lifecycleCall(t, "/recovery", e.recoverAuthority("open-1", open), open).status)
-	early := []byte(`{"requestId":"rec-1","epoch":"1","certificateRequestPem":"csr of rec-1"}`)
+	early := []byte(`{"requestId":"rec-1","epoch":"1"}`)
 
 	before := e.lifecycleCall(t, "/recovery/finalize", e.recoverAuthority("rec-1", early), early)
 	assert.Equal(t, http.StatusConflict, before.status)
 	assert.Equal(t, "recovery_stage", before.kind(), "a recovery was finalized before it was prepared")
 
 	prepared := e.prepare(t, "rec-1")
-	reordered := []byte(`{"epoch":"1","requestId":"rec-1","certificateRequestPem":"csr of rec-1"}`)
+	reordered := []byte(`{"epoch":"1","requestId":"rec-1"}`)
 	require.NotEqual(t, prepared, reordered)
 	mismatch := e.lifecycleCall(t, "/recovery/finalize", e.recoverAuthority("rec-1", reordered), reordered)
 	assert.Equal(t, http.StatusConflict, mismatch.status)

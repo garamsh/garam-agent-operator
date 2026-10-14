@@ -8,13 +8,13 @@ import (
 
 // RecoveryBody is the request garam's credential recovery is sent for r, as the bytes it is sent
 // as: an administrator's agent:recover handoff is minted over exactly these, and garam compares
-// its digest with the body it receives (garam@59fe68d api/machine.yaml recoverAgentCredential).
-func RecoveryBody(r CertificateRequest) ([]byte, error) {
+// its digest with the body it receives. Under execution-fence.v2 it carries no certificate
+// request (garam@afde8b8 api/machine.yaml recoverAgentCredential).
+func RecoveryBody(r RecoveryRequest) ([]byte, error) {
 	body, err := json.Marshal(struct {
-		RequestID             string `json:"requestId"`
-		Epoch                 string `json:"epoch"`
-		CertificateRequestPEM string `json:"certificateRequestPem"`
-	}{r.RequestID, r.Epoch, r.CSRPEM})
+		RequestID string `json:"requestId"`
+		Epoch     string `json:"epoch"`
+	}{r.RequestID, r.Epoch})
 	if err != nil {
 		return nil, fmt.Errorf("encode the recovery request: %w", err)
 	}
@@ -61,15 +61,15 @@ func (s *service) RecoveryOf(ctx context.Context, org string, agent GRN) (Recove
 	return r, nil
 }
 
-// PrepareRecovery stores the certificate request the agent's controller made for its open
-// recovery, as the bytes garam is to be sent. A repeat answers the recovery as stored, with
-// garam's answer once it is finalized.
-func (s *service) PrepareRecovery(ctx context.Context, in InitialCertificateInput) (Recovery, error) {
-	body, err := RecoveryBody(in.Request)
+// PrepareRecovery stores the request the agent's controller made for its open recovery, as the
+// bytes garam is to be sent. A repeat answers the recovery as stored, with garam's answer once it
+// is finalized.
+func (s *service) PrepareRecovery(ctx context.Context, agent GRN, r RecoveryRequest) (Recovery, error) {
+	body, err := RecoveryBody(r)
 	if err != nil {
 		return Recovery{}, err
 	}
-	return s.repository.PrepareRecovery(ctx, in.Agent, in.Request.RequestID, in.Request.Epoch, body)
+	return s.repository.PrepareRecovery(ctx, agent, r.RequestID, r.Epoch, body)
 }
 
 // FinalizeRecovery records garam's answer to the agent's prepared recovery.

@@ -22,7 +22,7 @@ const (
 	kindTooManyAgents = "too_many_agents"
 	// kindEpochSuperseded names the refusal of a request whose epoch is not the agent's proved one.
 	kindEpochSuperseded = "epoch_superseded"
-	// kindRequestReused names the refusal of a certificate request other than the one stored.
+	// kindRequestReused names the refusal of a recovery request other than the one stored.
 	kindRequestReused = "request_reused"
 	// kindInvalidRequest names the refusal of a placement registration that is not one.
 	kindInvalidRequest = "invalid_request"
@@ -42,13 +42,6 @@ var placementRefusals = []struct {
 	{definition.ErrPlacementConflict, "placement_conflict"},
 }
 
-// refusalStatus is the status each class of garam's refusal of an issuance is answered with.
-var refusalStatus = map[definition.Refusal]int{
-	definition.RefusalForbidden: http.StatusForbidden,
-	definition.RefusalConflict:  http.StatusConflict,
-	definition.RefusalInvalid:   http.StatusBadRequest,
-}
-
 // respondError translates err to its status. It is the only place a controller route chooses a
 // status for an error, and the only place one is logged.
 func (s *server) respondError(w http.ResponseWriter, err error) {
@@ -58,12 +51,9 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 			return
 		}
 	}
-	var refused *definition.IssuanceRefusedError
 	switch {
 	case errors.Is(err, errInvalidPlacementBody):
 		writeJSON(w, http.StatusBadRequest, errorBody{Kind: kindInvalidRequest, Message: err.Error()})
-	case errors.As(err, &refused) && refusalStatus[refused.Refusal] != 0:
-		writeJSON(w, refusalStatus[refused.Refusal], errorBody{Kind: refused.Kind, Message: err.Error()})
 	case errors.Is(err, errEpochSuperseded), errors.Is(err, definition.ErrRecoveryEpoch):
 		writeJSON(w, http.StatusConflict, errorBody{Kind: kindEpochSuperseded, Message: err.Error()})
 	case errors.Is(err, definition.ErrRequestReused):
@@ -74,14 +64,14 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 		writeMessage(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, ErrNotProved), errors.Is(err, ErrAnotherOperator), errors.Is(err, errNotPlaced):
 		writeMessage(w, http.StatusForbidden, err.Error())
-	case errors.Is(err, ErrUndecided), errors.Is(err, definition.ErrIssuanceUndecided):
+	case errors.Is(err, ErrUndecided):
 		writeMessage(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, ErrGaramContractUnsupported), errors.Is(err, definition.ErrGaramContractUnsupported):
 		// garam's own contract answers a dependency it cannot use with 503 (garam@59fe68d
 		// api/machine.yaml:26-31).
 		writeJSON(w, http.StatusServiceUnavailable, errorBody{Kind: kindGaramContractUnsupported, Message: err.Error()})
 	case errors.Is(err, errInvalidQuery), errors.Is(err, errInvalidStatusBody), errors.Is(err, definition.ErrInvalidStatus),
-		errors.Is(err, errInvalidCertificateBody):
+		errors.Is(err, errInvalidRecoveryBody):
 		writeMessage(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, definition.ErrNotFound):
 		writeMessage(w, http.StatusNotFound, err.Error())

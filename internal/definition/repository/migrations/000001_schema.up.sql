@@ -86,7 +86,7 @@ CREATE TABLE creations (
     CHECK ((state = 'failed') = (reason IS NOT NULL))
 );
 
--- A creation's agent names one creation, which a first-certificate request is sent under.
+-- A creation's agent names one creation, whose reference the agent's first activation is sent under.
 CREATE UNIQUE INDEX creations_agent ON creations (agent);
 
 -- One row per configure request, keyed as garam keys the operation's request id. A repeat
@@ -122,22 +122,6 @@ CREATE TABLE agent_status (
     CHECK ((applied_revision IS NULL) = (applied_activation_id IS NULL)),
     CHECK ((applied_revision IS NULL) = (applied_generation IS NULL)),
     CHECK ((applied_revision IS NULL) = (applied_observed_at IS NULL))
-);
-
--- One first-certificate request per agent, as its controller sent it, and the public result garam
--- answered. A row is pending while the outcome is unknown; a refusal removes it.
-CREATE TABLE initial_certificates (
-    agent                   text PRIMARY KEY REFERENCES creations (agent),
-    request_id              text NOT NULL,
-    epoch                   text NOT NULL,
-    certificate_request_pem text NOT NULL,
-    state                   text NOT NULL CHECK (state IN ('pending', 'issued')),
-    certificate_pem         text,
-    issuer_pem              text,
-    server_root_pem         text,
-    not_after               timestamptz,
-    CHECK ((state = 'issued') = (certificate_pem IS NOT NULL AND issuer_pem IS NOT NULL
-        AND server_root_pem IS NOT NULL AND not_after IS NOT NULL))
 );
 
 -- Every placement a controller registered for an agent: the Pod, the state claim it started on,
@@ -206,10 +190,9 @@ CREATE TABLE cutover_imports (
 
 -- Every credential recovery of an agent: the console request that opened it under an
 -- agent:recover authority of its own request identifier, the epoch it was opened under, and, once
--- the agent's controller prepared its certificate request, the exact bytes garam is sent, over
--- which the finalizing handoff is minted. garam's answer is kept once it is finalized, with the
--- issuer and garam server root it was signed under where garam names them (ADR 0062). One
--- recovery per agent is open.
+-- the agent's controller prepared its request, the exact bytes garam is sent, over which the
+-- finalizing handoff is minted. garam's answer, the agent's new lineage, is kept once it is
+-- finalized. One recovery per agent is open.
 CREATE TABLE recoveries (
     agent               text   NOT NULL,
     recovery_request_id text   NOT NULL,
@@ -227,15 +210,12 @@ CREATE TABLE recoveries (
     garam_body          bytea,
     garam_body_sha256   text,
     lineage             text,
-    certificate_pem     text,
     opened_at           timestamptz NOT NULL DEFAULT now(),
-    issuer_pem          text,
-    server_root_pem     text,
     PRIMARY KEY (agent, recovery_request_id),
     UNIQUE (organization, request_id),
     CHECK ((stage = 'requested') = (garam_body IS NULL)),
     CHECK ((garam_body IS NULL) = (garam_body_sha256 IS NULL)),
-    CHECK ((stage = 'finalized') = (lineage IS NOT NULL AND certificate_pem IS NOT NULL))
+    CHECK ((stage = 'finalized') = (lineage IS NOT NULL))
 );
 
 CREATE UNIQUE INDEX recoveries_open ON recoveries (agent) WHERE stage <> 'finalized';

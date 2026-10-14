@@ -45,15 +45,13 @@ func stand(t *testing.T, contract string, status int, answer string) (*lifecycle
 
 func TestGaram_RecoverSendsTheBodyExactlyUnderTheHandoff(t *testing.T) {
 	g, got, _ := stand(t, garammachine.ExecutionFence, http.StatusCreated,
-		`{"grn":"`+agent+`","lineage":"lineage-2","certificatePem":"cert","issuerPem":"issuer","serverRootPem":"root"}`)
+		`{"grn":"`+agent+`","lineage":"lineage-2"}`)
 	// Not what encoding/json would write: the bytes, not their meaning, are what the handoff binds.
-	body := []byte(`{"epoch":"3", "requestId":"rec-1","certificateRequestPem":"csr"}`)
+	body := []byte(`{"epoch":"3", "requestId":"rec-1"}`)
 
 	recovered, err := g.Recover(context.Background(), agent, "recover-handoff", body)
 	require.NoError(t, err)
-	assert.Equal(t, definition.RecoveredCredential{
-		Lineage: "lineage-2", CertificatePEM: "cert", IssuerPEM: "issuer", ServerRootPEM: "root",
-	}, recovered)
+	assert.Equal(t, definition.RecoveredCredential{Lineage: "lineage-2"}, recovered)
 	assert.Equal(t, seen{http.MethodPost, "/agents/" + agent + "/credential-recovery", garammachine.ExecutionFence,
 		"recover-handoff", string(body)}, *got)
 }
@@ -70,23 +68,23 @@ func TestGaram_RecoverAnswersGaramsRefusalUndecidedAndForeignContract(t *testing
 	require.ErrorIs(t, err, console.ErrLifecycleUndecided)
 	assert.Equal(t, 3, *calls, "an undecided recovery was not sent again within the client's bound")
 
-	g, _, _ = stand(t, "agent-execution.v1", http.StatusCreated, `{"grn":"`+agent+`","lineage":"l","certificatePem":"c"}`)
+	g, _, _ = stand(t, "agent-execution.v1", http.StatusCreated, `{"grn":"`+agent+`","lineage":"l"}`)
 	_, err = g.Recover(context.Background(), agent, "ref", []byte(`{}`))
 	require.ErrorIs(t, err, console.ErrGaramContractUnsupported)
 
-	g, _, _ = stand(t, garammachine.ExecutionFence, http.StatusCreated, `{"grn":"grn:acme:default:agent:other","lineage":"l","certificatePem":"c"}`)
+	g, _, _ = stand(t, garammachine.ExecutionFence, http.StatusCreated, `{"grn":"grn:acme:default:agent:other","lineage":"l"}`)
 	_, err = g.Recover(context.Background(), agent, "ref", []byte(`{}`))
 	require.Error(t, err, "a recovery of another agent was taken")
 	assert.False(t, errors.As(err, &refused))
 }
 
 func TestGaram_DeactivateEndsTheActivation(t *testing.T) {
-	g, got, _ := stand(t, garammachine.ExecutionFenceToken, http.StatusOK, `{}`)
+	g, got, _ := stand(t, garammachine.ExecutionFence, http.StatusOK, `{}`)
 	require.NoError(t, g.Deactivate(context.Background(), agent, "activation-1"))
 	assert.Equal(t, seen{http.MethodPost, "/agents/" + agent + "/activations/activation-1/deactivation",
-		garammachine.ExecutionFenceToken, "", ""}, *got)
+		garammachine.ExecutionFence, "", ""}, *got)
 
-	g, _, _ = stand(t, garammachine.ExecutionFenceToken, http.StatusForbidden, `{"kind":"permission_denied","message":"no"}`)
+	g, _, _ = stand(t, garammachine.ExecutionFence, http.StatusForbidden, `{"kind":"permission_denied","message":"no"}`)
 	err := g.Deactivate(context.Background(), agent, "activation-1")
 	var refused *console.LifecycleRefusal
 	require.ErrorAs(t, err, &refused)

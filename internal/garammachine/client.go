@@ -28,16 +28,12 @@ const (
 	// AgentCutover is the contract of a legacy agent's cutover stages under a token (garam@9ba35c3,
 	// ADR-0086).
 	AgentCutover = "agent-cutover.v2"
-	// ExecutionFenceToken is the contract of the execution routes that forward no agent credential,
-	// under a token (garam@9ba35c3).
-	ExecutionFenceToken = "execution-fence.v2"
-
-	// ManagedEnrollment and ExecutionFence are the certificate contracts of the calls bound to an
-	// agent's credential: managed create and the first certificate, activation, execution
-	// introspection and credential recovery. garam refuses them beside a token, and they move with
-	// the agents' own credentials (#355).
-	ManagedEnrollment = "managed-enrollment.v1"
-	ExecutionFence    = "execution-fence.v1"
+	// ExecutionFence is the contract of the execution routes under a token. Activation, execution
+	// introspection and credential recovery forward the agent's own token minted for this service
+	// (garam@afde8b8).
+	ExecutionFence = "execution-fence.v2"
+	// ManagedEnrollment is the contract of managed creation under a token (garam@afde8b8).
+	ManagedEnrollment = "managed-enrollment.v2"
 
 	// maxAnswerBytes bounds an answer read from garam.
 	maxAnswerBytes = 1 << 20

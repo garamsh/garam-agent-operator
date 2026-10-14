@@ -13,7 +13,7 @@ import (
 const OperationRecover = "agent:recover"
 
 // Lifecycle carries an agent's credential recovery and the deactivation of its activation to
-// garam under execution-fence.v1 (garam@59fe68d api/machine.yaml recoverAgentCredential,
+// garam under execution-fence.v2 (garam@afde8b8 api/machine.yaml recoverAgentCredential,
 // deactivateAgent). It returns *LifecycleRefusal or ErrLifecycleUndecided for the answers that
 // refuse or decide nothing; any other error is the call's own.
 type Lifecycle interface {

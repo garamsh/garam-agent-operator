@@ -98,43 +98,6 @@ func (registrar) Register(_ context.Context, r definition.Registration) (definit
 	return definition.Registered{Agent: definition.GRN(r.Request.RequestID), Epoch: "1"}, nil
 }
 
-// issuer is the test double for garam's initial-certificate issuance. It issues a certificate
-// named for each request id, unless the test set the error its calls answer, and records every
-// issuance it was sent.
-type issuer struct {
-	mu        sync.Mutex
-	err       error
-	issuances []definition.Issuance
-}
-
-func (i *issuer) Issue(_ context.Context, is definition.Issuance) (definition.IssuedCertificate, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	i.issuances = append(i.issuances, is)
-	if i.err != nil {
-		return definition.IssuedCertificate{}, i.err
-	}
-	return definition.IssuedCertificate{
-		CertificatePEM: "certificate for " + is.Request.RequestID,
-		IssuerPEM:      "issuer",
-		ServerRootPEM:  "server root",
-		NotAfter:       time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC),
-	}, nil
-}
-
-// answer sets the error every later issuance answers; nil issues again.
-func (i *issuer) answer(err error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	i.err = err
-}
-
-func (i *issuer) calls() int {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	return len(i.issuances)
-}
-
 // creator is the controller the fixture's agents are created on, so revision 1 is no controller's
 // under test and each test's revisions come from configure.
 const creator = "grn:root:default:operator:creator"
@@ -144,7 +107,6 @@ const creator = "grn:root:default:operator:creator"
 type env struct {
 	server      *httptest.Server
 	prover      *prover
-	issuer      *issuer
 	definitions definition.Service
 	// store is the in-memory store the definitions are kept in.
 	store        *repository.Memory
@@ -163,9 +125,8 @@ func newEnv(t *testing.T) *env {
 func newEnvCarrying(t *testing.T, maxAgents int) *env {
 	t.Helper()
 	ctx := context.Background()
-	iss := &issuer{}
 	store := repository.NewMemory()
-	definitions := definition.NewService(store, registrar{}, iss)
+	definitions := definition.NewService(store, registrar{})
 	class := "standard"
 	p, err := definitions.PublishProfile(ctx, orgID, "small", definition.ExecutionSettings{
 		Resources:        corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")}},
@@ -179,7 +140,6 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 
 	e := &env{
 		prover:      &prover{agents: map[string]verdict{}, epochs: map[string]string{agentA: epoch, agentB: epoch}},
-		issuer:      iss,
 		definitions: definitions,
 		store:       store,
 		profile:     profile,

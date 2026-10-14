@@ -128,29 +128,6 @@ FROM requests WHERE organization = $1 AND request_id = $2`
 	creationOfAgent = `
 SELECT organization, request_id FROM creations WHERE agent = $1 AND state = 'registered'`
 
-	// beginCertificate inserts the pending request or returns the stored one in one statement, so
-	// a row a refusal removes between an insert and a read is never read as missing.
-	beginCertificate = `
-INSERT INTO initial_certificates (agent, request_id, epoch, certificate_request_pem, state)
-VALUES ($1, $2, $3, $4, 'pending')
-ON CONFLICT (agent) DO UPDATE SET agent = EXCLUDED.agent
-RETURNING request_id, epoch, certificate_request_pem, state, certificate_pem, issuer_pem, server_root_pem, not_after`
-
-	getCertificate = `
-SELECT request_id, epoch, certificate_request_pem, state, certificate_pem, issuer_pem, server_root_pem, not_after
-FROM initial_certificates WHERE agent = $1`
-
-	lockCertificate = getCertificate + ` FOR UPDATE`
-
-	issueCertificate = `
-UPDATE initial_certificates
-SET state = 'issued', certificate_pem = $2, issuer_pem = $3, server_root_pem = $4, not_after = $5
-WHERE agent = $1`
-
-	clearCertificate = `
-DELETE FROM initial_certificates
-WHERE agent = $1 AND state = 'pending' AND request_id = $2 AND epoch = $3 AND certificate_request_pem = $4`
-
 	placementColumns = `controller, epoch, pvc_uid, token_sha256, previous_pod_uid, previous_writer_stopped_sha256,
     revoked_at IS NOT NULL, pod_uid`
 
@@ -244,8 +221,7 @@ WHERE agent = $1 AND revision = 1 AND assignment_operator IS NULL`
 	movePosition = `UPDATE positions SET position = position + 1`
 
 	recoveryColumns = `agent, recovery_request_id, organization, request_id, actor, operation, target, body_sha256,
-    operation_ref, assignment_operator, assignment_epoch, epoch, stage, garam_body, lineage, certificate_pem,
-    COALESCE(issuer_pem, ''), COALESCE(server_root_pem, '')`
+    operation_ref, assignment_operator, assignment_epoch, epoch, stage, garam_body, lineage`
 
 	insertRecovery = `
 INSERT INTO recoveries (agent, recovery_request_id, organization, request_id, actor, operation, target,
@@ -268,8 +244,7 @@ UPDATE recoveries SET stage = 'prepared', garam_body = $3, garam_body_sha256 = $
 WHERE agent = $1 AND recovery_request_id = $2 AND stage = 'requested'`
 
 	finalizeRecovery = `
-UPDATE recoveries SET stage = 'finalized', lineage = $3, certificate_pem = $4,
-    issuer_pem = NULLIF($5, ''), server_root_pem = NULLIF($6, '')
+UPDATE recoveries SET stage = 'finalized', lineage = $3
 WHERE agent = $1 AND recovery_request_id = $2 AND stage = 'prepared'`
 
 	stopColumns = `organization, request_id, agent, actor, operation, target, body_sha256, operation_ref,

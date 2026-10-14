@@ -32,13 +32,12 @@ type openRecoveryRequest struct {
 
 // finalizeRequest is the body garam's recovery is sent: the prepared bytes, unchanged.
 type finalizeRequest struct {
-	RequestID             string `json:"requestId"`
-	Epoch                 string `json:"epoch"`
-	CertificateRequestPEM string `json:"certificateRequestPem"`
+	RequestID string `json:"requestId"`
+	Epoch     string `json:"epoch"`
 }
 
 // recoveryAnswer is a recovery as stored. Body is the exact request garam is to be sent, once
-// prepared, which the finalizing handoff is minted over; the credential is garam's answer, once
+// prepared, which the finalizing handoff is minted over; the lineage is garam's answer, once
 // finalized.
 type recoveryAnswer struct {
 	Agent             string  `json:"agent"`
@@ -48,9 +47,6 @@ type recoveryAnswer struct {
 	Body              *string `json:"body"`
 	BodySHA256        *string `json:"bodySha256"`
 	Lineage           *string `json:"lineage,omitempty"`
-	CertificatePEM    *string `json:"certificatePem,omitempty"`
-	IssuerPEM         string  `json:"issuerPem,omitempty"`
-	ServerRootPEM     string  `json:"serverRootPem,omitempty"`
 }
 
 func recoveryAnswerOf(r definition.Recovery) recoveryAnswer {
@@ -64,8 +60,7 @@ func recoveryAnswerOf(r definition.Recovery) recoveryAnswer {
 		a.Body, a.BodySHA256 = &body, &sum
 	}
 	if r.Recovered != nil {
-		a.Lineage, a.CertificatePEM = &r.Recovered.Lineage, &r.Recovered.CertificatePEM
-		a.IssuerPEM, a.ServerRootPEM = r.Recovered.IssuerPEM, r.Recovered.ServerRootPEM
+		a.Lineage = &r.Recovered.Lineage
 	}
 	return a
 }

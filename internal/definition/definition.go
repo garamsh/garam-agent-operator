@@ -482,10 +482,6 @@ var (
 	// from how it was registered in anything but the leaf.
 	ErrPlacementConflict = errors.New("the placement was registered differently")
 
-	// ErrIssuanceUndecided is wrapped by an Issuer garam did not answer with a decision. The
-	// certificate request's outcome is unknown, so it stays pending and is sent again unchanged.
-	ErrIssuanceUndecided = errors.New("certificate issuance undecided")
-
 	// ErrInvalidProfile is returned for a profile publication with no name, a version below 1, or
 	// settings an agent's workload could not run with (ADR 0056).
 	ErrInvalidProfile = errors.New("the profile is not one an agent can run with")
@@ -502,16 +498,16 @@ var (
 	ErrRecoveryOpen = errors.New("another recovery is open for the agent")
 
 	// ErrRecoveryStage is returned for a recovery step the stored recovery is not at the stage
-	// for: a finalize before its certificate request was prepared, or a prepare after it ended.
+	// for: a finalize before its request was prepared, or a prepare after it ended.
 	ErrRecoveryStage = errors.New("the recovery is not at a stage this step follows")
 
 	// ErrRecoveryMismatch is returned for a finalize whose body is not the prepared request's
 	// bytes, which are the bytes garam's handoff must bind.
 	ErrRecoveryMismatch = errors.New("the body is not the prepared recovery request")
 
-	// ErrRecoveryEpoch is returned for a prepared certificate request under another epoch than
-	// the one the recovery was opened under.
-	ErrRecoveryEpoch = errors.New("the certificate request names another epoch than the recovery")
+	// ErrRecoveryEpoch is returned for a prepared recovery request under another epoch than the
+	// one the recovery was opened under.
+	ErrRecoveryEpoch = errors.New("the recovery request names another epoch than the recovery")
 
 	// ErrAgentStopped is returned for an activation, or another stop, of an agent a stop holds.
 	ErrAgentStopped = errors.New("the agent is stopped")
@@ -519,71 +515,6 @@ var (
 	// ErrAgentNotStopped is returned for a start of an agent no stop holds.
 	ErrAgentNotStopped = errors.New("the agent is not stopped")
 )
-
-// CertificateRequest is a controller's request for an agent's first certificate, as it was sent:
-// the request id, the assignment epoch it expects, and a PKCS#10 PEM over a key the controller
-// holds. Two requests are the same request only when all three are equal.
-type CertificateRequest struct {
-	RequestID string
-	Epoch     string
-	CSRPEM    string
-}
-
-// IssuedCertificate is the public result garam answered for a certificate request. It carries no
-// private key.
-type IssuedCertificate struct {
-	CertificatePEM string
-	IssuerPEM      string
-	ServerRootPEM  string
-	NotAfter       time.Time
-}
-
-// InitialCertificateInput asks for agent's first certificate on behalf of controller.
-type InitialCertificateInput struct {
-	Agent      GRN
-	Controller string
-	Request    CertificateRequest
-}
-
-// InitialCertificate is the one first-certificate request stored for an agent. Issued is nil while
-// the outcome is unknown.
-type InitialCertificate struct {
-	Agent   GRN
-	Request CertificateRequest
-	Issued  *IssuedCertificate
-}
-
-// Issuance is what an Issuer sends garam: the request, under the reference of the agent's own creation.
-type Issuance struct {
-	Agent        GRN
-	Request      CertificateRequest
-	OperationRef string
-}
-
-// Refusal is the class of a garam refusal of an issuance, which decides how it is answered.
-type Refusal int
-
-const (
-	// RefusalForbidden is garam's 403 or 404: current authority does not permit the issuance.
-	RefusalForbidden Refusal = iota + 1
-	// RefusalConflict is garam's 409: another request is recorded, the epoch is stale, or the
-	// lineage was replaced.
-	RefusalConflict
-	// RefusalInvalid is garam's 422: the certificate request is not one garam signs over.
-	RefusalInvalid
-)
-
-// IssuanceRefusedError is an Issuer's definite refusal by garam, which records nothing for it.
-// Kind and Message are garam's own.
-type IssuanceRefusedError struct {
-	Refusal Refusal
-	Kind    string
-	Message string
-}
-
-func (e *IssuanceRefusedError) Error() string {
-	return "garam refused the certificate request: " + e.Kind + ": " + e.Message
-}
 
 // PlacementRequest is a placement as a controller registers it: the Pod, the state claim it
 // started on, the assignment epoch, the digest of the Pod's placement token, and the placement it
@@ -738,13 +669,13 @@ type CutoverImport struct {
 type RecoveryStage string
 
 const (
-	// RecoveryRequested is a recovery opened from the console, whose certificate request the
-	// agent's controller has not prepared.
+	// RecoveryRequested is a recovery opened from the console, whose request the agent's
+	// controller has not prepared.
 	RecoveryRequested RecoveryStage = "requested"
 	// RecoveryPrepared is a recovery whose request to garam is stored, as the exact bytes an
 	// administrator's agent:recover handoff is minted over.
 	RecoveryPrepared RecoveryStage = "prepared"
-	// RecoveryFinalized is a recovery garam answered with the recovered credential.
+	// RecoveryFinalized is a recovery garam answered with the agent's new lineage.
 	RecoveryFinalized RecoveryStage = "finalized"
 )
 
@@ -753,8 +684,8 @@ const (
 // is sent as. One per agent is open, before it is finalized.
 type Recovery struct {
 	Agent GRN
-	// RequestID is the recovery's request identifier on garam: the one its certificate request
-	// and its finalize are sent under.
+	// RequestID is the recovery's request identifier on garam: the one its request and its
+	// finalize are sent under.
 	RequestID string
 	// Key and Binding are the console request that opened it, under an agent:recover authority
 	// of its own request identifier.
@@ -762,22 +693,25 @@ type Recovery struct {
 	Binding Binding
 	Epoch   string
 	Stage   RecoveryStage
-	// Body is the request garam is sent, nil until prepared: {requestId, epoch,
-	// certificateRequestPem} as RecoveryBody encodes it.
+	// Body is the request garam is sent, nil until prepared: {requestId, epoch} as RecoveryBody
+	// encodes it.
 	Body []byte
 	// Recovered is garam's answer, nil until finalized.
 	Recovered *RecoveredCredential
 }
 
-// RecoveredCredential is what garam answered a recovery with: the new lineage, the certificate
-// signed over the prepared request's key, which never left its holder, and the issuer and garam
-// server root the signer produced beside it (garam@f54b9e8, ADR-0091). IssuerPEM and ServerRootPEM
-// are empty for a recovery a garam before that answered (ADR 0062).
+// RecoveryRequest is a controller's request for its agent's open recovery, as it was sent: the
+// recovery's request id and the assignment epoch it expects.
+type RecoveryRequest struct {
+	RequestID string
+	Epoch     string
+}
+
+// RecoveredCredential is what garam answered a recovery with under execution-fence.v2: the agent's
+// new lineage, and nothing signed (garam@afde8b8 api/machine.yaml RecoveredCredential). Every agent
+// token minted before it is refused, and the controller mints the agent's tokens in the new lineage.
 type RecoveredCredential struct {
-	Lineage        string
-	CertificatePEM string
-	IssuerPEM      string
-	ServerRootPEM  string
+	Lineage string
 }
 
 // OpenRecoveryInput opens a recovery of Agent, recorded under the console request's key and the

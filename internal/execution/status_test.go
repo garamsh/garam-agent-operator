@@ -24,10 +24,10 @@ func statusBody(activationID, gen, revision, state string) string {
 	return string(b)
 }
 
-// report sends a runtime-status report with client.
-func (e *env) report(t *testing.T, client *http.Client, body string) answer {
+// report sends a runtime-status report as c.
+func (e *env) report(t *testing.T, c caller, body string) answer {
 	t.Helper()
-	return e.post(t, client, "runtime-status", body, "", nil)
+	return e.post(t, c, "runtime-status", body, "", nil)
 }
 
 // activated is an env whose agent's generation is activated as activation-1.
@@ -113,8 +113,11 @@ func TestReportStatus_RefusesWhatTheContractRefuses(t *testing.T) {
 		{"an activation control did not make", func(e *env) {
 			e.garam.set(func(g *garam) { g.active = &activation{id: "activation-9", generation: generation} })
 		}, statusBody("activation-9", generation, "1", "serving"), http.StatusConflict, kindGenerationNotCurrent},
-		{"a fenced credential", func(e *env) { e.garam.set(func(g *garam) { g.fenced[string(e.leafPEM)] = true }) }, valid,
+		{"a fenced token", func(e *env) { e.garam.set(func(g *garam) { g.fenced[e.adapter.token] = true }) }, valid,
 			http.StatusForbidden, kindCredentialFenced},
+		{"a token garam refuses as not the agent's for control", func(e *env) {
+			e.garam.set(func(g *garam) { g.foreign[e.adapter.token] = true })
+		}, valid, http.StatusForbidden, kindCredentialFenced},
 		{"garam refusing control's authority", func(e *env) {
 			e.garam.set(func(g *garam) { g.introspect = execution.ErrNotAuthorized })
 		}, valid, http.StatusForbidden, kindCredentialFenced},

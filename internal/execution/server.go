@@ -27,8 +27,9 @@ type server struct {
 	foreignContracts sync.Map
 }
 
-// NewHandler returns the agent routes of agent-execution.v1. Each needs the agent's leaf
-// certificate in its TLS handshake, naming the agent in the path:
+// NewHandler returns the agent routes of agent-execution.v2. Each needs the agent's token minted
+// for this service, in Authorization as Garam-Token, and an activation the placement token in
+// Garam-Placement:
 //
 //	POST /v1/agents/{agent}/activations     the activation of the agent's runtime generation
 //	POST /v1/agents/{agent}/runtime-status  a report of the runtime's status

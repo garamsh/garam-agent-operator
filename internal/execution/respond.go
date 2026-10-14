@@ -13,7 +13,7 @@ import (
 // contractHeader carries the contract's value on every request and answer.
 const contractHeader = "Garam-Contract-Version"
 
-// The refusal kinds agent-execution.v1 lists (garam@e81a1e0, ADR-0084).
+// The refusal kinds agent-execution.v2 lists, unchanged from v1 (garam@afde8b8, ADR-0084, ADR-0100).
 const (
 	kindInvalidRequest       = "invalid_request"
 	kindUnauthenticated      = "unauthenticated"
@@ -27,7 +27,7 @@ const (
 	kindUndecided            = "undecided"
 )
 
-// refusal is an answer agent-execution.v1 names: a status and a kind.
+// refusal is an answer agent-execution.v2 names: a status and a kind.
 type refusal struct {
 	status  int
 	kind    string
@@ -38,20 +38,16 @@ func (r *refusal) Error() string { return r.message }
 
 var (
 	errInvalidRequest       = &refusal{http.StatusBadRequest, kindInvalidRequest, "request is not one this route takes"}
-	errUnauthenticated      = &refusal{http.StatusUnauthorized, kindUnauthenticated, "no agent certificate naming one GRN, or no placement token"}
-	errAnotherAgent         = &refusal{http.StatusForbidden, kindNotAuthorized, "the certificate names another agent than the path"}
+	errUnauthenticated      = &refusal{http.StatusUnauthorized, kindUnauthenticated, "no agent token in Authorization, or no placement token"}
 	errNotAuthorized        = &refusal{http.StatusForbidden, kindNotAuthorized, "garam refused the authority this activation needs"}
 	errPlacementNotCurrent  = &refusal{http.StatusForbidden, kindPlacementNotCurrent, "the placement is not the agent's current one"}
-	errCredentialFenced     = &refusal{http.StatusForbidden, kindCredentialFenced, "the agent's certificate is not its current credential"}
+	errCredentialFenced     = &refusal{http.StatusForbidden, kindCredentialFenced, "the agent's token is not current"}
+	errTokenRefused         = &refusal{http.StatusForbidden, kindCredentialFenced, "garam refused the token as not this agent's for control"}
 	errRequestReused        = &refusal{http.StatusConflict, kindRequestReused, "request id reused for another activation"}
 	errEpochSuperseded      = &refusal{http.StatusConflict, kindEpochSuperseded, "the epoch is not the agent's current assignment"}
 	errActivationSuperseded = &refusal{http.StatusConflict, kindActivationSuperseded, "garam refused the activation as superseded"}
 	errGenerationNotCurrent = &refusal{http.StatusConflict, kindGenerationNotCurrent, "the report is not of the agent's active generation"}
 	errUndecided            = &refusal{http.StatusServiceUnavailable, kindUndecided, "garam or the store could not decide"}
-	// errControllerUnproven answers ErrControllerUnprovable, under agent-execution.v1's closed list
-	// of kinds.
-	errControllerUnproven = &refusal{http.StatusForbidden, kindNotAuthorized,
-		"control cannot prove the placement's controller for an activation until agents hold garam tokens (#355)"}
 )
 
 // errorBody is every refusal's answer.
@@ -69,7 +65,7 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 	)
 	switch {
 	case errors.As(err, &foreign):
-		// agent-execution.v1 lists no kind for it, and its only 503 is undecided (garam@59fe68d
+		// agent-execution.v2 lists no kind for it, and its only 503 is undecided (garam@59fe68d
 		// ADR-0084). The adapter retries that without end, so the cause is logged here, once per
 		// contract value.
 		if _, seen := s.foreignContracts.LoadOrStore(foreign.Contract, struct{}{}); !seen {
@@ -80,7 +76,7 @@ func (s *server) respondError(w http.ResponseWriter, err error) {
 	case errors.As(err, &named):
 		writeRefusal(w, named.status, named.kind, named.message)
 	case errors.Is(err, definition.ErrAgentStopped):
-		// A stopped agent has no placement it may be activated on. agent-execution.v1's kinds are a
+		// A stopped agent has no placement it may be activated on. agent-execution.v2's kinds are a
 		// closed list, and this one pauses the adapter until its placement changes (ADR 0057).
 		writeRefusal(w, errPlacementNotCurrent.status, errPlacementNotCurrent.kind, "the agent is stopped: "+
 			"no placement of it is activated until its stop ends")

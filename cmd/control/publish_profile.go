@@ -87,7 +87,7 @@ func publishProfiles(ctx context.Context, args []string, databaseURL string, out
 		_, _ = fmt.Fprintln(errOut, err)
 		return exitRefused
 	}
-	definitions := definition.NewService(store, nil, nil)
+	definitions := definition.NewService(store, nil)
 
 	for i, p := range profiles {
 		published, created, err := definitions.PublishProfileVersion(ctx, p.Organization, definition.Profile{

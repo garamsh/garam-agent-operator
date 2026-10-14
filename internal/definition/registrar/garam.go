@@ -13,7 +13,8 @@ import (
 )
 
 // Garam creates managed agents on garam's machine listener through createManagedAgent
-// (garam@7ca51b9, api/machine.yaml), under managed-enrollment.v1.
+// (garam@afde8b8, api/machine.yaml), under managed-enrollment.v2: the creation opens the agent's
+// lineage, and its controller mints the agent's tokens in it.
 type Garam struct {
 	machine *garammachine.Client
 }

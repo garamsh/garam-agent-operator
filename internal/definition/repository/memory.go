@@ -17,12 +17,11 @@ type Memory struct {
 	templates   map[named][]definition.Template
 	definitions map[definition.GRN][]definition.Definition
 	// positions holds, beside each agent's revisions, the position each was stored at.
-	positions    map[definition.GRN][]definition.Position
-	position     definition.Position
-	statuses     map[definition.GRN]definition.Status
-	creations    map[definition.RequestKey]definition.Creation
-	requests     map[definition.RequestKey]definition.Request
-	certificates map[definition.GRN]definition.InitialCertificate
+	positions map[definition.GRN][]definition.Position
+	position  definition.Position
+	statuses  map[definition.GRN]definition.Status
+	creations map[definition.RequestKey]definition.Creation
+	requests  map[definition.RequestKey]definition.Request
 	// placements holds every placement stored for an agent, by Pod UID, superseded ones too.
 	placements map[definition.GRN]map[string]definition.Placement
 	// locks serializes each agent's activation attempts; activations holds every activation
@@ -62,7 +61,6 @@ func NewMemory() *Memory {
 		creations:   map[definition.RequestKey]definition.Creation{},
 		requests:    map[definition.RequestKey]definition.Request{},
 
-		certificates: map[definition.GRN]definition.InitialCertificate{},
 		placements:   map[definition.GRN]map[string]definition.Placement{},
 		locks:        map[definition.GRN]*sync.Mutex{},
 		activations:  map[definition.GRN]map[string]definition.Activation{},
@@ -322,45 +320,6 @@ func (m *Memory) CreationOf(_ context.Context, agent definition.GRN) (definition
 		}
 	}
 	return definition.Creation{}, definition.ErrNotFound
-}
-
-func (m *Memory) BeginInitialCertificate(
-	_ context.Context, agent definition.GRN, r definition.CertificateRequest,
-) (definition.InitialCertificate, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	c, ok := m.certificates[agent]
-	if !ok {
-		c = definition.InitialCertificate{Agent: agent, Request: r}
-		m.certificates[agent] = c
-	}
-	return cloneCertificate(c), nil
-}
-
-func (m *Memory) IssueInitialCertificate(
-	_ context.Context, agent definition.GRN, r definition.CertificateRequest, issued definition.IssuedCertificate,
-) (definition.InitialCertificate, bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	c, ok := m.certificates[agent]
-	if !ok {
-		return definition.InitialCertificate{}, false, definition.ErrNotFound
-	}
-	if c.Issued != nil || c.Request != r {
-		return cloneCertificate(c), false, nil
-	}
-	c.Issued = &issued
-	m.certificates[agent] = c
-	return cloneCertificate(c), true, nil
-}
-
-func (m *Memory) ClearInitialCertificate(_ context.Context, agent definition.GRN, r definition.CertificateRequest) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if c, ok := m.certificates[agent]; ok && c.Issued == nil && c.Request == r {
-		delete(m.certificates, agent)
-	}
-	return nil
 }
 
 func (m *Memory) RegisterPlacement(_ context.Context, in definition.PlacementInput) (definition.Placement, bool, error) {
@@ -660,14 +619,6 @@ func cloneDefinition(d definition.Definition) definition.Definition {
 		d.Assignment = &a
 	}
 	return d
-}
-
-func cloneCertificate(c definition.InitialCertificate) definition.InitialCertificate {
-	if c.Issued != nil {
-		issued := *c.Issued
-		c.Issued = &issued
-	}
-	return c
 }
 
 func cloneImport(imp definition.CutoverImport) definition.CutoverImport {

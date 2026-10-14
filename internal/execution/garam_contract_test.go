@@ -18,7 +18,7 @@ import (
 // foreignContract is a contract the agent routes do not take; keyContract, keyLevel and keyPort are
 // the log fields read.
 const (
-	foreignContract = "execution-fence.v2"
+	foreignContract = "execution-fence.v1"
 	keyContract     = "contract"
 	keyLevel        = "level"
 	keyPort         = "port"

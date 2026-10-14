@@ -18,13 +18,13 @@ import (
 
 const (
 	agent = "grn:acme:default:agent:a"
-	// gen and leaf are the generation and the leaf every call here names.
-	gen  = "gen"
-	leaf = "leaf"
-	// keyCertificatePEM is the leaf's member in every request garam is sent, and keyGeneration
-	// the generation's.
-	keyCertificatePEM = "certificatePem"
-	keyGeneration     = "generation"
+	// gen and token are the generation and the agent's token every call here names.
+	gen   = "gen"
+	token = "garam_at_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	// keyToken is the token's member in every request garam is sent, and keyGeneration the
+	// generation's.
+	keyToken      = "token"
+	keyGeneration = "generation"
 )
 
 // sent is what the stand-in garam last received.
@@ -54,19 +54,19 @@ func stand(t *testing.T, contract string, status int, answer string) (*execution
 func TestGaram_IntrospectsUnderTheExecutionFence(t *testing.T) {
 	g, got := stand(t, garammachine.ExecutionFence, http.StatusOK,
 		`{"grn":"`+agent+`","org":"o","assignee":"c","epoch":"7","mode":"fenced","credential":"current","generation":"current","activationId":"a1"}`)
-	i, err := g.Introspect(context.Background(), agent, []byte(leaf), gen)
+	i, err := g.Introspect(context.Background(), agent, token, gen)
 	require.NoError(t, err)
 	assert.Equal(t, execution.Introspection{GRN: agent, Org: "o", Assignee: "c", Epoch: "7", Mode: "fenced",
 		Credential: "current", Generation: "current", ActivationID: "a1"}, i)
 	assert.Equal(t, "/agents/"+agent+"/execution/introspection", got.path)
 	assert.Equal(t, garammachine.ExecutionFence, got.contract)
-	assert.Equal(t, map[string]any{keyCertificatePEM: leaf, keyGeneration: gen}, got.body)
+	assert.Equal(t, map[string]any{keyToken: token, keyGeneration: gen}, got.body)
 
 	// Without a generation, none is sent.
 	g, got = stand(t, garammachine.ExecutionFence, http.StatusOK, `{"activationId":null}`)
-	_, err = g.Introspect(context.Background(), agent, []byte(leaf), "")
+	_, err = g.Introspect(context.Background(), agent, token, "")
 	require.NoError(t, err)
-	assert.Equal(t, map[string]any{keyCertificatePEM: leaf, keyGeneration: nil}, got.body)
+	assert.Equal(t, map[string]any{keyToken: token, keyGeneration: nil}, got.body)
 }
 
 func TestGaram_ActivatesUnderTheExecutionFence(t *testing.T) {
@@ -74,7 +74,7 @@ func TestGaram_ActivatesUnderTheExecutionFence(t *testing.T) {
 	for status, created := range map[int]bool{http.StatusCreated: true, http.StatusOK: false} {
 		g, got := stand(t, garammachine.ExecutionFence, status, answer)
 		a, wasCreated, err := g.Activate(context.Background(), agent, execution.ActivationCall{
-			RequestID: "r", Epoch: "7", Generation: gen, CertificatePEM: []byte(leaf),
+			RequestID: "r", Epoch: "7", Generation: gen, Token: token,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, created, wasCreated)
@@ -82,21 +82,8 @@ func TestGaram_ActivatesUnderTheExecutionFence(t *testing.T) {
 		assert.Equal(t, "/agents/"+agent+"/activations", got.path)
 		// An empty anchor and reference are sent as null, which garam reads as none.
 		assert.Equal(t, map[string]any{"requestId": "r", "epoch": "7", keyGeneration: gen,
-			"replacesActivationId": nil, "operationRef": nil, keyCertificatePEM: leaf}, got.body)
+			"replacesActivationId": nil, "operationRef": nil, keyToken: token}, got.body)
 	}
-}
-
-func TestGaram_ProvingTheControllerIsRefusedByNameAndSendsNothing(t *testing.T) {
-	g, got := stand(t, garammachine.OperationAuthority, http.StatusOK,
-		`{"operator":"c","org":"o","agent":{"grn":"`+agent+`","epoch":"7"}}`)
-	_, err := g.ProveController(context.Background(), "c", agent)
-	require.ErrorIs(t, err, execution.ErrControllerUnprovable)
-	assert.Empty(t, got.path, "garam was asked to prove the controller with nothing to prove it over")
-
-	// Control: the same stand-in answers a call that is sent.
-	_, err = g.Introspect(context.Background(), agent, []byte(leaf), "")
-	assert.NotErrorIs(t, err, execution.ErrControllerUnprovable)
-	assert.Equal(t, "/agents/"+agent+"/execution/introspection", got.path)
 }
 
 func TestGaram_RefusalsAreTold(t *testing.T) {
@@ -107,7 +94,7 @@ func TestGaram_RefusalsAreTold(t *testing.T) {
 	}{
 		{"403 is control's authority refused", http.StatusForbidden, execution.ErrNotAuthorized},
 		{"404 is control's authority refused", http.StatusNotFound, execution.ErrNotAuthorized},
-		{"422 is the leaf refused", http.StatusUnprocessableEntity, execution.ErrCredentialRefused},
+		{"422 is the token refused", http.StatusUnprocessableEntity, execution.ErrCredentialRefused},
 		{"409 is the activation superseded", http.StatusConflict, execution.ErrActivationSuperseded},
 		{"503 on every attempt is undecided", http.StatusServiceUnavailable, execution.ErrUndecided},
 	}
@@ -130,7 +117,7 @@ func TestGaram_RefusalsAreTold(t *testing.T) {
 func TestGaram_AnAnswerUnderAnotherContractOrNoneDecidesNothing(t *testing.T) {
 	introspection := `{"grn":"` + agent + `","credential":"current","generation":"current","activationId":"a1"}`
 	for name, header := range map[string]*string{
-		"the contract asked": ptrTo(garammachine.ExecutionFence), "another contract": ptrTo("execution-fence.v2"),
+		"the contract asked": ptrTo(garammachine.ExecutionFence), "another contract": ptrTo("execution-fence.v1"),
 		"no contract": nil,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -142,7 +129,7 @@ func TestGaram_AnAnswerUnderAnotherContractOrNoneDecidesNothing(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			_, err := executiongaram.NewGaram(garammachine.New(server.URL, server.Client())).
-				Introspect(context.Background(), agent, []byte(leaf), gen)
+				Introspect(context.Background(), agent, token, gen)
 			if header != nil && *header == garammachine.ExecutionFence {
 				assert.NoError(t, err)
 				return
