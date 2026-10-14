@@ -1,8 +1,12 @@
 package distribution_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/garamsh/garam-agent-operator/internal/definition"
+	"github.com/garamsh/garam-agent-operator/internal/definition/repository"
 	"github.com/garamsh/garam-agent-operator/internal/distribution"
 )
 
@@ -153,4 +158,64 @@ func TestContact_IsNotRecordedForARequestGaramDoesNotProve(t *testing.T) {
 	e.prover.setSession(verdict{proof: distribution.Proof{Operator: controller, Org: org}})
 	require.Equal(t, http.StatusOK, e.desired(t, e.withToken, "").status)
 	assert.NotNil(t, e.operatorOf(t).LastContactAt)
+}
+
+// failingContacts is the in-memory store with a contact write that fails while fail is set.
+type failingContacts struct {
+	*repository.Memory
+	mu     sync.Mutex
+	fail   bool
+	writes int
+}
+
+func (f *failingContacts) RecordOperatorContact(ctx context.Context, orgGRN, operator string, at time.Time) error {
+	f.mu.Lock()
+	f.writes++
+	failing := f.fail
+	f.mu.Unlock()
+	if failing {
+		return errors.New("operators: relation does not exist")
+	}
+	return f.Memory.RecordOperatorContact(ctx, orgGRN, operator, at)
+}
+
+func (f *failingContacts) setFail(fail bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fail = fail
+}
+
+func TestContact_AFailedWriteIsLoggedAndTheRequestIsStillAnsweredAndTheNextWritesAgain(t *testing.T) {
+	store := &failingContacts{Memory: repository.NewMemory(), fail: true}
+	definitions := definition.NewService(store, registrar{})
+	var logged bytes.Buffer
+	server := httptest.NewUnstartedServer(distribution.NewHandler(distribution.Config{
+		Definitions:  definitions,
+		Prover:       &prover{agents: map[string]verdict{}, epochs: map[string]string{}},
+		PollInterval: 10 * time.Millisecond,
+		MaxAgents:    10,
+		Logger:       slog.New(slog.NewTextHandler(&logged, nil)),
+		Now:          (&clock{now: time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)}).Now,
+	}))
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	e := &env{server: server}
+	client := clientWithToken(server, controller, controllerToken)
+
+	// The contact write fails, and the feed still answers.
+	require.Equal(t, http.StatusOK, e.desired(t, client, "").status)
+	assert.Equal(t, 1, strings.Count(logged.String(), "record controller contact"), logged.String())
+	assert.NotContains(t, logged.String(), controllerToken)
+	operators, err := definitions.ListOperators(context.Background(), org)
+	require.NoError(t, err)
+	assert.Empty(t, operators)
+
+	// Within the same minute, the next request writes the contact the failure forgot.
+	store.setFail(false)
+	require.Equal(t, http.StatusOK, e.desired(t, client, "").status)
+	operators, err = definitions.ListOperators(context.Background(), org)
+	require.NoError(t, err)
+	require.Len(t, operators, 1)
+	assert.NotNil(t, operators[0].LastContactAt)
+	assert.Equal(t, 2, store.writes)
 }

@@ -26,7 +26,7 @@ func newContacts(now func() time.Time) *contacts {
 }
 
 // record writes c's contact now, unless one within contactInterval was written. A write that
-// fails is forgotten, so the next request writes again.
+// fails is forgotten and returned, so the caller can log it and the next request writes again.
 func (k *contacts) record(ctx context.Context, definitions definition.Service, c controller) error {
 	at := k.now()
 	k.mu.Lock()

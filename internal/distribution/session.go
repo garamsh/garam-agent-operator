@@ -25,8 +25,8 @@ type controller struct {
 }
 
 // authenticate reads the controller from the request's bearer token and the GRN beside it, has
-// garam prove them for this request, and records the controller's contact. A proof is never kept
-// past the request it was obtained for.
+// garam prove them for this request, and records the controller's contact, logging a failed
+// write rather than failing the request. A proof is never kept past the request it was obtained for.
 func (s *server) authenticate(ctx context.Context, r *http.Request) (controller, error) {
 	scheme, token, found := strings.Cut(r.Header.Get("Authorization"), " ")
 	grn := r.Header.Get(controllerHeader)
@@ -42,8 +42,10 @@ func (s *server) authenticate(ctx context.Context, r *http.Request) (controller,
 		return controller{}, ErrAnotherOperator
 	}
 	c.orgGRN = proof.Org
+	// The contact is bookkeeping for the console: a failed write never fails the request, and the
+	// next request writes again (ADR 0074).
 	if err := s.contacts.record(ctx, s.definitions, c); err != nil {
-		return controller{}, err
+		s.logger.Error("record controller contact failed", "trace_id", newTraceID(), "operator", c.grn, "error", err)
 	}
 	return c, nil
 }
