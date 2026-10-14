@@ -56,10 +56,12 @@ type Refresher struct {
 	// configured.
 	controlAudience string
 
-	// now and window are the clock and the point in the refresh window, held
-	// here so a test can fix them.
-	now    func() time.Time
-	window func() float64
+	// Now is the clock, and Window the point in the refresh window each refresh
+	// is due at, as a fraction of the lifetime. NewRefresher sets the clock and a
+	// random point from windowStart to windowEnd; a test may fix either before
+	// Start.
+	Now    func() time.Time
+	Window func() float64
 
 	// waiting is when each agent a mint failed for is tried again.
 	waiting map[GRN]time.Time
@@ -70,8 +72,8 @@ type Refresher struct {
 func NewRefresher(client *Client, store TokenStore, controlAudience string) *Refresher {
 	return &Refresher{
 		client: client, store: store, controlAudience: controlAudience,
-		now:     time.Now,
-		window:  func() float64 { return windowStart + rand.Float64()*(windowEnd-windowStart) },
+		Now:     time.Now,
+		Window:  func() float64 { return windowStart + rand.Float64()*(windowEnd-windowStart) },
 		waiting: map[GRN]time.Time{},
 	}
 }
@@ -97,7 +99,7 @@ func (r *Refresher) Refresh(ctx context.Context) {
 	listed := map[GRN]bool{}
 	for _, holder := range holders {
 		listed[holder.Agent] = true
-		now := r.now()
+		now := r.Now()
 		if now.Before(holder.Due) || now.Before(r.waiting[holder.Agent]) {
 			continue
 		}
@@ -122,7 +124,7 @@ func (r *Refresher) Refresh(ctx context.Context) {
 // refresh mints the holder's tokens and writes them, due again at a point in
 // the refresh window of the one that expires first.
 func (r *Refresher) refresh(ctx context.Context, holder TokenHolder) error {
-	minted := r.now()
+	minted := r.Now()
 	tokens := Tokens{}
 	var err error
 	if tokens.Garam, err = r.mint(ctx, holder, ""); err != nil {
@@ -139,7 +141,7 @@ func (r *Refresher) refresh(ctx context.Context, holder TokenHolder) error {
 			expires = control.ExpiresAt
 		}
 	}
-	due := minted.Add(time.Duration(float64(expires.Sub(minted)) * r.window()))
+	due := minted.Add(time.Duration(float64(expires.Sub(minted)) * r.Window()))
 	if err := r.store.Store(ctx, holder, tokens, due); err != nil {
 		return fmt.Errorf("write the tokens of %s: %w", holder.Agent, err)
 	}

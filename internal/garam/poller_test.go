@@ -3,6 +3,7 @@ package garam_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"slices"
@@ -41,7 +42,7 @@ type recordingConstructor struct {
 	built map[garam.GRN]bool
 
 	// placed is the agents whose credential the cluster already carries.
-	placed map[garam.GRN]garam.AgentCredential
+	placed map[garam.GRN]garam.AgentToken
 
 	// epochs is the epoch each agent was constructed at, which is what a
 	// report to garam later carries.
@@ -67,7 +68,7 @@ type recordingConstructor struct {
 func newRecordingConstructor() *recordingConstructor {
 	return &recordingConstructor{
 		built:    map[garam.GRN]bool{},
-		placed:   map[garam.GRN]garam.AgentCredential{},
+		placed:   map[garam.GRN]garam.AgentToken{},
 		epochs:   map[garam.GRN]int64{},
 		stale:    map[garam.GRN]bool{},
 		declared: map[garam.GRN]garam.ToolSet{},
@@ -89,7 +90,7 @@ func (c *recordingConstructor) HasCredential(_ context.Context, agent garam.GRN)
 	return placed, nil
 }
 
-func (c *recordingConstructor) Construct(_ context.Context, definition garam.Definition, epoch int64, credential garam.AgentCredential) error {
+func (c *recordingConstructor) Construct(_ context.Context, definition garam.Definition, epoch int64, token garam.AgentToken) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	agent := definition.Agent
@@ -99,7 +100,7 @@ func (c *recordingConstructor) Construct(_ context.Context, definition garam.Def
 	if c.refusePlacement != nil {
 		return c.refusePlacement
 	}
-	c.placed[agent] = credential
+	c.placed[agent] = token
 	return nil
 }
 
@@ -129,11 +130,11 @@ func (c *recordingConstructor) constructedAt() map[garam.GRN]int64 {
 	return held
 }
 
-// credentials is what the constructor holds, by agent.
-func (c *recordingConstructor) credentials() map[garam.GRN]garam.AgentCredential {
+// tokens is what the constructor holds, by agent.
+func (c *recordingConstructor) tokens() map[garam.GRN]garam.AgentToken {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	held := map[garam.GRN]garam.AgentCredential{}
+	held := map[garam.GRN]garam.AgentToken{}
 	maps.Copy(held, c.placed)
 	return held
 }
@@ -178,36 +179,45 @@ func claims(stub *stubListener) []string {
 	return agents
 }
 
-// certificatesAsked is the agents the stub was asked for a certificate for, in
-// the order it was asked.
-func certificatesAsked(stub *stubListener) []string {
+// mintsAsked is the agents the stub was asked to mint a token for, in the order
+// it was asked.
+func mintsAsked(stub *stubListener) []string {
 	var agents []string
 	for _, request := range stub.requests() {
-		if request.method == http.MethodPost && strings.HasSuffix(request.path, "/certificate") {
-			agents = append(agents, strings.TrimSuffix(strings.TrimPrefix(request.path, "/agents/"), "/certificate"))
+		if request.method == http.MethodPost && strings.HasSuffix(request.path, "/tokens") {
+			agents = append(agents, strings.TrimSuffix(strings.TrimPrefix(request.path, "/agents/"), "/tokens"))
 		}
 	}
 	return agents
 }
 
-// answerDefinitionsAndCertificates serves definitions and the certificate route
-// the way garam's listener does, and refuses a certificate for notHeld with the
-// 403 garam answers an agent this operator does not hold.
-func answerDefinitionsAndCertificates(definitions string, notHeld garam.GRN) http.HandlerFunc {
+// answerMintFor answers a mint the way garam's listener does: a token of the
+// agent the path names, at epoch, expiring an hour after mintedAt.
+func answerMintFor(w http.ResponseWriter, r *http.Request, epoch int64) {
+	agent := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agents/"), "/tokens")
+	answerMint(w, http.StatusCreated, fmt.Sprintf(`{"token": %q, "grn": %q, "epoch": %d,
+		"expiresAt": %q, "serverRootPem": "a root"}`, sampleToken, agent, epoch,
+		mintedAt.Add(time.Hour).Format(time.RFC3339)))
+}
+
+// mintedAt is when every token a stub answers here was minted.
+var mintedAt = time.Date(2026, 10, 14, 15, 0, 0, 0, time.UTC)
+
+// answerDefinitionsAndTokens serves definitions and the mint the way garam's
+// listener does, and refuses a mint for notHeld with the 403 garam answers an
+// agent this operator does not hold.
+func answerDefinitionsAndTokens(definitions string, notHeld garam.GRN) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet:
 			answerJSON(w, http.StatusOK, definitions)
-		case strings.HasSuffix(r.URL.Path, "/certificate"):
+		case strings.HasSuffix(r.URL.Path, "/tokens"):
 			if notHeld != "" && strings.Contains(r.URL.Path, string(notHeld)) {
-				answerJSON(w, http.StatusForbidden,
+				answerMint(w, http.StatusForbidden,
 					`{"kind": "permission_denied", "message": "agent is not assigned to this operator"}`)
 				return
 			}
-			answerJSON(w, http.StatusCreated, `{
-				"grn": "x", "certificatePem": "a certificate", "privateKeyPem": "a key",
-				"issuerPem": "an issuer", "serverRootPem": "a root", "notAfter": "2026-08-26T15:01:43Z"
-			}`)
+			answerMintFor(w, r, 1)
 		default:
 			answerJSON(w, http.StatusCreated, `{"grn": "x",
 				"operator": "grn:acme:default:operator:one", "epoch": 1}`)
@@ -302,7 +312,7 @@ func TestPollerStopsWhenItsContextIsCancelled(t *testing.T) {
 // that constructed only on a fresh claim would build nothing after a restart.
 func TestPollerConstructsTheAgentsItHoldsAClaimOn(t *testing.T) {
 	g := NewWithT(t)
-	stub := newStubListener(t, answerDefinitionsAndCertificates(`[
+	stub := newStubListener(t, answerDefinitionsAndTokens(`[
 		{"agentGrn": "`+string(claimedAgent)+`", "values": {}, "claim": {"epoch": 1}},
 		{"agentGrn": "`+string(unclaimedAgent)+`", "values": {}}
 	]`, ""))
@@ -310,14 +320,13 @@ func TestPollerConstructsTheAgentsItHoldsAClaimOn(t *testing.T) {
 
 	runPoller(t, stub, constructor)
 
-	g.Eventually(func() map[garam.GRN]garam.AgentCredential { return constructor.credentials() }, pollTimeout).
+	g.Eventually(func() map[garam.GRN]garam.AgentToken { return constructor.tokens() }, pollTimeout).
 		Should(HaveLen(2))
-	g.Expect(constructor.credentials()[claimedAgent]).To(Equal(garam.AgentCredential{
-		CertificatePEM: []byte("a certificate"),
-		KeyPEM:         []byte("a key"),
-		IssuerPEM:      []byte("an issuer"),
-		ServerRootPEM:  []byte("a root"),
-		NotAfter:       time.Date(2026, 8, 26, 15, 1, 43, 0, time.UTC),
+	g.Expect(constructor.tokens()[claimedAgent]).To(Equal(garam.AgentToken{
+		Token:         sampleToken,
+		Epoch:         1,
+		ExpiresAt:     mintedAt.Add(time.Hour),
+		ServerRootPEM: []byte("a root"),
 	}))
 }
 
@@ -328,7 +337,7 @@ func TestPollerConstructsTheAgentsItHoldsAClaimOn(t *testing.T) {
 // image, whatever a console user types into a definition.
 func TestPollerCarriesTheKeysItReadsToConstructionAndLeavesTheRestBehind(t *testing.T) {
 	g := NewWithT(t)
-	stub := newStubListener(t, answerDefinitionsAndCertificates(`[
+	stub := newStubListener(t, answerDefinitionsAndTokens(`[
 		{"agentGrn": "`+string(claimedAgent)+`", "values": {
 			"tools.pins.message_send": "sha256:aa",
 			"image": "example.com/somebody-elses:latest"
@@ -345,42 +354,38 @@ func TestPollerCarriesTheKeysItReadsToConstructionAndLeavesTheRestBehind(t *test
 	}))
 }
 
-// TestPollerAsksForNoCertificateOnceTheCredentialIsPlaced is what keeps garam
-// from minting a private key every pass. garam generates one per certificate
-// and stores none, so a certificate asked for with nowhere to put it is key
-// material created and dropped.
-func TestPollerAsksForNoCertificateOnceTheCredentialIsPlaced(t *testing.T) {
+// TestPollerMintsNoTokenOnceTheCredentialIsPlaced leaves an agent built to the
+// refresher: construction mints the first token, and a poll mints no other.
+func TestPollerMintsNoTokenOnceTheCredentialIsPlaced(t *testing.T) {
 	g := NewWithT(t)
-	stub := newStubListener(t, answerDefinitionsAndCertificates(
+	stub := newStubListener(t, answerDefinitionsAndTokens(
 		`[{"agentGrn": "`+string(claimedAgent)+`", "values": {}, "claim": {"epoch": 1}}]`, ""))
 	constructor := newRecordingConstructor()
 
 	runPoller(t, stub, constructor)
 
-	g.Eventually(func() []string { return certificatesAsked(stub) }, pollTimeout).
+	g.Eventually(func() []string { return mintsAsked(stub) }, pollTimeout).
 		Should(ConsistOf(string(claimedAgent)))
-	g.Consistently(func() []string { return certificatesAsked(stub) }, 10*pollInterval).
+	g.Consistently(func() []string { return mintsAsked(stub) }, 10*pollInterval).
 		Should(ConsistOf(string(claimedAgent)))
 }
 
-// TestPollerAsksAgainForACredentialItCouldNotStore is the write-before-obtained
-// rule. A credential that reached no store is gone: garam generates the private
-// key per certificate, keeps none, and has already moved on. So a failed write
-// is answered by asking for another certificate and never by holding the one in
-// hand across passes — a credential kept in this process to be retried is one
-// only this process has, and it goes with the process.
-func TestPollerAsksAgainForACredentialItCouldNotStore(t *testing.T) {
+// TestPollerMintsAgainForATokenItCouldNotStore answers a failed write by
+// minting another token on the next pass, never by holding the one in hand
+// across passes: a token kept in this process to be retried is one only this
+// process has, and it goes with the process.
+func TestPollerMintsAgainForATokenItCouldNotStore(t *testing.T) {
 	g := NewWithT(t)
-	stub := newStubListener(t, answerDefinitionsAndCertificates(
+	stub := newStubListener(t, answerDefinitionsAndTokens(
 		`[{"agentGrn": "`+string(claimedAgent)+`", "values": {}, "claim": {"epoch": 1}}]`, ""))
 	constructor := newRecordingConstructor()
 	constructor.refusePlacement = errors.New("the API server refused the write")
 
 	runPoller(t, stub, constructor)
 
-	g.Eventually(func() int { return len(certificatesAsked(stub)) }, pollTimeout).
+	g.Eventually(func() int { return len(mintsAsked(stub)) }, pollTimeout).
 		Should(BeNumerically(">=", 3))
-	g.Expect(constructor.credentials()).To(BeEmpty())
+	g.Expect(constructor.tokens()).To(BeEmpty())
 }
 
 // TestPollerConstructsNothingForAnAgentGaramRefuses says a 403 stops
@@ -390,7 +395,7 @@ func TestPollerAsksAgainForACredentialItCouldNotStore(t *testing.T) {
 // definitions is the whole of the response.
 func TestPollerConstructsNothingForAnAgentGaramRefuses(t *testing.T) {
 	g := NewWithT(t)
-	stub := newStubListener(t, answerDefinitionsAndCertificates(`[
+	stub := newStubListener(t, answerDefinitionsAndTokens(`[
 		{"agentGrn": "`+string(claimedAgent)+`", "values": {}, "claim": {"epoch": 2}},
 		{"agentGrn": "`+string(unclaimedAgent)+`", "values": {}, "claim": {"epoch": 1}}
 	]`, claimedAgent))
@@ -400,9 +405,9 @@ func TestPollerConstructsNothingForAnAgentGaramRefuses(t *testing.T) {
 
 	// The agent garam answers for, so that the absence below is the refusal and
 	// not a poller that constructed nothing at all.
-	g.Eventually(func() map[garam.GRN]garam.AgentCredential { return constructor.credentials() }, pollTimeout).
+	g.Eventually(func() map[garam.GRN]garam.AgentToken { return constructor.tokens() }, pollTimeout).
 		Should(HaveKey(unclaimedAgent))
-	g.Expect(constructor.credentials()).NotTo(HaveKey(claimedAgent))
+	g.Expect(constructor.tokens()).NotTo(HaveKey(claimedAgent))
 }
 
 // TestPollerCorrectsTheImageOfAnAgentItAlreadyBuilt is the repair a corrected
@@ -411,10 +416,10 @@ func TestPollerConstructsNothingForAnAgentGaramRefuses(t *testing.T) {
 // correction gated on construction would never run for the agents that need it.
 func TestPollerCorrectsTheImageOfAnAgentItAlreadyBuilt(t *testing.T) {
 	g := NewWithT(t)
-	stub := newStubListener(t, answerDefinitionsAndCertificates(
+	stub := newStubListener(t, answerDefinitionsAndTokens(
 		`[{"agentGrn": "`+string(claimedAgent)+`", "values": {}, "claim": {"epoch": 1}}]`, ""))
 	constructor := newRecordingConstructor()
-	constructor.placed[claimedAgent] = garam.AgentCredential{}
+	constructor.placed[claimedAgent] = garam.AgentToken{}
 	constructor.stale[claimedAgent] = true
 
 	runPoller(t, stub, constructor)
@@ -422,7 +427,7 @@ func TestPollerCorrectsTheImageOfAnAgentItAlreadyBuilt(t *testing.T) {
 	g.Eventually(func() []garam.GRN { return constructor.stillStale() }, pollTimeout).Should(BeEmpty())
 	// Nothing was asked of garam for this agent, so the correction is the poller
 	// reaching an agent it already built and not a second construction.
-	g.Expect(certificatesAsked(stub)).To(BeEmpty())
+	g.Expect(mintsAsked(stub)).To(BeEmpty())
 }
 
 func TestPollerLeavesAloneAnAgentTheControlServiceHoldsThoughGaramListsIt(t *testing.T) {
@@ -430,7 +435,7 @@ func TestPollerLeavesAloneAnAgentTheControlServiceHoldsThoughGaramListsIt(t *tes
 	// Garam omits a cut-over agent from its listing; this double does not, so
 	// the poller's own check is what is tested.
 	cutOver := garam.GRN("grn:acme:default:agent:7c7c7c7c7c7c7c7c")
-	stub := newStubListener(t, answerDefinitionsAndCertificates(`[
+	stub := newStubListener(t, answerDefinitionsAndTokens(`[
 		{"agentGrn": "`+string(claimedAgent)+`", "values": {}, "claim": {"epoch": 1}},
 		{"agentGrn": "`+string(cutOver)+`", "values": {}, "claim": {"epoch": 1}},
 		{"agentGrn": "`+string(unclaimedAgent)+`", "values": {}}
@@ -446,13 +451,13 @@ func TestPollerLeavesAloneAnAgentTheControlServiceHoldsThoughGaramListsIt(t *tes
 	// The control: a garam-source agent garam lists is corrected and constructed.
 	g.Eventually(func() []garam.GRN { return constructor.stillStale() }, pollTimeout).
 		Should(ConsistOf(cutOver))
-	g.Eventually(func() []string { return certificatesAsked(stub) }, pollTimeout).
+	g.Eventually(func() []string { return mintsAsked(stub) }, pollTimeout).
 		Should(ContainElement(string(claimedAgent)))
 
-	g.Consistently(func() []string { return certificatesAsked(stub) }, 10*pollInterval).
+	g.Consistently(func() []string { return mintsAsked(stub) }, 10*pollInterval).
 		ShouldNot(ContainElement(string(cutOver)))
 	g.Expect(constructor.stillStale()).To(ConsistOf(cutOver))
-	g.Expect(constructor.credentials()).NotTo(HaveKey(cutOver))
+	g.Expect(constructor.tokens()).NotTo(HaveKey(cutOver))
 	g.Expect(claims(stub)).NotTo(ContainElement(string(unclaimedAgent)))
 }
 
@@ -470,11 +475,8 @@ func TestPollerConstructsAtTheEpochGaramAnswered(t *testing.T) {
 				{"agentGrn": "`+string(claimedAgent)+`", "values": {}, "claim": {"epoch": 9}},
 				{"agentGrn": "`+string(unclaimedAgent)+`", "values": {}}
 			]`)
-		case strings.HasSuffix(r.URL.Path, "/certificate"):
-			answerJSON(w, http.StatusCreated, `{
-				"grn": "x", "certificatePem": "a certificate", "privateKeyPem": "a key",
-				"issuerPem": "an issuer", "serverRootPem": "a root", "notAfter": "2026-08-26T15:01:43Z"
-			}`)
+		case strings.HasSuffix(r.URL.Path, "/tokens"):
+			answerMintFor(w, r, 9)
 		default:
 			answerJSON(w, http.StatusCreated, `{"grn": "`+string(unclaimedAgent)+`",
 				"operator": "grn:acme:default:operator:one", "epoch": 4}`)

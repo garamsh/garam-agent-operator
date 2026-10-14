@@ -2,89 +2,28 @@ package desired
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
-	"math/big"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"sync"
 	"testing"
 	"time"
 
 	. "github.com/onsi/gomega"
-
-	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 )
 
 // recoveryID is the open recovery every test's feed names.
 const recoveryID = "rec-1"
 
-// authority is a certificate authority a test signs with.
-type authority struct {
-	certificate *x509.Certificate
-	key         *ecdsa.PrivateKey
-	pem         []byte
-}
-
-func newAuthority(t *testing.T, name string) authority {
-	t.Helper()
-	g := NewWithT(t)
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	g.Expect(err).NotTo(HaveOccurred())
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
-	}
-	template.Subject.CommonName = name
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	g.Expect(err).NotTo(HaveOccurred())
-	certificate, err := x509.ParseCertificate(der)
-	g.Expect(err).NotTo(HaveOccurred())
-
-	return authority{certificate: certificate, key: key, pem: pem.EncodeToMemory(&pem.Block{Type: pemCertificate, Bytes: der})}
-}
-
-// sign issues a certificate naming grn over the key in csrPEM, as garam signs a recovery.
-func (a authority) sign(csrPEM []byte, grn string) ([]byte, error) {
-	block, _ := pem.Decode(csrPEM)
-	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	san, err := url.Parse(grn)
-	if err != nil {
-		return nil, err
-	}
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().UnixNano()), NotBefore: time.Now().Add(-time.Minute),
-		NotAfter: time.Now().Add(time.Hour), URIs: []*url.URL{san},
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, a.certificate, csr.PublicKey, a.key)
-	if err != nil {
-		return nil, err
-	}
-
-	return pem.EncodeToMemory(&pem.Block{Type: pemCertificate, Bytes: der}), nil
-}
-
-// recoveryStore is a RecoveryStore in memory, holding one managed agent's placed credential, or
-// none where unplaced is set.
+// recoveryStore is a RecoveryStore in memory, holding one managed agent's persisted request and
+// the lineage recorded on its credential.
 type recoveryStore struct {
-	mu       sync.Mutex
-	issuer   []byte
-	unplaced bool
-	request  *PendingRequest
-	refused  string
-	placed   []byte
-	chain    Certificate
-	lineage  string
+	mu      sync.Mutex
+	request *RecoveryRequest
+	lineage string
 }
 
 func (m *recoveryStore) Recovering(context.Context) ([]string, error) {
@@ -97,17 +36,17 @@ func (m *recoveryStore) Recovering(context.Context) ([]string, error) {
 	return []string{agentA}, nil
 }
 
-func (m *recoveryStore) LoadRecovery(context.Context, string) (PendingRequest, bool, error) {
+func (m *recoveryStore) LoadRecovery(context.Context, string) (RecoveryRequest, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.request == nil {
-		return PendingRequest{}, false, nil
+		return RecoveryRequest{}, false, nil
 	}
 
 	return *m.request, true, nil
 }
 
-func (m *recoveryStore) SaveRecovery(_ context.Context, _ string, request PendingRequest) error {
+func (m *recoveryStore) SaveRecovery(_ context.Context, _ string, request RecoveryRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.request == nil {
@@ -117,83 +56,46 @@ func (m *recoveryStore) SaveRecovery(_ context.Context, _ string, request Pendin
 	return nil
 }
 
-func (m *recoveryStore) KeptIssuer(context.Context, string) ([]byte, bool, error) {
-	if m.unplaced {
-		return nil, false, nil
-	}
-
-	return m.issuer, true, nil
-}
-
-func (m *recoveryStore) RefuseRecovery(_ context.Context, _, reason string) error {
+func (m *recoveryStore) Recovered(_ context.Context, _, lineage string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.refused = reason
+	m.lineage, m.request = lineage, nil
 
 	return nil
-}
-
-func (m *recoveryStore) PlaceRecovered(_ context.Context, _ string, _ []byte, certificate Certificate, lineage string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.placed, m.chain, m.lineage, m.request = certificate.CertificatePEM, certificate, lineage, nil
-
-	return nil
-}
-
-// written is the chain the store was asked to write beside the placed certificate.
-func (m *recoveryStore) written() Certificate {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	return m.chain
 }
 
 // snapshot is what the store holds, read under its lock.
-func (m *recoveryStore) snapshot() (request *PendingRequest, refused string, placed []byte, lineage string) {
+func (m *recoveryStore) snapshot() (request *RecoveryRequest, lineage string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.request, m.refused, m.placed, m.lineage
+	return m.request, m.lineage
 }
 
 // recoveryRoute stands in for the control service's recovery-requests route. It records every
-// request it is sent and whether the store held it then; it answers 202 until finalized is set,
-// and then 200 with a certificate signer issues over the request's key.
+// body it is sent and whether the store held that request then; it answers 202 until finalized
+// is set, and then 200 with the new lineage.
 type recoveryRoute struct {
 	mu        sync.Mutex
 	store     *recoveryStore
-	signer    authority
 	finalized bool
-	// chain, where set, is the issuer the answer names, with answeredRoot as its server root: a
-	// control from ADR 0062 on. Unset, the answer names none, as an older control's.
-	chain     *authority
-	sent      []wireCertificateRequest
+	sent      []string
 	persisted []bool
 }
 
 func (r *recoveryRoute) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	var in wireCertificateRequest
-	_ = json.NewDecoder(req.Body).Decode(&in)
-	held, _, _, _ := r.store.snapshot()
+	body, _ := io.ReadAll(req.Body)
+	var in wireRecoveryRequest
+	_ = json.Unmarshal(body, &in)
+	held, _ := r.store.snapshot()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.sent = append(r.sent, in)
-	r.persisted = append(r.persisted, held != nil && string(held.CSRPEM) == in.CertificateRequestPEM)
+	r.sent = append(r.sent, string(body))
+	r.persisted = append(r.persisted, held != nil && held.ID == in.RequestID && held.Epoch == in.Epoch)
 	answer := wireRecovered{Agent: agentA, RecoveryRequestID: in.RequestID, Epoch: in.Epoch, Stage: "prepared"}
 	status := http.StatusAccepted
 	if r.finalized {
-		certificate, err := r.signer.sign([]byte(in.CertificateRequestPEM), agentA)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-
-			return
-		}
-		answer.Stage, answer.Lineage, answer.CertificatePEM = "finalized", "lineage-2", string(certificate)
-		if r.chain != nil {
-			answer.IssuerPEM, answer.ServerRootPEM = string(r.chain.pem), answeredRoot
-		}
-		status = http.StatusOK
+		answer.Stage, answer.Lineage, status = "finalized", "lineage-2", http.StatusOK
 	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(answer)
@@ -205,15 +107,12 @@ func (r *recoveryRoute) finalize() {
 	r.finalized = true
 }
 
-func (r *recoveryRoute) requests() ([]wireCertificateRequest, []bool) {
+func (r *recoveryRoute) requests() ([]string, []bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	return append([]wireCertificateRequest(nil), r.sent...), append([]bool(nil), r.persisted...)
+	return append([]string(nil), r.sent...), append([]bool(nil), r.persisted...)
 }
-
-// answeredRoot is the server root a route that answers a chain names.
-const answeredRoot = "answered server root"
 
 // startRecoverer runs a recoverer over store against route until the returned stop is called,
 // offered agentA's open recovery, passing every millisecond.
@@ -248,19 +147,18 @@ func startRecoverer(t *testing.T, route *recoveryRoute, store *recoveryStore) (s
 
 func TestRecovererPersistsTheRequestBeforeSendingItAndSendsTheSameOneAfterARestart(t *testing.T) {
 	g := NewWithT(t)
-	kept := newAuthority(t, "kept issuer")
-	store := &recoveryStore{issuer: kept.pem}
-	route := &recoveryRoute{store: store, signer: kept}
+	store := &recoveryStore{}
+	route := &recoveryRoute{store: store}
 
 	stop := startRecoverer(t, route, store)
 	g.Eventually(func() int { sent, _ := route.requests(); return len(sent) }).Should(BeNumerically(">=", 1))
 	stop()
 	first, persisted := route.requests()
 	g.Expect(persisted).To(HaveEach(BeTrue()), "a recovery request was sent before it was persisted")
-	g.Expect(first[0].RequestID).To(Equal(recoveryID))
-	g.Expect(first[0].Epoch).To(Equal("7"))
+	// The request garam's recovery under execution-fence.v2 is sent, and no certificate request.
+	g.Expect(first[0]).To(MatchJSON(`{"requestId": "` + recoveryID + `", "epoch": "7"}`))
 
-	By := "a restart sends the request it persisted, never a new key"
+	By := "a restart sends the request it persisted"
 	startRecoverer(t, route, store)
 	g.Eventually(func() int { sent, _ := route.requests(); return len(sent) }).Should(BeNumerically(">", len(first)), By)
 	after, _ := route.requests()
@@ -269,106 +167,20 @@ func TestRecovererPersistsTheRequestBeforeSendingItAndSendsTheSameOneAfterAResta
 	}
 }
 
-func TestRecovererPlacesOnlyACertificateTheKeptIssuerSigned(t *testing.T) {
+func TestRecovererRecordsTheNewLineageOnceTheRecoveryIsFinalized(t *testing.T) {
 	g := NewWithT(t)
-	kept := newAuthority(t, "kept issuer")
-
-	By := "the control: a certificate the kept issuer signed over the persisted key is placed"
-	store := &recoveryStore{issuer: kept.pem}
-	route := &recoveryRoute{store: store, signer: kept}
+	store := &recoveryStore{}
+	route := &recoveryRoute{store: store}
 	startRecoverer(t, route, store)
-	g.Eventually(func() *PendingRequest { request, _, _, _ := store.snapshot(); return request }).ShouldNot(BeNil(), By)
+
+	// Prepared, nothing is recorded: an administrator's finalize is what comes next.
+	g.Eventually(func() *RecoveryRequest { request, _ := store.snapshot(); return request }).ShouldNot(BeNil())
+	g.Consistently(func() string { _, lineage := store.snapshot(); return lineage }, 100*time.Millisecond).
+		Should(BeEmpty(), "a lineage was recorded before the recovery was finalized")
+
 	route.finalize()
-	g.Eventually(func() []byte { _, _, placed, _ := store.snapshot(); return placed }).ShouldNot(BeEmpty(), By)
-	_, refused, _, lineage := store.snapshot()
-	g.Expect(lineage).To(Equal("lineage-2"), By)
-	g.Expect(refused).To(BeEmpty(), By)
+	g.Eventually(func() string { _, lineage := store.snapshot(); return lineage }).Should(Equal("lineage-2"))
 	// The feed still names the recovery until its next answer; it is not begun again.
-	g.Consistently(func() *PendingRequest { request, _, _, _ := store.snapshot(); return request }, 200*time.Millisecond).
-		Should(BeNil(), "a request outlived its placed certificate, or a new one was begun under the placed recovery")
-
-	By = "a certificate another authority signed is refused: nothing is placed, and the request is kept"
-	other := newAuthority(t, "another issuer")
-	elsewhere := &recoveryStore{issuer: kept.pem}
-	foreign := &recoveryRoute{store: elsewhere, signer: other, finalized: true}
-	startRecoverer(t, foreign, elsewhere)
-	g.Eventually(func() string { _, refused, _, _ := elsewhere.snapshot(); return refused }).
-		Should(Equal(agentv1alpha1.ReasonRecoveredCertificateUnverified), By)
-	held, _, placed, _ := elsewhere.snapshot()
-	g.Expect(placed).To(BeEmpty(), By)
-	g.Expect(held).NotTo(BeNil(), By)
-}
-
-func TestVerifyRecoveredRefusesAnythingButTheKeptIssuersCertificateOverTheKey(t *testing.T) {
-	g := NewWithT(t)
-	kept, other := newAuthority(t, "kept issuer"), newAuthority(t, "another issuer")
-	request, err := newPendingRequest("7")
-	g.Expect(err).NotTo(HaveOccurred())
-	another, err := newPendingRequest("7")
-	g.Expect(err).NotTo(HaveOccurred())
-	sign := func(a authority, csr []byte, grn string) []byte {
-		certificate, err := a.sign(csr, grn)
-		g.Expect(err).NotTo(HaveOccurred())
-
-		return certificate
-	}
-
-	// The control: the kept issuer's certificate over the persisted key, naming the agent.
-	g.Expect(VerifyRecovered(agentA, request.KeyPEM, sign(kept, request.CSRPEM, agentA), kept.pem)).To(Succeed())
-
-	g.Expect(VerifyRecovered(agentA, request.KeyPEM, sign(other, request.CSRPEM, agentA), kept.pem)).
-		To(MatchError(ContainSubstring("does not chain to the kept issuer")))
-	g.Expect(VerifyRecovered(agentA, request.KeyPEM, sign(kept, another.CSRPEM, agentA), kept.pem)).
-		To(MatchError(ContainSubstring("not signed over the persisted key")))
-	g.Expect(VerifyRecovered(agentA, request.KeyPEM, sign(kept, request.CSRPEM, agentB), kept.pem)).
-		To(MatchError(ContainSubstring("names")))
-	g.Expect(VerifyRecovered(agentA, request.KeyPEM, sign(kept, request.CSRPEM, agentA), nil)).
-		To(MatchError(ContainSubstring("no issuer is kept")))
-}
-
-func TestRecovererWritesAndVerifiesAgainstTheAnsweredChain(t *testing.T) {
-	g := NewWithT(t)
-	kept, answered := newAuthority(t, "kept issuer"), newAuthority(t, "answered issuer")
-
-	By := "a certificate the answered issuer signed is placed with the answered chain, not the kept one"
-	store := &recoveryStore{issuer: kept.pem}
-	startRecoverer(t, &recoveryRoute{store: store, signer: answered, chain: &answered, finalized: true}, store)
-	g.Eventually(func() []byte { _, _, placed, _ := store.snapshot(); return placed }).ShouldNot(BeEmpty(), By)
-	g.Expect(store.written().IssuerPEM).To(Equal(answered.pem), By)
-	g.Expect(store.written().ServerRootPEM).To(Equal([]byte(answeredRoot)), By)
-
-	By = "a certificate that does not chain to the answered issuer is refused, though the kept one signed it"
-	mismatched := &recoveryStore{issuer: kept.pem}
-	startRecoverer(t, &recoveryRoute{store: mismatched, signer: kept, chain: &answered, finalized: true}, mismatched)
-	g.Eventually(func() string { _, refused, _, _ := mismatched.snapshot(); return refused }).
-		Should(Equal(agentv1alpha1.ReasonRecoveredCertificateUnverified), By)
-	_, _, placed, _ := mismatched.snapshot()
-	g.Expect(placed).To(BeEmpty(), By)
-
-	By = "an answer naming no chain, an older control's, keeps the placed chain"
-	older := &recoveryStore{issuer: kept.pem}
-	startRecoverer(t, &recoveryRoute{store: older, signer: kept, finalized: true}, older)
-	g.Eventually(func() []byte { _, _, placed, _ := older.snapshot(); return placed }).ShouldNot(BeEmpty(), By)
-	g.Expect(older.written().IssuerPEM).To(BeEmpty(), "a chain was written where control answered none")
-}
-
-func TestRecovererPlacesWhereNoCredentialWasOnlyWithAnAnsweredChain(t *testing.T) {
-	g := NewWithT(t)
-	answered := newAuthority(t, "answered issuer")
-
-	By := "with no credential placed, the answered chain places the certificate"
-	store := &recoveryStore{unplaced: true}
-	startRecoverer(t, &recoveryRoute{store: store, signer: answered, chain: &answered, finalized: true}, store)
-	g.Eventually(func() []byte { _, _, placed, _ := store.snapshot(); return placed }).ShouldNot(BeEmpty(), By)
-	g.Expect(store.written().IssuerPEM).To(Equal(answered.pem), By)
-
-	By = "with no credential placed and no chain answered, nothing is placed and the request is kept"
-	bare := &recoveryStore{unplaced: true}
-	route := &recoveryRoute{store: bare, signer: answered, finalized: true}
-	startRecoverer(t, route, bare)
-	g.Eventually(func() int { sent, _ := route.requests(); return len(sent) }).Should(BeNumerically(">=", 1), By)
-	g.Consistently(func() []byte { _, _, placed, _ := bare.snapshot(); return placed }, 200*time.Millisecond).
-		Should(BeEmpty(), By)
-	request, _, _, _ := bare.snapshot()
-	g.Expect(request).NotTo(BeNil(), By)
+	g.Consistently(func() *RecoveryRequest { request, _ := store.snapshot(); return request }, 200*time.Millisecond).
+		Should(BeNil(), "a request outlived its recorded lineage, or a new one was begun under the recorded recovery")
 }
