@@ -54,6 +54,12 @@ const (
 	// the refresher's next pass: the recoverer removes it once a recovery is
 	// finalized, so the agent's tokens are minted again in the new lineage.
 	TokensRefreshAnnotation = "agent.garam.sh/tokens-refresh-at"
+
+	// TokensFencedAnnotation records on an agent's credential Secret that its
+	// tokens include the one minted for the control service. A fenced agent's
+	// Secret without it, as a cutover to the control service leaves one, is
+	// minted for on the refresher's next pass.
+	TokensFencedAnnotation = "agent.garam.sh/tokens-fenced"
 )
 
 // The names the workload's controller writes onto an agent's objects and the

@@ -33,8 +33,9 @@ type TokenHolder struct {
 	// service, which also reads a token minted for the control service.
 	Fenced bool
 
-	// Due is when its tokens are next minted, and zero where none are placed or
-	// a finalized recovery asks for new ones.
+	// Due is when its tokens are next minted, and zero where none are placed, a
+	// finalized recovery asks for new ones, or a fenced agent holds no token for
+	// the control service.
 	Due time.Time
 
 	// Version is the credential Secret's version when it was read, empty where

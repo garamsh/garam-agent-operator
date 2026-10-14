@@ -80,6 +80,10 @@ func (t *Tokens) readDue(ctx context.Context, holder *garam.TokenHolder) error {
 		return fmt.Errorf("get the credential of %s: %w", holder.Agent, err)
 	}
 	holder.Version = secret.ResourceVersion
+	if holder.Fenced && secret.Annotations[agentname.TokensFencedAnnotation] != "true" {
+		// No token for the control service is placed: due at once.
+		return nil
+	}
 	if due, ok := secret.Annotations[agentname.TokensRefreshAnnotation]; ok {
 		// A value this operator did not write is due at once: the next write
 		// replaces it.
@@ -94,6 +98,9 @@ func (t *Tokens) readDue(ctx context.Context, holder *garam.TokenHolder) error {
 func (t *Tokens) Store(ctx context.Context, holder garam.TokenHolder, tokens garam.Tokens, due time.Time) error {
 	agent := string(holder.Agent)
 	annotations := map[string]string{agentname.TokensRefreshAnnotation: due.UTC().Format(time.RFC3339)}
+	if tokens.Control != nil {
+		annotations[agentname.TokensFencedAnnotation] = "true"
+	}
 	if holder.Version == "" {
 		owner := &agentv1alpha1.Agent{}
 		if err := t.client.Get(ctx, client.ObjectKey{Namespace: t.namespace, Name: agentname.Agent(agent)}, owner); err != nil {

@@ -37,7 +37,7 @@ garam `afde8b8` (garam ADR-0100, garam#1352) gives an agent tokens in place of a
    - on a `Control`-source agent, whose adapter is fenced, a second one with `--control-grn` as its audience.
 
    Each is minted under the manager's own token, so no agent token is exchanged for its successor.
-   - **Written.** They go into the agent's credential Secret, `<agent>-credentials`, under `token`, `control-token` and `server-root.pem`, with the refresh time as `agent.garam.sh/tokens-refresh-at`, in one write.
+   - **Written.** They go into the agent's credential Secret, `<agent>-credentials`, under `token`, `control-token` and `server-root.pem`, with the refresh time as `agent.garam.sh/tokens-refresh-at`, in one write. Where the control service's token is among them, the write also sets `agent.garam.sh/tokens-fenced`; a fenced agent's Secret without it, as a cutover to the control service leaves one, is due at once.
    - **Guarded.** The write names the version of the Secret the refresher read, so a recovery recorded in between refuses it.
    - **Refreshed.** It is due at a random point in garam's window, measured from the mint to the earlier expiry. No interval of this operator's own is added.
    - **Refused.** A mint garam refuses (403), and a token minted at another epoch than `spec.identity.assignmentEpoch`, are reported by name and written nowhere. The agent is asked about again after 5 minutes, never at a refresh's pace.

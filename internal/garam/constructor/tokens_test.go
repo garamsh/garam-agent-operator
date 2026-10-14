@@ -129,6 +129,30 @@ var _ = Describe("Token store", func() {
 		Expect(holderOf(store, grn).Due).To(Equal(later))
 	})
 
+	It("mints at once for an agent a cutover fenced, whose credential holds no token for the control service", func() {
+		grn := "grn:acme:default:agent:cutover"
+		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceGaram})
+		store := constructor.NewTokens(k8sClient, scheme.Scheme, tokensNamespace)
+		due := time.Date(2026, 10, 14, 15, 40, 0, 0, time.UTC)
+		unfenced := tokensOf("garam's alone")
+		unfenced.Control = nil
+		Expect(store.Store(ctx, holderOf(store, grn), unfenced, due)).To(Succeed())
+		Expect(holderOf(store, grn).Due).To(Equal(due), "the unfenced agent's tokens are not due at their refresh time")
+
+		By("moving the agent to the control service, as a cutover does")
+		agent := &agentv1alpha1.Agent{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: tokensNamespace, Name: agentname.Agent(grn)}, agent)).To(Succeed())
+		agent.Spec.Identity.Source = agentv1alpha1.DesiredSourceControl
+		Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+		moved := holderOf(store, grn)
+		Expect(moved.Fenced).To(BeTrue())
+		Expect(moved.Due).To(BeZero(), "a fenced agent with no control token waits for its refresh time")
+
+		// Control: once its control token is written, it is due at its refresh time again.
+		Expect(store.Store(ctx, moved, tokensOf("fenced"), due)).To(Succeed())
+		Expect(holderOf(store, grn).Due).To(Equal(due))
+	})
+
 	It("refuses to write over a credential a recovery changed since it was read", func() {
 		grn := "grn:acme:default:agent:recovered"
 		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceControl})
