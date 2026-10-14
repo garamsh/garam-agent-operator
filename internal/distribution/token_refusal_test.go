@@ -60,7 +60,7 @@ func managerTransport(t *testing.T, garam, control *httptest.Server) http.RoundT
 		Endpoint: garam.URL + "/oauth/token", Files: files, Audience: "grn:root:default:operator:control",
 		HTTP: garam.Client(),
 	})
-	return &machinetoken.Transport{Source: source, Base: control.Client().Transport, ClientIDHeader: "Controller-Grn"}
+	return &machinetoken.Transport{Source: source, Base: control.Client().Transport, ClientIDHeader: controllerHeader}
 }
 
 // TestDesired_ATokenGaramRefusesIsExchangedOnceMoreByTheManager is a revoked control-audience token,

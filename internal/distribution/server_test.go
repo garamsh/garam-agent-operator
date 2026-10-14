@@ -230,13 +230,16 @@ func (e *env) configure(t *testing.T, agent, operator string, expected definitio
 	require.NoError(t, err)
 }
 
+// controllerHeader is the header the controller names its GRN in, beside its token.
+const controllerHeader = "Controller-Grn"
+
 // controllerToken is the token the controller presents, as garam answers one.
 const controllerToken = "garam_ot_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 // clientWithToken is a client of server presenting token as a bearer, under grn.
 func clientWithToken(server *httptest.Server, grn, token string) *http.Client {
 	return &http.Client{Transport: presenting{base: server.Client().Transport, header: http.Header{
-		"Authorization": {"Bearer " + token}, "Controller-Grn": {grn},
+		"Authorization": {"Bearer " + token}, controllerHeader: {grn},
 	}}}
 }
 

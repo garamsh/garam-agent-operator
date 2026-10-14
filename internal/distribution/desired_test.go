@@ -40,7 +40,7 @@ func TestDesired_RefusedWithoutATokenAndAControllerGRN(t *testing.T) {
 		{"no controller GRN", clientWithToken(e.server, "", controllerToken)},
 		{"a token not of garam's operator form", clientWithToken(e.server, controller, "garam_at_"+controllerToken[9:])},
 		{"another scheme", &http.Client{Transport: presenting{base: e.server.Client().Transport, header: http.Header{
-			"Authorization": {"Garam-Token " + controllerToken}, "Controller-Grn": {controller},
+			"Authorization": {"Garam-Token " + controllerToken}, controllerHeader: {controller},
 		}}}},
 	}
 	for _, tt := range tests {
