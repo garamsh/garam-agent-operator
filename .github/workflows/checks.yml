@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: read
     name: Run on Ubuntu
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # Dependabot moves the action pins below, rewriting the version comment with
       # the SHA (`.github/dependabot.yml`) — but only while the two already agree,

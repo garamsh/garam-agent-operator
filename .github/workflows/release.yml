@@ -36,7 +36,7 @@ permissions: read-all
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       # A job's block replaces the workflow's rather than adding to it, so the read
       # the checkout needs is written here beside the federated push credential:
