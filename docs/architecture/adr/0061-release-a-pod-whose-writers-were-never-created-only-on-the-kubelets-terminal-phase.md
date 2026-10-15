@@ -69,3 +69,21 @@ The PM settled the decision on this dispatch.
 Ruled out:
 - **Accepting #311's candidate on its own**, for (a), (b) and (c).
 - **Accepting any terminal phase.** PodGC writes one for a Pod whose node is gone or out of service, where nothing confirms the containers stopped.
+
+## Errata
+
+### 2026-10-15 — a Pod with no init container is held, not released
+
+Consequences says: "A Pod deleted before any writer was created is released without a hand step. That includes one stuck in init, or one whose volumes never mounted, once the kubelet marks it `Failed`." That holds only for a Pod with at least one init container. A Pod with none is held for a hand release. Read in `kubernetes/kubernetes` `v1.37.0` (#360, PR #362, settled on #363):
+- Deleting a Pod cancels its blocked mount wait at once (`pkg/kubelet/pod_workers.go:1000-1002`, `pkg/kubelet/volumemanager/volume_manager.go:442`).
+- The kubelet's last status write before `TerminatePod` leaves a Pod whose containers all wait `Pending` (`pkg/kubelet/kubelet.go:2452`, `pkg/kubelet/kubelet_pods.go:1839-1842`). `Failed` is written by `TerminatePod` (`pkg/kubelet/status/status_manager.go:778-783`), called last in `SyncTerminatedPod` (`pkg/kubelet/kubelet.go:2572`).
+- In the same write, `TerminatePod` marks every regular container not already terminated as terminated with no container ID, reason `ContainerStatusUnknown`, once the Pod has initialized (`status_manager.go:742-755`), and a Pod with no init container always has (`:797-800`). This decision holds such a writer.
+- With an init container, `TerminatePod` marks only the first init container that way when all of them wait (`:757-770`, `:837-848`). The Pod has not initialized while its regular containers wait and its last init container neither completed nor, where it is restartable, started (`:801-831`). Its regular containers and its restartable init containers stay waiting, which is the shape this decision releases.
+
+So the never-created shape reaches a terminal Pod only where the Pod has an init container. A terminated writer with no ID carries no record that it was never created: `TerminatePod` writes it for any writer it could not locate, including one that ran and vanished from the runtime. Releasing on it would rest on the runtime's listing alone, which this decision does not accept.
+
+What this reaches since ADR 0073 removed the `credentials` init container:
+- **Held.** An `Agent` whose Pod has no init container: no adapter, and nothing for the config file (no pins, model, revision, ego, instructions, control root or issuer).
+- **Released.** A Pod that carries the adapter. Wherever the adapter is placed, so is the outbox init container (ADR 0060), and the reconciler places it first (`internal/controller/agent_statefulset.go`, `applyOutbox` before `applyAdapter`), so the adapter is never the first init container and waits beside the agent.
+
+The decision stands: the terminal phase is the evidence, and only a waiting writer with no ID, restart or last state counts as never created. A Pod it holds is released by a person.
