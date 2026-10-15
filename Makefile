@@ -454,19 +454,19 @@ $(LOCALBIN):
 # `aws ecr get-login-password | docker login`.
 #
 # The image is bound by digest alone. Its tags, the commit's 12 hex digits
-# (afde8b84cecc) and pinned-garam-agent-operator, are informational; garam's
+# (6335ea4b71bb) and pinned-garam-agent-operator, are informational; garam's
 # lifecycle policy keeps it while pinned-garam-agent-operator names it
-# (garamsh/garam@afde8b8 tests/testprincipal/README.md §The test image).
+# (garamsh/garam@6335ea4 tests/testprincipal/README.md §The test image).
 #
 # Pinning (#271): GARAM_REVISION, GARAM_TEST_REPOSITORY and
 # GARAM_TEST_IMAGE_DIGEST move together, in one pull request, by hand; no
 # Dependabot ecosystem reads a Makefile variable. That pull request writes here
 # the commit and digest garam's PM confirms, and is merged only once they are
 # confirmed.
-GARAM_REVISION ?= afde8b84cecce8f46c9fa43f966e8c609fac2133
+GARAM_REVISION ?= 6335ea4b71bb32590a89388328f513bfff7a9846
 GARAM_TEST_REGISTRY ?= 486152169996.dkr.ecr.ap-northeast-2.amazonaws.com
 GARAM_TEST_REPOSITORY ?= garam-dev/garam-test
-GARAM_TEST_IMAGE_DIGEST ?= sha256:afd5049eaded13f91d8e9f663a3b39451b66d3b121b1268addada2a9d46c24a5
+GARAM_TEST_IMAGE_DIGEST ?= sha256:6c5af8bcfab3164d239544d7cb285be0c39e38f8e0ff8db080034a1f4c20feb7
 GARAM_REPOSITORY ?= https://github.com/garamsh/garam.git
 GARAM_DIR = $(LOCALBIN)/garam-$(GARAM_REVISION)
 
