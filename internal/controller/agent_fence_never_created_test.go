@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"slices"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -10,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/agentname"
 )
 
 // neverCreatedStatus is the agent's container as the kubelet reports one it never created: waiting,
@@ -142,5 +145,123 @@ var _ = Describe("Writer fence on writers never created (ADR 0061)", func() {
 					LastTransitionTime: metav1.Now()})
 			expectHeldSaying(name, reason)
 		}
+	})
+})
+
+// unlocatedState is what the kubelet's TerminatePod writes for a container it could not locate: terminated,
+// with no container ID (kubernetes v1.37.0 pkg/kubelet/status/status_manager.go:747-753, 763-769).
+var unlocatedState = corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+	Reason: "ContainerStatusUnknown", Message: "The container could not be located when the pod was terminated",
+	ExitCode: 137,
+}}
+
+// terminateUncreated writes the status the kubelet leaves on a deleted Pod none of whose containers was
+// created, as kubernetes v1.37.0 TerminatePod makes it (pkg/kubelet/status/status_manager.go:721-848): phase
+// Failed; the first init container unlocated and the rest waiting; every regular container unlocated where the
+// Pod has no init container, since hasPodInitialized then holds, and waiting where it has one.
+func terminateUncreated(pod *corev1.Pod) *corev1.Pod {
+	GinkgoHelper()
+
+	current := &corev1.Pod{}
+	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), current)).To(Succeed())
+	waiting := corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}
+	regular := waiting
+	if len(current.Spec.InitContainers) == 0 {
+		regular = unlocatedState
+	}
+	current.Status.Phase = corev1.PodFailed
+	current.Status.Conditions = nil
+	current.Status.InitContainerStatuses = nil
+	for i, container := range current.Spec.InitContainers {
+		state := waiting
+		if i == 0 {
+			state = unlocatedState
+		}
+		current.Status.InitContainerStatuses = append(current.Status.InitContainerStatuses,
+			corev1.ContainerStatus{Name: container.Name, Image: container.Image, State: state})
+	}
+	current.Status.ContainerStatuses = nil
+	for _, container := range current.Spec.Containers {
+		current.Status.ContainerStatuses = append(current.Status.ContainerStatuses,
+			corev1.ContainerStatus{Name: container.Name, Image: container.Image, State: regular})
+	}
+	Expect(k8sClient.Status().Update(ctx, current)).To(Succeed())
+
+	written := &corev1.Pod{}
+	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), written)).To(Succeed())
+	Expect(written.Status.Phase).To(Equal(corev1.PodFailed))
+	Expect(written.Status.ContainerStatuses).To(HaveLen(len(written.Spec.Containers)))
+	Expect(written.Status.InitContainerStatuses).To(HaveLen(len(written.Spec.InitContainers)))
+
+	return written
+}
+
+var _ = Describe("Writer fence on a Pod deleted before any writer was created (#363)", func() {
+	It("holds a Pod with no init container for a hand release, since the kubelet reports its writers terminated with no ID", func() {
+		createNode("fence-node-uncreated", corev1.ConditionTrue)
+		waiting := corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}
+
+		pod := fencedAgent("fence-uncreated-no-init", "fence-node-uncreated", waiting)
+		Expect(pod.Spec.InitContainers).To(BeEmpty())
+		deletePod(pod)
+		written := terminateUncreated(pod)
+		Expect(written.Status.ContainerStatuses).To(ConsistOf(HaveField("State", unlocatedState)))
+		_, err := reconcileAgent("fence-uncreated-no-init")
+		Expect(err).NotTo(HaveOccurred())
+		expectHeld("fence-uncreated-no-init", agentv1alpha1.ReasonNoContainerStatus)
+		fence := meta.FindStatusCondition(readAgent("fence-uncreated-no-init").Status.Conditions,
+			agentv1alpha1.ConditionWriterFence)
+		Expect(fence.Message).To(ContainSubstring("terminated instance with no container ID"))
+		Expect(fence.Message).To(ContainSubstring("or by a person"))
+
+		By("the control: the same Pod, its writer terminated with an ID, is released")
+		control := fencedAgent("fence-uncreated-no-init-control", "fence-node-uncreated", waiting)
+		deletePod(control)
+		withID := unlocatedState.DeepCopy()
+		withID.Terminated.ContainerID = "containerd://stopped"
+		reportPod(control, corev1.PodFailed,
+			[]corev1.ContainerStatus{{Name: agentContainerName, Image: "example.com/image:v1", State: *withID}})
+		_, err = reconcileAgent("fence-uncreated-no-init-control")
+		Expect(err).NotTo(HaveOccurred())
+		expectReleased("fence-uncreated-no-init-control", string(control.UID))
+	})
+
+	It("releases a managed agent's Pod, whose adapter sidecar waits behind the init containers before it", func() {
+		createNode("fence-node-uncreated-managed", corev1.ConditionTrue)
+		name := "fence-uncreated-managed"
+		createSecret(credentialsSecretName(name))
+		agent := newAgent(name)
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
+		createAgent(agent)
+		_, err := reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx,
+				&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: agentname.PlacementSecret(name), Namespace: agentNamespace}}))).
+				To(Succeed())
+		})
+		createClaim(name)
+		pod := startPod(name, "fence-node-uncreated-managed", map[string]corev1.ContainerState{})
+		_, err = reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("the adapter is a restartable init container, and not the first")
+		initContainers := pod.Spec.InitContainers
+		adapterAt := slices.IndexFunc(initContainers, func(container corev1.Container) bool {
+			return container.Name == adapterContainerName
+		})
+		Expect(adapterAt).To(BeNumerically(">", 0))
+		Expect(initContainers[adapterAt].RestartPolicy).To(HaveValue(Equal(corev1.ContainerRestartPolicyAlways)))
+
+		deletePod(pod)
+		written := terminateUncreated(pod)
+		Expect(written.Status.InitContainerStatuses[adapterAt].State.Waiting).NotTo(BeNil())
+		Expect(written.Status.ContainerStatuses).To(ConsistOf(HaveField("State.Waiting", Not(BeNil()))))
+		_, err = reconcileAgentWithAdapter(name)
+		Expect(err).NotTo(HaveOccurred())
+		expectReleased(name, string(pod.UID))
+		evidence := readAgent(name).Status.WriterStopped
+		Expect(evidence.NeverCreated).To(ConsistOf(agentContainerName, adapterContainerName))
+		Expect(evidence.PodPhase).To(Equal(corev1.PodFailed))
 	})
 })

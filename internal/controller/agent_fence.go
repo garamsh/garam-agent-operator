@@ -323,9 +323,16 @@ func terminatedWriters(pod *corev1.Pod, node *corev1.Node) ([]agentv1alpha1.Term
 		case status.State.Waiting != nil:
 			return nil, nil, agentv1alpha1.ReasonContainerWaiting,
 				fmt.Sprintf("Container %q is waiting", name)
-		case status.State.Terminated == nil || status.State.Terminated.ContainerID == "":
+		case status.State.Terminated == nil:
 			return nil, nil, agentv1alpha1.ReasonNoContainerStatus,
 				fmt.Sprintf("Container %q reports no terminated instance", name)
+		case status.State.Terminated.ContainerID == "":
+			// The kubelet writes this for any writer it could not locate when it
+			// terminated an initialized Pod, which a Pod with no init container
+			// always is, whether or not the writer ever ran (ADR 0061, Errata).
+			return nil, nil, agentv1alpha1.ReasonNoContainerStatus,
+				fmt.Sprintf("Container %q reports a terminated instance with no container ID, which the kubelet "+
+					"writes for a container it could not locate, whether or not one ever ran", name)
 		}
 
 		state := status.State.Terminated
