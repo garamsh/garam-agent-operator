@@ -152,6 +152,7 @@ func (e *env) reads() []struct {
 			console.OperationProfileRead, orgTarget},
 		{"execution", request{http.MethodGet, "/v1/orgs/" + org + "/agents/" + agent + "/execution", nil},
 			console.OperationExecutionRead, agent},
+		{"operators", request{http.MethodGet, "/v1/orgs/" + org + "/operators", nil}, console.OperationOperatorRead, orgTarget},
 	}
 }
 
@@ -164,7 +165,8 @@ func TestReads_RefuseAnAuthorityForAnotherOperation(t *testing.T) {
 
 		// A create or configure handoff, and the other reads' operations, are refused.
 		for _, other := range []string{operationCreate, console.OperationConfigure, console.OperationTemplateRead,
-			console.OperationTemplatePublish, console.OperationProfileRead, console.OperationExecutionRead} {
+			console.OperationTemplatePublish, console.OperationProfileRead, console.OperationExecutionRead,
+			console.OperationOperatorRead} {
 			if other == read.operation {
 				continue
 			}

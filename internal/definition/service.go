@@ -1,6 +1,9 @@
 package definition
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Service is what the control service offers over its desired state.
 type Service interface {
@@ -38,6 +41,9 @@ type Service interface {
 	Stop(ctx context.Context, in StopInput) (s Stop, first bool, err error)
 	RecordDeactivation(ctx context.Context, key RequestKey) error
 	Start(ctx context.Context, in StopInput) (Stop, error)
+	RecordOperatorContact(ctx context.Context, orgGRN, operator string, at time.Time) error
+	ReportOperatorImages(ctx context.Context, orgGRN, operator string, images []OperatorImage, at time.Time) error
+	ListOperators(ctx context.Context, orgGRN string) ([]Operator, error)
 }
 
 type service struct {

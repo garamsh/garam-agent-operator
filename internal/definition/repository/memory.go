@@ -40,6 +40,9 @@ type Memory struct {
 	recoveries map[definition.GRN][]definition.Recovery
 	stops      map[definition.RequestKey]definition.Stop
 	stopEnds   map[definition.RequestKey]definition.RequestKey
+	// operators holds what each controller reported and when it last made contact, by its GRN,
+	// beside the organization holding it.
+	operators map[string]storedOperator
 }
 
 var _ definition.Repository = (*Memory)(nil)
@@ -71,6 +74,7 @@ func NewMemory() *Memory {
 		recoveries:   map[definition.GRN][]definition.Recovery{},
 		stops:        map[definition.RequestKey]definition.Stop{},
 		stopEnds:     map[definition.RequestKey]definition.RequestKey{},
+		operators:    map[string]storedOperator{},
 	}
 }
 

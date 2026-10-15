@@ -97,6 +97,12 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        # This Pod's own name, which the image report reads the image the
+        # manager runs off (ADR 0074).
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
         ports:
         - containerPort: 8081
           name: health

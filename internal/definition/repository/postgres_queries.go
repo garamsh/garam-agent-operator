@@ -274,4 +274,18 @@ UPDATE stops SET started_at = now(), start_request_id = $3, start_actor = $4, st
     start_target = $6, start_body_sha256 = $7, start_operation_ref = $8, start_assignment_operator = $9,
     start_assignment_epoch = $10
 WHERE organization = $1 AND request_id = $2 AND started_at IS NULL`
+
+	recordOperatorContact = `
+INSERT INTO operators (grn, org_grn, last_contact_at) VALUES ($1, $2, $3)
+ON CONFLICT (grn) DO UPDATE SET org_grn = EXCLUDED.org_grn,
+    last_contact_at = GREATEST(operators.last_contact_at, EXCLUDED.last_contact_at)`
+
+	reportOperatorImages = `
+INSERT INTO operators (grn, org_grn, images, reported_at) VALUES ($1, $2, $3, $4)
+ON CONFLICT (grn) DO UPDATE SET org_grn = EXCLUDED.org_grn, images = EXCLUDED.images,
+    reported_at = EXCLUDED.reported_at
+WHERE operators.reported_at IS NULL OR operators.reported_at <= EXCLUDED.reported_at`
+
+	listOperators = `
+SELECT grn, images, reported_at, last_contact_at FROM operators WHERE org_grn = $1 ORDER BY grn`
 )

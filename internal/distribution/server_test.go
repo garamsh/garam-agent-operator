@@ -114,6 +114,8 @@ type env struct {
 	withToken    *http.Client
 	withoutToken *http.Client
 	configures   int
+	// clock is what the routes read the time from.
+	clock *clock
 }
 
 func newEnv(t *testing.T) *env {
@@ -143,6 +145,7 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 		definitions: definitions,
 		store:       store,
 		profile:     profile,
+		clock:       &clock{now: time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)},
 	}
 	for _, a := range []string{agentA, agentB, agentC} {
 		_, _, err := definitions.CreateAgent(ctx, definition.CreateInput{
@@ -164,6 +167,7 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 		PollInterval: 10 * time.Millisecond,
 		MaxAgents:    maxAgents,
 		Logger:       slog.New(slog.DiscardHandler),
+		Now:          e.clock.Now,
 	}))
 	e.server.StartTLS()
 	t.Cleanup(e.server.Close)

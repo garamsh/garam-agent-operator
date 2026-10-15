@@ -15,15 +15,18 @@ const controllerHeader = "Controller-Grn"
 // ControllerIntrospection.token); a request presenting another is refused before garam is asked.
 var operatorToken = regexp.MustCompile(`^garam_ot_[0-9a-f]{64}$`)
 
-// controller is the caller of a controller route: the operator GRN it named, and the token it
-// presented, exactly as presented. The token is forwarded to garam and never logged.
+// controller is the caller of a controller route: the operator GRN it named, the token it
+// presented, exactly as presented, and the organization garam proved holds it. The token is
+// forwarded to garam and never logged.
 type controller struct {
-	grn   string
-	token string
+	grn    string
+	token  string
+	orgGRN string
 }
 
-// authenticate reads the controller from the request's bearer token and the GRN beside it, and has
-// garam prove them for this request. A proof is never kept past the request it was obtained for.
+// authenticate reads the controller from the request's bearer token and the GRN beside it, has
+// garam prove them for this request, and records the controller's contact, logging a failed
+// write rather than failing the request. A proof is never kept past the request it was obtained for.
 func (s *server) authenticate(ctx context.Context, r *http.Request) (controller, error) {
 	scheme, token, found := strings.Cut(r.Header.Get("Authorization"), " ")
 	grn := r.Header.Get(controllerHeader)
@@ -37,6 +40,12 @@ func (s *server) authenticate(ctx context.Context, r *http.Request) (controller,
 	}
 	if proof.Operator != c.grn {
 		return controller{}, ErrAnotherOperator
+	}
+	c.orgGRN = proof.Org
+	// The contact is bookkeeping for the console: a failed write never fails the request, and the
+	// next request writes again (ADR 0074).
+	if err := s.contacts.record(ctx, s.definitions, c); err != nil {
+		s.logger.Error("record controller contact failed", "trace_id", newTraceID(), "operator", c.grn, "error", err)
 	}
 	return c, nil
 }

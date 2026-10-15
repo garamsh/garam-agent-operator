@@ -54,6 +54,7 @@ type server struct {
 //	GET  /v1/orgs/{org}/profiles                      execution-profile:read  every published profile version
 //	GET  /v1/orgs/{org}/profiles/{name}/versions/{v}  execution-profile:read  one profile version
 //	GET  /v1/orgs/{org}/agents/{agent}/execution      agent:execution-read    an agent's execution
+//	GET  /v1/orgs/{org}/operators                     operator:read           the images and last contact of each controller
 //	POST /v1/orgs/{org}/agents/{agent}/recovery          agent:recover         open a credential recovery
 //	GET  /v1/orgs/{org}/agents/{agent}/recovery          agent:execution-read  the recovery and its prepared request
 //	POST /v1/orgs/{org}/agents/{agent}/recovery/finalize agent:recover         send garam the prepared request
@@ -86,6 +87,7 @@ func NewHandler(c Config) http.Handler {
 	mux.HandleFunc("GET /v1/orgs/{org}/profiles", s.listProfiles)
 	mux.HandleFunc("GET /v1/orgs/{org}/profiles/{name}/versions/{version}", s.getProfile)
 	mux.HandleFunc("GET /v1/orgs/{org}/agents/{agent}/execution", s.execution)
+	mux.HandleFunc("GET /v1/orgs/{org}/operators", s.listOperators)
 	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/recovery", s.openRecovery)
 	mux.HandleFunc("GET /v1/orgs/{org}/agents/{agent}/recovery", s.getRecovery)
 	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/recovery/finalize", s.finalizeRecovery)

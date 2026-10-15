@@ -160,6 +160,7 @@ func run(ctx context.Context, o options, databaseURL string) error {
 		PollInterval: feedPollInterval,
 		MaxAgents:    feedMaxAgents,
 		Logger:       slog.Default(),
+		Now:          time.Now,
 	}))
 	api.Handle("/v1/agents/", execution.NewHandler(execution.Config{
 		Definitions: definitions,

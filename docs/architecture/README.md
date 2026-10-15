@@ -38,7 +38,7 @@ Before a delta between this file and the template is called stale, read it again
 |---|---|
 | `agent.md` | The `agent.garam.sh` API group, the `Agent` kind, and its controller |
 | `configuration.md` | How this operator's deployment is configured, and which repository owns each value |
-| `control.md` | The control service: definitions and revisions, templates, profiles, creation and configure requests, recoveries and stops, their store, the console API that changes them, and the controller API that releases them |
+| `control.md` | The control service: definitions and revisions, templates, profiles, creation and configure requests, recoveries and stops, what each controller reports of itself, their store, the console API that changes and reads them, and the controller API that releases them |
 | `delivery.md` | The images this project publishes, the reference a deployment uses, and where its output lands in a cluster |
 | `structure.md` | What a unit of this code is, what may reference what, and when a new unit is earned |
 | `integration.md` | How a change reaches `dev` and then `main`, and which checks run at each step |
@@ -120,3 +120,4 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0071-render-garams-issuer-into-a-managed-agents-config-and-let-the-agent-fetch-its-keys.md` | Render garam's issuer into a managed agent's config, and let the agent fetch its keys | accepted |
 | `adr/0072-authenticate-the-manager-and-the-control-service-to-garam-with-their-own-private-keys.md` | Authenticate the manager and the control service to garam with their own private keys, and drop the operator certificate | accepted; decision 5, and the refusal of activation in decision 6, superseded by ADR-0073 |
 | `adr/0073-give-every-agent-garam-tokens-its-assignee-mints-in-place-of-a-certificate.md` | Give every agent garam tokens its assignee mints, in place of a certificate | accepted |
+| `adr/0074-report-each-operators-images-and-last-contact-to-a-console-read-of-the-control-service.md` | Report each operator's images and last contact to a console read of the control service | accepted |

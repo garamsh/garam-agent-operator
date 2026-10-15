@@ -4,7 +4,7 @@ How this operator's deployment is configured, and which repository owns each val
 
 ## Current decisions
 
-- The operator is configured by flags on the manager's command line and by nothing else. `cmd/main.go` parses them; no file, ConfigMap, or environment variable carries a value a deployer chooses. `POD_NAMESPACE` is the single environment variable and is not such a value — the downward API supplies the Pod's own namespace, because the kustomize transformer that sets it does not reach into an argument.
+- The operator is configured by flags on the manager's command line and by nothing else. `cmd/main.go` parses them; no file, ConfigMap, or environment variable carries a value a deployer chooses. `POD_NAMESPACE` and `POD_NAME` are the only environment variables and are not such values — the downward API supplies the Pod's own namespace, because the kustomize transformer that sets it does not reach into an argument, and its own name, which the image report reads the manager's own image off (ADR 0074).
 - Every flag has exactly one owner, and there are two owners: this repository's base under `config/`, and the overlay that deploys that base. A flag neither sets runs at the default `cmd/main.go` declares, and leaving it unset is the base's decision.
 - **The base owns a flag whose value is the same wherever this operator runs.** `config/manager/manager.yaml` sets it, and a deployment that wants another replaces the argument.
 
