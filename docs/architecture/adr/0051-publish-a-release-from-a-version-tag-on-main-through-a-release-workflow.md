@@ -105,3 +105,11 @@ The 2026-10-08 entry above was wrong. `garamsh/infra#303` retired the `garamsh-`
 The role is the one Decision names, `arn:aws:iam::486152169996:role/garam-agent-operator-github-actions`. It was created at 2026-10-09T17:09:49Z (`garamsh/infra#292`, delivered by `#325`), and the PM read it back on 2026-10-10 (#320). Its trust admits only the subject `repo:garamsh@307152666/garam-agent-operator@1335647420:ref:refs/tags/v*`. `release.yml` and `delivery.md` name it again.
 
 The decision and the subject stand. The first `v*` tag is what proves the subject.
+
+### 2026-10-16 — the push role is `github-actions-garam-agent-operator-push`
+
+Decision names the push role `arn:aws:iam::486152169996:role/garam-agent-operator-github-actions`, and its third step assumes `garam-agent-operator-github-actions`. On 2026-10-16 the owner set an account-wide naming rule (`garamsh/infra` `442e19f`): a forge identity is named `github-actions-<repository>`, and this repository's two roles each carry a purpose segment. Infra created the push role under that rule beside the old one, as `arn:aws:iam::486152169996:role/github-actions-garam-agent-operator-push`, and removes the old one once this repository confirms (`garamsh/infra#450`, #372).
+
+The PM read both back from IAM on 2026-10-16 (#372): the trust policy and the inline policy `ecr-push` are byte-identical between the two, and neither has an attached policy. The trust still admits only the subject `repo:garamsh@307152666/garam-agent-operator@1335647420:ref:refs/tags/v*`. `release.yml` and `delivery.md` name the new role.
+
+The decision and the subject stand. The first `v*` tag is still what proves the subject.
