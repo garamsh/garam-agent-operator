@@ -5,7 +5,7 @@
 //
 // It stops mistakes, not a determined pusher: GITHUB_WORKFLOW_REF is set by the Actions runner, and a
 // local shell that exports it by hand passes. What stops the rest is IAM: which principals may write
-// to garam/ is garamsh/infra's.
+// to garam/ is garamsh/aurora's.
 //
 // The reference is parsed with github.com/distribution/reference, the parser the docker CLI applies,
 // rather than a second reading of its syntax.
