@@ -16,8 +16,14 @@ type Transport struct {
 	ClientIDHeader string
 }
 
-// RoundTrip sends request under the token held.
+// RoundTrip sends request under the token held, and tells the Source what it was answered.
 func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := t.roundTrip(request)
+	t.Source.observe(response, err)
+	return response, err
+}
+
+func (t *Transport) roundTrip(request *http.Request) (*http.Response, error) {
 	token, clientID, err := t.Source.credential(request.Context())
 	if err != nil {
 		closeBody(request)

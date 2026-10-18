@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"flag"
@@ -19,6 +20,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -319,9 +321,11 @@ func main() {
 		}
 	}
 	// tokenSource exchanges this operator's assertions at garam for a token
-	// minted for audience, garam's own where it is empty (ADR 0072).
+	// minted for audience, garam's own where it is empty (ADR 0072). The leader
+	// keeps it exchanging, and the manager is not ready while every exchange and
+	// call under it has failed for longer than the bound (ADR 0075).
 	tokenSource := func(audience, label string) *machinetoken.Source {
-		return machinetoken.NewSource(machinetoken.Config{
+		source := machinetoken.NewSource(machinetoken.Config{
 			Endpoint: "https://" + garamAddress + garamTokenPath,
 			Files:    garamKeys,
 			Audience: audience,
@@ -329,6 +333,20 @@ func main() {
 				Transport: &http.Transport{TLSClientConfig: garamTLS}},
 			Failed: garam.ExchangeFailed(ctrl.Log.WithName("garam"), label),
 		})
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			source.Keep(ctx)
+			return nil
+		})); err != nil {
+			setupLog.Error(err, "Failed to keep a garam token", "audience", label)
+			os.Exit(1)
+		}
+		if err := mgr.AddReadyzCheck(label+"-authentication", func(*http.Request) error {
+			return source.Check()
+		}); err != nil {
+			setupLog.Error(err, "Failed to set up the authentication check", "audience", label)
+			os.Exit(1)
+		}
+		return source
 	}
 
 	if garamAddress != "" {

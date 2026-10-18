@@ -62,6 +62,9 @@ type Source struct {
 	failures int
 	until    time.Time
 	failed   *Error
+
+	// streak is what Check reads. It holds its own lock, so Check never waits on an exchange.
+	streak streak
 }
 
 // NewSource returns a Source exchanging under cfg.
@@ -131,6 +134,7 @@ func (s *Source) exchange(ctx context.Context, now time.Time) error {
 		}
 		s.until = now.Add(wait)
 		s.failed = &Error{Reason: reason, Until: s.until, Err: err}
+		s.streak.failed(now, s.failed)
 		if s.cfg.Failed != nil {
 			s.cfg.Failed(s.failed)
 		}
@@ -138,6 +142,7 @@ func (s *Source) exchange(ctx context.Context, now time.Time) error {
 	}
 	s.token, s.clientID, s.expiry, s.refresh = token, clientID, now.Add(lifetime), now.Add(lifetime*2/3)
 	s.failures, s.until, s.failed = 0, time.Time{}, nil
+	s.streak.succeeded()
 	return nil
 }
 
