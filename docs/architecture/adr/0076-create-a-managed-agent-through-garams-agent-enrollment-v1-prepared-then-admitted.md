@@ -21,6 +21,14 @@ garam's PM confirmed two points against garam `28754663e27e20dd43c9451d53829ba11
 - **The approval is keyed by (organization, `requestId`).** Preparing again answers the stored approval, so nothing has to be kept between the stages. Both stages re-read the `agent:create` reference from current state, so one that expired or was revoked in between is refused on the retry even though the approval exists.
 - **Admission writes the execution's lineage as the `lineage` it answers**, and `mintAgentToken` mints in it.
 
+Both stages run under this service's own token, which it exchanges under the key garam issued it ([ADR 0072](0072-authenticate-the-manager-and-the-control-service-to-garam-with-their-own-private-keys.md)). At the same garam revision, that token can stop being accepted while it is unexpired:
+
+- **Five per key.** Every exchange keeps the key's five newest live tokens and deletes the rest. See `internal/operator/token.go:39-43` (`LiveTokensPerCredential = 5`), `internal/operator/postgres_key.go:234-235`, and `internal/operator/queries.sql:359-370`, which trims by `key_id` whatever the token's audience.
+- **Refused from the next request.** A token that is trimmed, or whose key is withdrawn or re-issued with `rotation: immediate`, is refused from the next request: 401 `operator token is not valid` (`api/machine.yaml:19-23`, `internal/operator/token.go:71`, `api/openapi.yaml:1585-1592`).
+- **Ten exchanges a minute.** An exchange is bounded at 10 verified ones per `client_id` per minute, and garam answers 429 past that (`api/machine.yaml:378-380`).
+
+The control e2e suite met this on this change's first run. Every control binary it starts exchanges under this service's key. The six starts that followed the suite's last call as this service trimmed the token the suite held under that key. Its re-exchange was then throttled, as the 429s in its log record (#385).
+
 [ADR 0068](0068-keep-no-backward-compatibility-path-during-development.md) keeps no backward-compatibility path during development.
 
 ## Decision
@@ -41,11 +49,19 @@ garam's PM confirmed two points against garam `28754663e27e20dd43c9451d53829ba11
    A conflict on a creation already `Registered` is `ErrAssignmentMoved`, as before: `superseded` is garam's word for the same fact.
 6. **The admission's `lineage` is not stored.** The manager mints the agent's tokens with `mintAgentToken`, which mints in the lineage the agent's execution holds, and admission writes the execution's lineage as the one it answers. The two are one value, so the token-mint path is unchanged.
 
+7. **When garam refuses this service's own token, the creation stays `Pending`.** Every process that presents this service's key, whether a replica, a restart, or a rollout's overlap, spends that key's one window of five live tokens. A token lives an hour, so more than five exchanges within an hour end the oldest token a process still holds, and a key withdrawn or re-issued `immediate` ends them all. The service then does the following:
+   - `internal/machinetoken`'s `Transport` drops the refused token, exchanges one fresh one, and sends the call once more. Both stages' bodies can be replayed, so a single trimmed token costs nothing.
+   - If that exchange fails, throttled or refused, garam's 401 reaches the registrar. The registrar treats it as neither a refusal nor undecided. The creation stays `Pending`, and the console answers 500 and logs the error.
+   - The next repeat prepares again and resumes the creation, because nothing about the reference was decided.
+   - Failing the creation instead would push the member to a new request id for an intent garam may still admit.
+   - A loss that persists holds `/readyz` failed after an hour ([ADR 0075](0075-hold-the-manager-and-the-control-service-not-ready-while-their-garam-authentication-has-failed-for-an-hour.md)).
+   - A deployment that keeps more than five of this service's processes exchanging under one key within an hour meets this path on every refresh. One key per process, or fewer processes, avoids it.
+
 ## Consequences
 
 - ADR 0073 decision 1's contract, `managed-enrollment.v2`, is superseded by decision 1 here. The rest of ADR 0073 decision 1 stands.
 - Each creation costs two calls to garam where it cost one.
-- The control e2e suite creates the agent it seeds for configure through the same two stages, under the hosted operator's token, and no longer presents the hosted operator's certificate.
+- The control e2e suite creates the agent it seeds for configure through the same two stages, and no longer presents the hosted operator's certificate. Its calls as this service go under a second key issued to the hosted operator with `rotation: planned` (`api/openapi.yaml:1585-1592`), beside the key its binaries present. As a result, no binary it starts trims the suite's token.
 
 ## Rejected alternatives
 

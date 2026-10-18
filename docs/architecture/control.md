@@ -48,6 +48,10 @@ The control service: agents' execution definitions and their revisions, template
   - **Retry.** No approval identifier is stored. Every registration, a repeat or a `Pending` creation's resumption, prepares again and admits under the approval that answer names, so a crash between the two stages is recovered by the next repeat. The machine client's 500/503 retry applies to both, as to the proofs.
   - **A reference refused on a retry.** garam rechecks the `agent:create` reference from current state at both stages, so one that expired or was revoked since the first attempt is refused on the retry, even though the approval exists. It is a refusal like any other: the creation becomes `Failed`, and recovering is a new creation under a new reference and request id.
   - **Refusals.** At either stage, 403 and 404 wrap `ErrRegistrationRefused`, 409 wraps `ErrRegistrationConflict`, an attempt left undecided wraps `ErrRegistrationUndecided`, and an answer under another contract or none wraps `ErrGaramContractUnsupported`. A 409 is `binding_conflict`, `approval_spent` or `superseded`. Where garam's error body names its `reason`, the error, and so the stored `Failed` reason, names it.
+  - **Its own token refused.** garam keeps the five newest live tokens of a key, and every process presenting this service's key spends that one window. A token past it, or under a withdrawn key, is answered 401 (ADR 0076).
+    - The machine client's token transport exchanges once and resends.
+    - A 401 that still reaches the registrar is neither a refusal nor undecided. The creation stays `Pending`, the console answers 500 and logs it, and the next repeat resumes it.
+    - More than five processes exchanging under one key within an hour meet this on every refresh, so a deployment gives them separate keys or fewer processes.
   - **Lineage.** The admission's `lineage` is not stored. garam writes it as the lineage the agent's execution holds, and `mintAgentToken` mints in the lineage the execution holds, so the two are one value.
 - **A configure request is recorded once, keyed by organization and request id, with its first outcome.**
   - **Stored.** The fields its authority bound are stored beside it as data: actor, operation, target, body digest, operation reference and the `{operator, epoch}` assignment.
@@ -257,7 +261,7 @@ The console's reads and template publication (#220; garam's actions at `garam@33
       - the organization (`POST /orgs`);
       - this service's hosted operator and one controller, each registered (`POST /orgs/{org}/operators`), issued a key (`POST /orgs/{org}/operators/{operator}/keys`), and enrolled over a key generated in the suite (`POST /enrollment`);
       - the hosted operator's delegation over the controller (`PUT /orgs/{org}/operators/{operator}/delegation`);
-      - the configure tests' agent, through an `agent:create` authority and managed create's two stages, under the hosted operator's token; every other agent is created through the binary's create route;
+      - the configure tests' agent, through an `agent:create` authority and managed create's two stages, under a second key issued to the hosted operator with `rotation: planned`, so the binaries the suite starts under the first never trim the suite's token (ADR 0076); every other agent is created through the binary's create route;
       - each agent's tokens, which the controller mints under its own key (`POST /agents/{agent}/tokens`), as the manager does: the token for this service the suite presents as the adapter;
       - each configure's `agent:configure` authority (`POST /orgs/{org}/operation-authorities`).
     - **Binaries.** A second control binary runs against that garam under the key the hosted operator was issued, beside the one pointed at an unreachable garam. The suite reaches its controller routes as the manager does, with a token the controller exchanged under its own key for the hosted operator.
