@@ -35,8 +35,9 @@ import (
 // machine listener beside a certificate.
 const garamContract = "operation-authority.v1"
 
-// enrollmentContract is the contract version of garam's managed create.
-const enrollmentContract = "managed-enrollment.v1"
+// enrollmentContract is garam's agent-enrollment.v1, which its agent admission speaks beside a token
+// (garam@37567a4).
+const enrollmentContract = "agent-enrollment.v1"
 
 // fenceContract is garam's execution-fence.v2, which its recovery, deactivation and execution
 // introspection speak beside a token (garam@afde8b8).
@@ -64,12 +65,12 @@ type garamStack struct {
 	// controllerMachine and hostedMachine call garam's machine listener as the controller and as
 	// this service, each under a token exchanged under its own key: the controller mints agents'
 	// tokens, as the manager does, and this service's calls are made where the suite stands in for
-	// the binary.
+	// the binary. hostedMachine's key is a second one issued to this service, beside the binaries':
+	// garam keeps a key's five newest tokens (garam@37567a4 internal/operator/token.go
+	// LiveTokensPerCredential), and every binary the suite starts exchanges under the binaries' key.
 	controllerMachine, hostedMachine *http.Client
-	// hostedTLS and controller are the certificates garam enrolled the two operators with, which
-	// the suite presents itself to make on garam what the binary takes as given: agents created
-	// for the controller, and its legacy agents.
-	hostedTLS  *http.Client
+	// controller is the certificate garam enrolled the controller with, which the suite presents
+	// itself to make on garam what the binary takes as given: its legacy agents.
 	controller tls.Certificate
 	// processes are garam's three running for the suite.
 	processes []*process
@@ -276,14 +277,15 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 		return step("register and enroll the controller", err, s.processes...)
 	}
 	s.hosted, s.controllerGRN, s.controller = hosted.grn, controller.grn, controller.pair
-	s.hostedTLS = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		RootCAs: keys.roots, Certificates: []tls.Certificate{hosted.pair},
-	}}}
 	s.hostedFiles = identity{serverRoot: keys.serverRoot}
-	if s.hostedFiles.operatorKeys, err = s.issueKey(dir, "control"); err != nil {
+	if s.hostedFiles.operatorKeys, err = s.issueKey(dir, "control", "control", "immediate"); err != nil {
 		return step("issue the hosted operator's key", err, s.processes...)
 	}
-	controllerKeys, err := s.issueKey(dir, "k8s")
+	suiteKeys, err := s.issueKey(dir, "control", "suite-control", "planned")
+	if err != nil {
+		return step("issue the hosted operator's key the suite presents", err, s.processes...)
+	}
+	controllerKeys, err := s.issueKey(dir, "k8s", "k8s", "immediate")
 	if err != nil {
 		return step("issue the controller's key", err, s.processes...)
 	}
@@ -291,7 +293,7 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 		Endpoint: s.machineURL + "/oauth/token", Files: controllerKeys, Audience: s.hosted, HTTP: s.machine,
 	})
 	s.controllerMachine = s.tokenClient(controllerKeys)
-	s.hostedMachine = s.tokenClient(s.hostedFiles.operatorKeys)
+	s.hostedMachine = s.tokenClient(suiteKeys)
 
 	delegation := struct {
 		RequestID   string   `json:"requestId"`
@@ -341,9 +343,10 @@ type enrolled struct {
 	pair tls.Certificate
 }
 
-// issueKey has garam issue the operator under identifier a key, as a person does through the
-// console (garam@9ba35c3 api/openapi.yaml issueOperatorKey), and places the answer in dir.
-func (s *garamStack) issueKey(dir, identifier string) (machinetoken.Files, error) {
+// issueKey has garam issue the operator under identifier a key under rotation, as a person does
+// through the console (garam@37567a4 api/openapi.yaml issueOperatorKey), and places the answer in
+// dir under prefix. A planned key goes beside the live one, which goes on verifying.
+func (s *garamStack) issueKey(dir, identifier, prefix, rotation string) (machinetoken.Files, error) {
 	var issued struct {
 		PrivateKeyPEM string `json:"privateKeyPem"`
 		ClientID      string `json:"clientId"`
@@ -351,10 +354,10 @@ func (s *garamStack) issueKey(dir, identifier string) (machinetoken.Files, error
 	}
 	if err := s.create(http.MethodPost, "/orgs/"+s.orgID+"/operators/"+identifier+"/keys", "", struct {
 		Rotation string `json:"rotation"`
-	}{Rotation: "immediate"}, &issued); err != nil {
+	}{Rotation: rotation}, &issued); err != nil {
 		return machinetoken.Files{}, err
 	}
-	return writeKeyIssuance(dir, identifier, issued.ClientID, issued.TokenURL, issued.PrivateKeyPEM)
+	return writeKeyIssuance(dir, prefix, issued.ClientID, issued.TokenURL, issued.PrivateKeyPEM)
 }
 
 // enroll registers an operator under identifier and enrolls it with the token the registration
@@ -434,25 +437,35 @@ func (s *garamStack) mintTargeted(operation, target, requestID, bodySHA256, requ
 	return minted.Authority, minted.OperationRef, err
 }
 
-// createAgent has garam create an agent assigned to the controller, as this service will on the
-// console's create: an agent:create authority, then managed create presenting this service's
-// certificate. It answers the agent's GRN and its assignment's epoch.
+// createAgent has garam admit an agent assigned to the controller, as this service does on the
+// console's create: an agent:create authority, then prepareAgentEnrollment and admitAgentEnrollment
+// under this service's token. It answers the agent's GRN and its assignment's epoch.
 func (s *garamStack) createAgent(requestID string) (agent, epoch string, err error) {
 	digest := sha256.Sum256([]byte("{}"))
 	_, ref, err := s.mintAuthority("agent:create", s.controllerGRN, requestID, hex.EncodeToString(digest[:]))
 	if err != nil {
 		return "", "", err
 	}
-	var created struct {
+	binding := struct {
+		RequestID    string `json:"requestId"`
+		Placement    string `json:"placement"`
+		Assignee     string `json:"assignee"`
+		OperationRef string `json:"operationRef"`
+	}{requestID, "managed", s.controllerGRN, ref}
+	var approval struct {
+		ApprovalID string `json:"approvalId"`
+	}
+	if err := s.machineCall(s.hostedMachine, "/agent-enrollment-approvals", enrollmentContract, binding,
+		http.StatusCreated, &approval); err != nil {
+		return "", "", err
+	}
+	var admitted struct {
 		GRN   string `json:"grn"`
 		Epoch string `json:"epoch"`
 	}
-	err = s.machineCall(s.hostedTLS, "/operators/"+url.PathEscape(s.controllerGRN)+"/managed-agents",
-		enrollmentContract, struct {
-			RequestID    string `json:"requestId"`
-			OperationRef string `json:"operationRef"`
-		}{requestID, ref}, http.StatusCreated, &created)
-	return created.GRN, created.Epoch, err
+	err = s.machineCall(s.hostedMachine, "/agent-enrollment-approvals/"+url.PathEscape(approval.ApprovalID)+"/admission",
+		enrollmentContract, binding, http.StatusCreated, &admitted)
+	return admitted.GRN, admitted.Epoch, err
 }
 
 // create calls the browser API as the fixture's signed-in user, refusing any answer but 201.
