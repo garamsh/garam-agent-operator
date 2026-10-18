@@ -1,6 +1,6 @@
 # ADR 0073: Give every agent garam tokens its assignee mints, in place of a certificate
 
-> Status: accepted
+> Status: accepted; the creation contract in decision 1, `managed-enrollment.v2`, superseded by ADR-0076
 > Date: 2026-10-14
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
