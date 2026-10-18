@@ -46,6 +46,9 @@ type Config struct {
 	Random io.Reader
 	// Failed, where set, is told of each failed exchange.
 	Failed func(*Error)
+	// IdentityURL, where set, is garam's getIdentity on the listener HTTP verifies, which Keep
+	// calls under the token (ADR 0075). It is set for a token garam itself accepts and no other.
+	IdentityURL string
 }
 
 // Source holds one token at a time and exchanges a new assertion for the next: before the one
@@ -134,7 +137,7 @@ func (s *Source) exchange(ctx context.Context, now time.Time) error {
 		}
 		s.until = now.Add(wait)
 		s.failed = &Error{Reason: reason, Until: s.until, Err: err}
-		s.streak.failed(now, s.failed)
+		s.streak.fail(now, causeExchange, s.failed)
 		if s.cfg.Failed != nil {
 			s.cfg.Failed(s.failed)
 		}
@@ -142,7 +145,7 @@ func (s *Source) exchange(ctx context.Context, now time.Time) error {
 	}
 	s.token, s.clientID, s.expiry, s.refresh = token, clientID, now.Add(lifetime), now.Add(lifetime*2/3)
 	s.failures, s.until, s.failed = 0, time.Time{}, nil
-	s.streak.succeeded()
+	s.streak.end(causeExchange)
 	return nil
 }
 

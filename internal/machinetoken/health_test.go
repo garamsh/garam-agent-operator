@@ -185,6 +185,82 @@ func TestTransport_CheckRaisesOnCallsRefused401ForLongerThanTheBound(t *testing.
 	assert.NoError(t, source.Check())
 }
 
+func TestTransport_CheckRaisesWhenEveryExchangeSucceedsAndEveryCallIsRefused401(t *testing.T) {
+	files, public := identity(t, t.TempDir())
+	s := newStub(t, public)
+	c := &clock{now: time.Unix(1_800_000_000, 0)}
+	source := newSource(s, files, c, "")
+	transport := &machinetoken.Transport{Source: source, Base: s.server.Client().Transport}
+
+	for end := c.Now().Add(machinetoken.SustainedFailure); !c.Now().After(end); c.Add(time.Minute) {
+		require.Equal(t, http.StatusUnauthorized, call(t, transport, http.MethodGet, s.server.URL+"/protected", nil))
+	}
+	sent := len(s.sent())
+	require.Greater(t, sent, 60, "setup: every refused call was re-exchanged, and every exchange answered a token")
+
+	err := source.Check()
+	require.Error(t, err, "a run of refused calls is not ended by the exchanges answering tokens between them")
+	assert.Contains(t, err.Error(), "401")
+	assert.NotContains(t, err.Error(), "garam_ot_", "it names no token")
+
+	// Control: the token held accepted ends the run.
+	s.mu.Lock()
+	s.accepted[fmt.Sprintf("garam_ot_%064d", sent)] = true
+	s.mu.Unlock()
+	require.Equal(t, http.StatusOK, call(t, transport, http.MethodGet, s.server.URL+"/protected", nil))
+	assert.NoError(t, source.Check())
+}
+
+// keep runs source.Keep until it has called /identity calls more times, and stops it.
+func keep(t *testing.T, s *stub, source *machinetoken.Source, calls int) {
+	t.Helper()
+	presented := func() int {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return len(s.presented)
+	}
+	want := presented() + calls
+	ctx, cancel := context.WithCancel(context.Background())
+	kept := make(chan struct{})
+	go func() {
+		source.Keep(ctx)
+		close(kept)
+	}()
+	require.Eventually(t, func() bool { return presented() >= want }, 5*time.Second, 10*time.Millisecond,
+		"Keep calls getIdentity with no other call made")
+	cancel()
+	<-kept
+}
+
+func TestSource_KeepCallsIdentitySoAnIdleSourceMeetsACallsOutcome(t *testing.T) {
+	files, public := identity(t, t.TempDir())
+	s := newStub(t, public)
+	c := &clock{now: time.Unix(1_800_000_000, 0)}
+	source := machinetoken.NewSource(machinetoken.Config{
+		Endpoint: s.server.URL + "/oauth/token", Files: files, HTTP: s.server.Client(), Now: c.Now,
+		IdentityURL: s.server.URL + "/identity",
+	})
+
+	keep(t, s, source, 2)
+	s.mu.Lock()
+	presented := append([]string(nil), s.presented...)
+	s.mu.Unlock()
+	assert.Equal(t, []string{fmt.Sprintf("garam_ot_%064d", 1), fmt.Sprintf("garam_ot_%064d", 2)}, presented,
+		"getIdentity is called under the source's token, and its 401 re-exchanged once")
+	c.Add(machinetoken.SustainedFailure + time.Second)
+	require.Error(t, source.Check(), "the refusal Keep's own call met opens a run")
+
+	// Control: once garam accepts the source's tokens, Keep's next call ends the run with no other
+	// call. The token held has expired by now, so the one Keep presents is exchanged afresh.
+	s.mu.Lock()
+	for n := range 10 {
+		s.accepted[fmt.Sprintf("garam_ot_%064d", n+1)] = true
+	}
+	s.mu.Unlock()
+	keep(t, s, source, 1)
+	assert.NoError(t, source.Check())
+}
+
 func TestSource_KeepExchangesWhileNothingCallsThroughTheSource(t *testing.T) {
 	files, public := identity(t, t.TempDir())
 	s := newStub(t, public)

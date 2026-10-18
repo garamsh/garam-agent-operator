@@ -55,6 +55,10 @@ const podNameVariable = "POD_NAME"
 // garam-address names.
 const garamTokenPath = "/oauth/token"
 
+// garamIdentityPath is garam's getIdentity route, which the source of a token
+// garam accepts calls to observe that token's acceptance (ADR 0075).
+const garamIdentityPath = "/identity"
+
 // garamExchangeTimeout bounds one exchange of a client assertion for a token.
 const garamExchangeTimeout = 30 * time.Second
 
@@ -322,13 +326,19 @@ func main() {
 	}
 	// tokenSource exchanges this operator's assertions at garam for a token
 	// minted for audience, garam's own where it is empty (ADR 0072). The leader
-	// keeps it exchanging, and the manager is not ready while every exchange and
-	// call under it has failed for longer than the bound (ADR 0075).
+	// keeps it exchanging, calling getIdentity under garam's own token, and the
+	// manager is not ready while every exchange and call under it has failed for
+	// longer than the bound (ADR 0075).
 	tokenSource := func(audience, label string) *machinetoken.Source {
+		identityURL := ""
+		if audience == "" {
+			identityURL = "https://" + garamAddress + garamIdentityPath
+		}
 		source := machinetoken.NewSource(machinetoken.Config{
-			Endpoint: "https://" + garamAddress + garamTokenPath,
-			Files:    garamKeys,
-			Audience: audience,
+			Endpoint:    "https://" + garamAddress + garamTokenPath,
+			IdentityURL: identityURL,
+			Files:       garamKeys,
+			Audience:    audience,
 			HTTP: &http.Client{Timeout: garamExchangeTimeout,
 				Transport: &http.Transport{TLSClientConfig: garamTLS}},
 			Failed: garam.ExchangeFailed(ctrl.Log.WithName("garam"), label),

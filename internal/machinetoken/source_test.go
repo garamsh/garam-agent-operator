@@ -46,8 +46,9 @@ type exchange struct {
 	verifiedWith  *rsa.PublicKey
 }
 
-// stub is garam's machine listener: /oauth/token answers what answer says, /protected accepts
-// only the tokens in accepted, under any method, and /unavailable answers 503 to every token.
+// stub is garam's machine listener: /oauth/token answers what answer says, /protected and
+// /identity accept only the tokens in accepted, /protected under any method, and /unavailable
+// answers 503 to every token.
 type stub struct {
 	t      *testing.T
 	server *httptest.Server
@@ -69,6 +70,7 @@ func newStub(t *testing.T, keys ...*rsa.PublicKey) *stub {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /oauth/token", s.token)
 	mux.HandleFunc("/protected", s.protected)
+	mux.HandleFunc("GET /identity", s.protected)
 	mux.HandleFunc("GET /unavailable", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	})

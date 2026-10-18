@@ -60,6 +60,10 @@ const apiWriteTimeout = 45 * time.Second
 // garamTokenPath is garam's exchangeClientAssertion route under the machine listener's base URL.
 const garamTokenPath = "/oauth/token"
 
+// garamIdentityPath is garam's getIdentity route under the same base URL, which the token source
+// calls to observe its token's acceptance (ADR 0075).
+const garamIdentityPath = "/identity"
+
 type options struct {
 	probeAddr      string
 	apiAddr        string
@@ -256,9 +260,10 @@ func garamClient(o options) (*http.Client, *machinetoken.Source, string, error) 
 	}
 	base := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}}
 	source := machinetoken.NewSource(machinetoken.Config{
-		Endpoint: strings.TrimSuffix(o.garamURL, "/") + garamTokenPath,
-		Files:    o.operatorKeys,
-		HTTP:     &http.Client{Timeout: garamTimeout, Transport: base},
+		Endpoint:    strings.TrimSuffix(o.garamURL, "/") + garamTokenPath,
+		IdentityURL: strings.TrimSuffix(o.garamURL, "/") + garamIdentityPath,
+		Files:       o.operatorKeys,
+		HTTP:        &http.Client{Timeout: garamTimeout, Transport: base},
 		Failed: func(failed *machinetoken.Error) {
 			slog.Error("exchange a client assertion for a garam token", "reason", failed.Reason,
 				"until", failed.Until, "error", failed.Err)
