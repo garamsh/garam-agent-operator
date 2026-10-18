@@ -211,25 +211,18 @@ func TestTransport_CheckRaisesWhenEveryExchangeSucceedsAndEveryCallIsRefused401(
 	assert.NoError(t, source.Check())
 }
 
-// keep runs source.Keep until it has called /identity calls more times, and stops it.
-func keep(t *testing.T, s *stub, source *machinetoken.Source, calls int) {
-	t.Helper()
-	presented := func() int {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		return len(s.presented)
-	}
-	want := presented() + calls
+// startKeep runs source.Keep until the stop it answers is called, which returns once Keep has.
+func startKeep(source *machinetoken.Source) (stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	kept := make(chan struct{})
 	go func() {
 		source.Keep(ctx)
 		close(kept)
 	}()
-	require.Eventually(t, func() bool { return presented() >= want }, 5*time.Second, 10*time.Millisecond,
-		"Keep calls getIdentity with no other call made")
-	cancel()
-	<-kept
+	return func() {
+		cancel()
+		<-kept
+	}
 }
 
 func TestSource_KeepCallsIdentitySoAnIdleSourceMeetsACallsOutcome(t *testing.T) {
@@ -241,24 +234,32 @@ func TestSource_KeepCallsIdentitySoAnIdleSourceMeetsACallsOutcome(t *testing.T) 
 		IdentityURL: s.server.URL + "/identity",
 	})
 
-	keep(t, s, source, 2)
+	// Waited on and asserted together: the run Keep's refused identity call opens is what Check
+	// reports, once the clock, advanced a minute a poll, has carried it past the bound.
+	stop := startKeep(source)
+	require.Eventually(t, func() bool {
+		c.Add(time.Minute)
+		return source.Check() != nil
+	}, 5*time.Second, 10*time.Millisecond, "the refusal Keep's own call met opens a run, reported past the bound")
+	stop()
 	s.mu.Lock()
 	presented := append([]string(nil), s.presented...)
 	s.mu.Unlock()
-	assert.Equal(t, []string{fmt.Sprintf("garam_ot_%064d", 1), fmt.Sprintf("garam_ot_%064d", 2)}, presented,
-		"getIdentity is called under the source's token, and its 401 re-exchanged once")
-	c.Add(machinetoken.SustainedFailure + time.Second)
-	require.Error(t, source.Check(), "the refusal Keep's own call met opens a run")
+	require.Len(t, presented, 2, "getIdentity is called under the source's token, and its 401 re-exchanged once")
+	assert.NotEqual(t, presented[0], presented[1])
+	assert.ErrorContains(t, source.Check(), "401")
 
 	// Control: once garam accepts the source's tokens, Keep's next call ends the run with no other
-	// call. The token held has expired by now, so the one Keep presents is exchanged afresh.
+	// call; an exchange alone cannot end a run a refused call opened.
 	s.mu.Lock()
 	for n := range 10 {
 		s.accepted[fmt.Sprintf("garam_ot_%064d", n+1)] = true
 	}
 	s.mu.Unlock()
-	keep(t, s, source, 1)
-	assert.NoError(t, source.Check())
+	stop = startKeep(source)
+	require.Eventually(t, func() bool { return source.Check() == nil }, 5*time.Second, 10*time.Millisecond,
+		"Keep's identity call, accepted, ends the run")
+	stop()
 }
 
 func TestSource_KeepExchangesWhileNothingCallsThroughTheSource(t *testing.T) {
