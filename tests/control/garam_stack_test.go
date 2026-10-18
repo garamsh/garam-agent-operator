@@ -65,7 +65,9 @@ type garamStack struct {
 	// controllerMachine and hostedMachine call garam's machine listener as the controller and as
 	// this service, each under a token exchanged under its own key: the controller mints agents'
 	// tokens, as the manager does, and this service's calls are made where the suite stands in for
-	// the binary.
+	// the binary. hostedMachine's key is a second one issued to this service, beside the binaries':
+	// garam keeps a key's five newest tokens (garam@37567a4 internal/operator/token.go
+	// LiveTokensPerCredential), and every binary the suite starts exchanges under the binaries' key.
 	controllerMachine, hostedMachine *http.Client
 	// controller is the certificate garam enrolled the controller with, which the suite presents
 	// itself to make on garam what the binary takes as given: its legacy agents.
@@ -276,10 +278,14 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	}
 	s.hosted, s.controllerGRN, s.controller = hosted.grn, controller.grn, controller.pair
 	s.hostedFiles = identity{serverRoot: keys.serverRoot}
-	if s.hostedFiles.operatorKeys, err = s.issueKey(dir, "control"); err != nil {
+	if s.hostedFiles.operatorKeys, err = s.issueKey(dir, "control", "control", "immediate"); err != nil {
 		return step("issue the hosted operator's key", err, s.processes...)
 	}
-	controllerKeys, err := s.issueKey(dir, "k8s")
+	suiteKeys, err := s.issueKey(dir, "control", "suite-control", "planned")
+	if err != nil {
+		return step("issue the hosted operator's key the suite presents", err, s.processes...)
+	}
+	controllerKeys, err := s.issueKey(dir, "k8s", "k8s", "immediate")
 	if err != nil {
 		return step("issue the controller's key", err, s.processes...)
 	}
@@ -287,7 +293,7 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 		Endpoint: s.machineURL + "/oauth/token", Files: controllerKeys, Audience: s.hosted, HTTP: s.machine,
 	})
 	s.controllerMachine = s.tokenClient(controllerKeys)
-	s.hostedMachine = s.tokenClient(s.hostedFiles.operatorKeys)
+	s.hostedMachine = s.tokenClient(suiteKeys)
 
 	delegation := struct {
 		RequestID   string   `json:"requestId"`
@@ -337,9 +343,10 @@ type enrolled struct {
 	pair tls.Certificate
 }
 
-// issueKey has garam issue the operator under identifier a key, as a person does through the
-// console (garam@9ba35c3 api/openapi.yaml issueOperatorKey), and places the answer in dir.
-func (s *garamStack) issueKey(dir, identifier string) (machinetoken.Files, error) {
+// issueKey has garam issue the operator under identifier a key under rotation, as a person does
+// through the console (garam@37567a4 api/openapi.yaml issueOperatorKey), and places the answer in
+// dir under prefix. A planned key goes beside the live one, which goes on verifying.
+func (s *garamStack) issueKey(dir, identifier, prefix, rotation string) (machinetoken.Files, error) {
 	var issued struct {
 		PrivateKeyPEM string `json:"privateKeyPem"`
 		ClientID      string `json:"clientId"`
@@ -347,10 +354,10 @@ func (s *garamStack) issueKey(dir, identifier string) (machinetoken.Files, error
 	}
 	if err := s.create(http.MethodPost, "/orgs/"+s.orgID+"/operators/"+identifier+"/keys", "", struct {
 		Rotation string `json:"rotation"`
-	}{Rotation: "immediate"}, &issued); err != nil {
+	}{Rotation: rotation}, &issued); err != nil {
 		return machinetoken.Files{}, err
 	}
-	return writeKeyIssuance(dir, identifier, issued.ClientID, issued.TokenURL, issued.PrivateKeyPEM)
+	return writeKeyIssuance(dir, prefix, issued.ClientID, issued.TokenURL, issued.PrivateKeyPEM)
 }
 
 // enroll registers an operator under identifier and enrolls it with the token the registration
