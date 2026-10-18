@@ -60,6 +60,10 @@ const apiWriteTimeout = 45 * time.Second
 // garamTokenPath is garam's exchangeClientAssertion route under the machine listener's base URL.
 const garamTokenPath = "/oauth/token"
 
+// garamIdentityPath is garam's getIdentity route under the same base URL, which the token source
+// calls to observe its token's acceptance (ADR 0075).
+const garamIdentityPath = "/identity"
+
 type options struct {
 	probeAddr      string
 	apiAddr        string
@@ -125,7 +129,7 @@ func run(ctx context.Context, o options, databaseURL string) error {
 	if err != nil {
 		return err
 	}
-	machine, audience, err := garamClient(o)
+	machine, source, audience, err := garamClient(o)
 	if err != nil {
 		return err
 	}
@@ -177,8 +181,16 @@ func run(ctx context.Context, o options, databaseURL string) error {
 			http.Error(w, "store unreachable", http.StatusServiceUnavailable)
 			return
 		}
+		// Every route proves its caller at garam, so a lost authentication fails them all (ADR 0075).
+		if err := source.Check(); err != nil {
+			http.Error(w, "garam authentication lost", http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
+	// Kept exchanging while no request calls garam, so a recovery clears /readyz with no traffic,
+	// which a service out of its Service's endpoints receives none of.
+	go source.Keep(ctx)
 
 	healthServer := &http.Server{Addr: o.probeAddr, Handler: health, ReadHeaderTimeout: 5 * time.Second}
 	// Every console request carries a bearer operation authority, so its routes are served over TLS only.
@@ -226,36 +238,37 @@ func apiTLSConfig(o options) (*tls.Config, error) {
 
 // garamClient builds the client garam's machine listener is called through: it verifies the
 // listener against the garam server root and presents this service's token, exchanged under its
-// own key (ADR 0072). It reads this service's operator GRN, the audience of every authority it
-// accepts, from the client_id file.
-func garamClient(o options) (*http.Client, string, error) {
+// own key (ADR 0072), from the source it answers beside it. It reads this service's operator GRN,
+// the audience of every authority it accepts, from the client_id file.
+func garamClient(o options) (*http.Client, *machinetoken.Source, string, error) {
 	if o.garamURL == "" || o.serverRootFile == "" || o.operatorKeys.PrivateKey == "" ||
 		o.operatorKeys.ClientID == "" || o.operatorKeys.TokenURL == "" {
-		return nil, "", errors.New("--garam-machine-url, --garam-server-root-file, --operator-private-key-file, " +
+		return nil, nil, "", errors.New("--garam-machine-url, --garam-server-root-file, --operator-private-key-file, " +
 			"--operator-client-id-file and --operator-token-url-file are all required")
 	}
 	audience, err := machinetoken.ReadClientID(o.operatorKeys.ClientID)
 	if err != nil {
-		return nil, "", fmt.Errorf("read this service's operator GRN: %w", err)
+		return nil, nil, "", fmt.Errorf("read this service's operator GRN: %w", err)
 	}
 	root, err := os.ReadFile(o.serverRootFile)
 	if err != nil {
-		return nil, "", fmt.Errorf("read garam server root: %w", err)
+		return nil, nil, "", fmt.Errorf("read garam server root: %w", err)
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(root) {
-		return nil, "", errors.New("garam server root file holds no certificate")
+		return nil, nil, "", errors.New("garam server root file holds no certificate")
 	}
 	base := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}}
 	source := machinetoken.NewSource(machinetoken.Config{
-		Endpoint: strings.TrimSuffix(o.garamURL, "/") + garamTokenPath,
-		Files:    o.operatorKeys,
-		HTTP:     &http.Client{Timeout: garamTimeout, Transport: base},
+		Endpoint:    strings.TrimSuffix(o.garamURL, "/") + garamTokenPath,
+		IdentityURL: strings.TrimSuffix(o.garamURL, "/") + garamIdentityPath,
+		Files:       o.operatorKeys,
+		HTTP:        &http.Client{Timeout: garamTimeout, Transport: base},
 		Failed: func(failed *machinetoken.Error) {
 			slog.Error("exchange a client assertion for a garam token", "reason", failed.Reason,
 				"until", failed.Until, "error", failed.Err)
 		},
 	})
 	client := &http.Client{Timeout: garamTimeout, Transport: &machinetoken.Transport{Source: source, Base: base}}
-	return client, audience, nil
+	return client, source, audience, nil
 }
