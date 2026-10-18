@@ -35,8 +35,9 @@ import (
 // machine listener beside a certificate.
 const garamContract = "operation-authority.v1"
 
-// enrollmentContract is the contract version of garam's managed create.
-const enrollmentContract = "managed-enrollment.v1"
+// enrollmentContract is garam's agent-enrollment.v1, which its agent admission speaks beside a token
+// (garam@37567a4).
+const enrollmentContract = "agent-enrollment.v1"
 
 // fenceContract is garam's execution-fence.v2, which its recovery, deactivation and execution
 // introspection speak beside a token (garam@afde8b8).
@@ -66,10 +67,8 @@ type garamStack struct {
 	// tokens, as the manager does, and this service's calls are made where the suite stands in for
 	// the binary.
 	controllerMachine, hostedMachine *http.Client
-	// hostedTLS and controller are the certificates garam enrolled the two operators with, which
-	// the suite presents itself to make on garam what the binary takes as given: agents created
-	// for the controller, and its legacy agents.
-	hostedTLS  *http.Client
+	// controller is the certificate garam enrolled the controller with, which the suite presents
+	// itself to make on garam what the binary takes as given: its legacy agents.
 	controller tls.Certificate
 	// processes are garam's three running for the suite.
 	processes []*process
@@ -276,9 +275,6 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 		return step("register and enroll the controller", err, s.processes...)
 	}
 	s.hosted, s.controllerGRN, s.controller = hosted.grn, controller.grn, controller.pair
-	s.hostedTLS = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		RootCAs: keys.roots, Certificates: []tls.Certificate{hosted.pair},
-	}}}
 	s.hostedFiles = identity{serverRoot: keys.serverRoot}
 	if s.hostedFiles.operatorKeys, err = s.issueKey(dir, "control"); err != nil {
 		return step("issue the hosted operator's key", err, s.processes...)
@@ -434,25 +430,35 @@ func (s *garamStack) mintTargeted(operation, target, requestID, bodySHA256, requ
 	return minted.Authority, minted.OperationRef, err
 }
 
-// createAgent has garam create an agent assigned to the controller, as this service will on the
-// console's create: an agent:create authority, then managed create presenting this service's
-// certificate. It answers the agent's GRN and its assignment's epoch.
+// createAgent has garam admit an agent assigned to the controller, as this service does on the
+// console's create: an agent:create authority, then prepareAgentEnrollment and admitAgentEnrollment
+// under this service's token. It answers the agent's GRN and its assignment's epoch.
 func (s *garamStack) createAgent(requestID string) (agent, epoch string, err error) {
 	digest := sha256.Sum256([]byte("{}"))
 	_, ref, err := s.mintAuthority("agent:create", s.controllerGRN, requestID, hex.EncodeToString(digest[:]))
 	if err != nil {
 		return "", "", err
 	}
-	var created struct {
+	binding := struct {
+		RequestID    string `json:"requestId"`
+		Placement    string `json:"placement"`
+		Assignee     string `json:"assignee"`
+		OperationRef string `json:"operationRef"`
+	}{requestID, "managed", s.controllerGRN, ref}
+	var approval struct {
+		ApprovalID string `json:"approvalId"`
+	}
+	if err := s.machineCall(s.hostedMachine, "/agent-enrollment-approvals", enrollmentContract, binding,
+		http.StatusCreated, &approval); err != nil {
+		return "", "", err
+	}
+	var admitted struct {
 		GRN   string `json:"grn"`
 		Epoch string `json:"epoch"`
 	}
-	err = s.machineCall(s.hostedTLS, "/operators/"+url.PathEscape(s.controllerGRN)+"/managed-agents",
-		enrollmentContract, struct {
-			RequestID    string `json:"requestId"`
-			OperationRef string `json:"operationRef"`
-		}{requestID, ref}, http.StatusCreated, &created)
-	return created.GRN, created.Epoch, err
+	err = s.machineCall(s.hostedMachine, "/agent-enrollment-approvals/"+url.PathEscape(approval.ApprovalID)+"/admission",
+		enrollmentContract, binding, http.StatusCreated, &admitted)
+	return admitted.GRN, admitted.Epoch, err
 }
 
 // create calls the browser API as the fixture's signed-in user, refusing any answer but 201.
