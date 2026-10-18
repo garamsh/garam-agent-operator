@@ -32,8 +32,9 @@ const (
 	// introspection and credential recovery forward the agent's own token minted for this service
 	// (garam@afde8b8).
 	ExecutionFence = "execution-fence.v2"
-	// ManagedEnrollment is the contract of managed creation under a token (garam@afde8b8).
-	ManagedEnrollment = "managed-enrollment.v2"
+	// AgentEnrollment is the contract of an agent's admission, prepared then admitted, under a token
+	// (garam@37567a4, ADR-0102).
+	AgentEnrollment = "agent-enrollment.v1"
 
 	// maxAnswerBytes bounds an answer read from garam.
 	maxAnswerBytes = 1 << 20
