@@ -23,6 +23,9 @@ const controller = "grn:acme:default:operator:k8s"
 // operationRef is the creation's reference every registration here sends.
 const operationRef = "ref-1"
 
+// atPrepare names the prepare stage in the cases that refuse at either stage.
+const atPrepare = "prepare"
+
 // approvalID is the approval the stand-in garam prepares.
 const approvalID = "7f0c2a4e-1b3d-4c5e-8f60-718293a4b5c6"
 
@@ -236,11 +239,11 @@ func TestGaram_RefusalsAreTold(t *testing.T) {
 		{"503 on every attempt is undecided", answer{http.StatusServiceUnavailable, ""},
 			definition.ErrRegistrationUndecided, ""},
 	}
-	for _, stage := range []string{"prepare", "admission"} {
+	for _, stage := range []string{atPrepare, "admission"} {
 		for _, tt := range tests {
 			t.Run(stage+": "+tt.name, func(t *testing.T) {
 				g := newGaram()
-				if stage == "prepare" {
+				if stage == atPrepare {
 					g.prepare = []answer{tt.answer}
 				} else {
 					g.admit = []answer{tt.answer}
@@ -253,13 +256,25 @@ func TestGaram_RefusalsAreTold(t *testing.T) {
 			})
 		}
 	}
-	// Control: a 400 is the call's own failure, neither a refusal nor undecided.
-	g := newGaram()
-	g.prepare = []answer{{http.StatusBadRequest, `{"kind":"invalid_argument","message":"malformed"}`}}
-	_, err := register(registrarFor(t, g))
-	require.Error(t, err)
-	for _, refusal := range []error{definition.ErrRegistrationRefused, definition.ErrRegistrationConflict, definition.ErrRegistrationUndecided} {
-		assert.NotErrorIs(t, err, refusal)
+	// Control: a 400, and a 401 refusing this service's own token, are the call's own failure at
+	// either stage, neither a refusal nor undecided, so a creation stays Pending.
+	for _, stage := range []string{atPrepare, "admission"} {
+		for _, own := range []answer{
+			{http.StatusBadRequest, `{"kind":"invalid_argument","message":"malformed"}`},
+			{http.StatusUnauthorized, `{"kind":"unauthenticated","message":"operator token is not valid"}`},
+		} {
+			g := newGaram()
+			if stage == atPrepare {
+				g.prepare = []answer{own}
+			} else {
+				g.admit = []answer{own}
+			}
+			_, err := register(registrarFor(t, g))
+			require.Error(t, err, "%s answered %d", stage, own.status)
+			for _, refusal := range []error{definition.ErrRegistrationRefused, definition.ErrRegistrationConflict, definition.ErrRegistrationUndecided} {
+				assert.NotErrorIs(t, err, refusal, "%s answered %d", stage, own.status)
+			}
+		}
 	}
 }
 
