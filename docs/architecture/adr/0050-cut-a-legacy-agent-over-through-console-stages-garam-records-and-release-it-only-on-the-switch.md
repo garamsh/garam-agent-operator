@@ -1,6 +1,6 @@
 # ADR 0050: Cut a legacy agent over through console stages garam records, and release it only on the switch
 
-> Status: accepted
+> Status: superseded by ADR-0077
 > Date: 2026-10-05
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

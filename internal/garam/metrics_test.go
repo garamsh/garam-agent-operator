@@ -4,13 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/go-logr/logr"
 	. "github.com/onsi/gomega"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"github.com/garamsh/garam-agent-operator/internal/garam"
@@ -20,9 +17,6 @@ import (
 const (
 	exchangeFailuresMetric = "garam_operator_token_exchange_failures_total"
 	refusalsMetric         = "garam_operator_refusals_total"
-
-	// metricInterval is short enough that a test sees several passes.
-	metricInterval = 20 * time.Millisecond
 )
 
 // sampled answers the value the manager's registry exports for the series of
@@ -65,44 +59,21 @@ func refusals(t *testing.T, runnable, kind string) float64 {
 	return sampled(t, refusalsMetric, map[string]string{"runnable": runnable, "kind": kind})
 }
 
-// run starts runnable and answers what stops it, which the test's end calls
-// too where the test did not.
-func run(t *testing.T, runnable manager.Runnable) (stop func()) {
-	t.Helper()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		_ = runnable.Start(ctx)
-	}()
-	var once sync.Once
-	stop = func() {
-		once.Do(func() {
-			cancel()
-			<-stopped
-		})
-	}
-	t.Cleanup(stop)
-	return stop
-}
-
-// TestReporterCountsARefusalByTheStatusGaramAnswered carries a refusal the
+// TestRefresherCountsARefusalByTheStatusGaramAnswered carries a refusal the
 // client maps to one of its own errors, which is where the status would be lost
 // if the mapping did not keep it.
-func TestReporterCountsARefusalByTheStatusGaramAnswered(t *testing.T) {
+func TestRefresherCountsARefusalByTheStatusGaramAnswered(t *testing.T) {
 	g := NewWithT(t)
-	before := refusals(t, "reporter", "403")
-	stub := newStubListener(t, func(w http.ResponseWriter, _ *http.Request) {
-		answerJSON(w, http.StatusForbidden, `{"kind": "permission_denied", "message": "not assigned"}`)
-	})
-	observer := &recordingObserver{}
-	observer.hold(garam.Observation{Agent: readyAgent, Epoch: reportedAtEpoch, Readiness: garam.ReadinessReplicaReady})
+	before := refusals(t, "refresher", "403")
+	clock := mintedAt
+	stub := newMintStub(t, clock)
+	stub.notHeld[string(sampleAgent)] = true
+	store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{{Agent: sampleAgent, Epoch: 4}}}
 
-	run(t, garam.NewReporter(garam.NewClient(stub.address(), trustedBy(t, stub)), observer, metricInterval))
+	refresherFor(t, stub, store, &clock).Refresh(context.Background())
 
-	g.Eventually(func() int { return len(stub.requests()) }, 5*time.Second).Should(BeNumerically(">=", 3))
-	g.Expect(refusals(t, "reporter", "403") - before).To(BeNumerically(">=", 2))
+	g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(1))
+	g.Expect(refusals(t, "refresher", "403") - before).To(Equal(float64(1)))
 }
 
 // TestExchangeFailedCountsAFailedExchangeByAudienceAndReason is the series an
@@ -128,7 +99,7 @@ func TestExchangeFailedCountsAFailedExchangeByAudienceAndReason(t *testing.T) {
 	g.Expect(sampled(t, exchangeFailuresMetric, labels) - before).To(Equal(float64(1)))
 
 	// The control: an exchange garam admits counts nothing.
-	stub := newStubListener(t, answerNoDefinitions)
+	stub := newStubListener(t, answerAgentToken)
 	before = sampled(t, exchangeFailuresMetric, labels)
 	tlsConfig, err := garam.ServerTLS(stub.trustFile)
 	g.Expect(err).NotTo(HaveOccurred())

@@ -13,7 +13,6 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -81,9 +80,7 @@ func main() {
 	var garamAddress, garamTrustFile, garamIssuer string
 	var garamKeys machinetoken.Files
 	var controlAddress, controlTrustFile, controlGRN string
-	var agentImage, agentStorageSize, agentCopyImage, agentWorkspaceImage, agentAdapterImage string
-	var agentWorkspaceStorageSize string
-	var garamPollInterval, garamReportInterval time.Duration
+	var agentImage, agentCopyImage, agentWorkspaceImage, agentAdapterImage string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -103,16 +100,17 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&garamAddress, "garam-address", "",
-		"The host and port of garam's machine listener. Unset leaves this operator reading no definitions.")
+		"The host and port of garam's machine listener, where the tokens of every agent this operator builds "+
+			"are minted and which their adapters reach. Required where control-address is set.")
 	flag.StringVar(&garamKeys.PrivateKey, "garam-private-key-file", "",
 		"The file holding the private key garam issued this operator, as PKCS#8 PEM. It is read at every "+
-			"exchange, so a key replaced in it signs the next one. Required where garam-address or control-address is set.")
+			"exchange, so a key replaced in it signs the next one. Required where control-address is set.")
 	flag.StringVar(&garamKeys.ClientID, "garam-client-id-file", "",
 		"The file holding this operator's GRN, the clientId garam answered beside its key. "+
-			"Required where garam-address or control-address is set.")
+			"Required where control-address is set.")
 	flag.StringVar(&garamKeys.TokenURL, "garam-token-url-file", "",
 		"The file holding the tokenUrl garam answered beside this operator's key, which every assertion names "+
-			"as its audience. Required where garam-address or control-address is set.")
+			"as its audience. Required where control-address is set.")
 	flag.StringVar(&garamTrustFile, "garam-trust-file", "",
 		"The file holding what garam's machine listener is verified against: garam's server root.")
 	flag.StringVar(&garamIssuer, "garam-issuer", "",
@@ -122,29 +120,18 @@ func main() {
 			"set (ADR 0071).")
 	flag.StringVar(&controlAddress, "control-address", "",
 		"The host and port of the control service's API listener, which this operator pulls the desired state "+
-			"of the agents it controls from. Unset pulls nothing from it.")
+			"of the agents it controls from. It is the only source of the agents this operator builds: unset "+
+			"builds none.")
 	flag.StringVar(&controlTrustFile, "control-trust-file", "",
 		"The file holding the root the control service's serving certificate is verified against. "+
 			"Required where control-address is set.")
 	flag.StringVar(&controlGRN, "control-grn", "",
 		"The control service's operator GRN, which the token this operator presents to it is minted for. "+
 			"Required where control-address is set.")
-	flag.DurationVar(&garamPollInterval, "garam-poll-interval", time.Minute,
-		"How often this operator reads the definitions garam holds for it.")
-	flag.DurationVar(&garamReportInterval, "garam-report-interval", time.Minute,
-		"How often this operator tells garam what it sees of its agents' pods. garam expires no report, "+
-			"so this bounds how stale that picture gets while this operator is running and not after it stops.")
 	flag.StringVar(&agentImage, "agent-image", "",
 		"The container image every agent this operator constructs runs. It has no default: name the image "+
 			"and the tag or digest explicitly. Every container of an agent's Pod is pulled at every start, so "+
-			"an image no registry serves cannot be run. Required where garam-address is set.")
-	flag.StringVar(&agentStorageSize, "agent-storage-size", "",
-		"The size of the volume every agent this operator constructs keeps its state on, as a Kubernetes "+
-			"quantity. Required where garam-address is set.")
-	flag.StringVar(&agentWorkspaceStorageSize, "agent-workspace-storage-size", "",
-		"The size of the volume the workspace of every agent this operator constructs serves its files from, "+
-			"as a Kubernetes quantity. It is a volume of its own, apart from the agent's state. Unset claims it "+
-			"at agent-storage-size.")
+			"an image no registry serves cannot be run. Required where control-address is set.")
 	flag.StringVar(&agentCopyImage, "agent-copy-image", "",
 		"The image the init containers of an agent's Pod run to write its config file and make its outbox, "+
 			"and the image a memory move's copy and verification Jobs run. It needs a shell, install, cp, "+
@@ -158,8 +145,8 @@ func main() {
 	flag.StringVar(&agentAdapterImage, "agent-adapter-image", "",
 		"The image garam's adapter runs from, as a sidecar beside every agent this operator constructed: "+
 			"garam's own image, whose adapter subcommand carries messages between garam and the agent. "+
-			"It is built only where garam-address is set too. Unset builds agents' Pods carrying no adapter, "+
-			"which is an agent garam delivers no message to.")
+			"It is built only where garam-address and control-address are set too. Unset builds agents' Pods "+
+			"carrying no adapter, which is an agent garam delivers no message to.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -280,12 +267,12 @@ func main() {
 
 	// Said once, as the workspace's absence is: an agent built with no adapter
 	// starts and reports itself available, and garam reaches it by no route.
-	if agentAdapterImage == "" || garamAddress == "" {
-		setupLog.Info("Building agents with no adapter: agent-adapter-image or garam-address is unset, " +
-			"so garam delivers them no message")
+	if agentAdapterImage == "" || garamAddress == "" || controlAddress == "" {
+		setupLog.Info("Building agents with no adapter: agent-adapter-image, garam-address or control-address " +
+			"is unset, so garam delivers them no message")
 	}
 
-	if garamIssuer != "" && (agentAdapterImage == "" || garamAddress == "") {
+	if garamIssuer != "" && (agentAdapterImage == "" || garamAddress == "" || controlAddress == "") {
 		setupLog.Info("Rendering no issuer: garam-issuer is set, but agents are built with no adapter to sign "+
 			"their messages", "issuer", garamIssuer)
 	}
@@ -308,16 +295,16 @@ func main() {
 	}
 	// +kubebuilder:scaffold:builder
 
-	if (garamAddress != "" || controlAddress != "") &&
+	if controlAddress != "" &&
 		(garamAddress == "" || garamTrustFile == "" || garamKeys.PrivateKey == "" || garamKeys.ClientID == "" ||
 			garamKeys.TokenURL == "") {
 		setupLog.Error(errors.New("garam-address, garam-trust-file, garam-private-key-file, garam-client-id-file "+
-			"and garam-token-url-file are all required where garam-address or control-address is set"),
+			"and garam-token-url-file are all required where control-address is set"),
 			"Failed to configure this operator's garam identity")
 		os.Exit(1)
 	}
 	var garamTLS *tls.Config
-	if garamAddress != "" {
+	if controlAddress != "" {
 		garamTLS, err = garam.ServerTLS(garamTrustFile)
 		if err != nil {
 			setupLog.Error(err, "Failed to configure the connection to garam")
@@ -359,67 +346,6 @@ func main() {
 		return source
 	}
 
-	if garamAddress != "" {
-		// The namespace is the Pod's own and arrives on the downward API: the
-		// deployment cannot state it in an argument, because the kustomize
-		// transformer that sets the namespace does not reach into one.
-		namespace := os.Getenv(podNamespaceVariable)
-		if namespace == "" {
-			setupLog.Error(errors.New(podNamespaceVariable+" is unset"),
-				"Failed to name the namespace this operator writes in")
-			os.Exit(1)
-		}
-		// Both flags are checked for having been given, and neither value for
-		// being usable: an image reference and a volume size are the API
-		// server's to refuse, and it says so on the object.
-		if agentImage == "" {
-			setupLog.Error(errors.New("agent-image is required where garam-address is set"),
-				"Failed to construct agents")
-			os.Exit(1)
-		}
-		storageSize, err := resource.ParseQuantity(agentStorageSize)
-		if err != nil {
-			setupLog.Error(err, "Failed to read agent-storage-size, which is required where garam-address is set",
-				"agent-storage-size", agentStorageSize)
-			os.Exit(1)
-		}
-		var workspaceStorageSize *resource.Quantity
-		if agentWorkspaceStorageSize != "" {
-			size, err := resource.ParseQuantity(agentWorkspaceStorageSize)
-			if err != nil {
-				setupLog.Error(err, "Failed to read agent-workspace-storage-size",
-					"agent-workspace-storage-size", agentWorkspaceStorageSize)
-				os.Exit(1)
-			}
-			workspaceStorageSize = &size
-		}
-		garamClient := garam.NewClient(garamAddress, &machinetoken.Transport{
-			Source: tokenSource("", "garam"),
-			Base:   &http.Transport{TLSClientConfig: garamTLS},
-		})
-		builder := constructor.NewAgent(mgr.GetClient(), mgr.GetScheme(), namespace, agentImage, storageSize,
-			workspaceStorageSize)
-		if err := mgr.Add(garam.NewPoller(garamClient, builder, garamPollInterval)); err != nil {
-			setupLog.Error(err, "Failed to add the garam poller", "address", garamAddress)
-			os.Exit(1)
-		}
-		if err := mgr.Add(garam.NewReporter(garamClient, builder, garamReportInterval)); err != nil {
-			setupLog.Error(err, "Failed to add the garam reporter", "address", garamAddress)
-			os.Exit(1)
-		}
-		// Every agent this operator holds, on either source, has its tokens minted
-		// and kept current here, a fenced agent's control token for the control
-		// service's GRN (ADR 0073).
-		refresher := garam.NewRefresher(garamClient,
-			constructor.NewTokens(mgr.GetClient(), mgr.GetScheme(), namespace), controlGRN)
-		if err := mgr.Add(refresher); err != nil {
-			setupLog.Error(err, "Failed to add the token refresher", "address", garamAddress)
-			os.Exit(1)
-		}
-	} else {
-		setupLog.Info("Reading no definitions and reporting nothing: garam-address is unset")
-	}
-
 	if controlAddress != "" {
 		// This operator is the controller its own GRN names. It presents a token
 		// garam minted for the control service, which has garam prove it on each
@@ -456,6 +382,18 @@ func main() {
 			setupLog.Error(err, "Failed to add the desired-state puller", "address", controlAddress)
 			os.Exit(1)
 		}
+		// Every agent this operator holds has its tokens minted and kept current
+		// here, its control token for the control service's GRN (ADR 0073).
+		garamClient := garam.NewClient(garamAddress, &machinetoken.Transport{
+			Source: tokenSource("", "garam"),
+			Base:   &http.Transport{TLSClientConfig: garamTLS},
+		})
+		refresher := garam.NewRefresher(garamClient,
+			constructor.NewTokens(mgr.GetClient(), mgr.GetScheme(), namespace), controlGRN)
+		if err := mgr.Add(refresher); err != nil {
+			setupLog.Error(err, "Failed to add the token refresher", "address", garamAddress)
+			os.Exit(1)
+		}
 		// A managed agent's recovery is prepared from a request persisted here
 		// first, and its new lineage recorded on the agent's credential, where the
 		// refresher mints the agent's tokens again (#300, ADR 0073).
@@ -484,7 +422,7 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		setupLog.Info("Pulling no desired state: control-address is unset")
+		setupLog.Info("Building no agents and pulling no desired state: control-address is unset")
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

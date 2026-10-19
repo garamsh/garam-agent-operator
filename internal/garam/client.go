@@ -10,19 +10,17 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"slices"
-	"strings"
 	"time"
 )
 
 // requestTimeout bounds one call to garam. It is what stops a listener that
-// accepted the connection and then said nothing from holding a poll open until
-// the manager stops.
+// accepted the connection and then said nothing from holding a refresh open
+// until the manager stops.
 const requestTimeout = 30 * time.Second
 
-// Client reads this operator's definitions from garam's machine listener and
-// claims them. What the caller is scopes both: garam answers the definitions
-// naming the token's operator and no others.
+// Client mints the tokens of the agents this operator holds at garam's machine
+// listener. What the caller is scopes it: garam mints only for an agent the
+// token's operator holds.
 type Client struct {
 	address string
 	http    *http.Client
@@ -35,41 +33,6 @@ func NewClient(address string, transport http.RoundTripper) *Client {
 		address: address,
 		http:    &http.Client{Timeout: requestTimeout, Transport: transport},
 	}
-}
-
-// ListDefinitions returns the definitions naming this operator, with the agent
-// GRN each minted and the claim standing on it where there is one.
-func (c *Client) ListDefinitions(ctx context.Context) ([]Definition, error) {
-	var answered []definitionPayload
-	if err := c.send(ctx, http.MethodGet, "/definitions", "", nil, &answered); err != nil {
-		return nil, fmt.Errorf("list the definitions garam holds for this operator: %w", err)
-	}
-	definitions := make([]Definition, 0, len(answered))
-	for _, payload := range answered {
-		definition, err := payload.definition()
-		if err != nil {
-			return nil, fmt.Errorf("list the definitions garam holds for this operator: %w", err)
-		}
-		definitions = append(definitions, definition)
-	}
-	return definitions, nil
-}
-
-// ClaimDefinition binds this operator to the agent a definition minted, which
-// is what admits it to mint that agent's tokens. An agent garam already
-// holds a claim for answers [ErrClaimConflict], which no retry changes.
-func (c *Client) ClaimDefinition(ctx context.Context, agent GRN) (Assignment, error) {
-	var answered assignmentPayload
-	err := c.send(ctx, http.MethodPost, "/definitions/"+url.PathEscape(string(agent))+"/claim", "", nil, &answered)
-
-	var refused *refusal
-	if errors.As(err, &refused) && refused.status == http.StatusConflict {
-		return Assignment{}, fmt.Errorf("claim %s: %w: %w", agent, ErrClaimConflict, refused)
-	}
-	if err != nil {
-		return Assignment{}, fmt.Errorf("claim %s: %w", agent, err)
-	}
-	return answered.assignment()
 }
 
 // MintAgentToken asks garam for a token of an agent this operator holds at the
@@ -96,41 +59,6 @@ func (c *Client) MintAgentToken(ctx context.Context, agent GRN, audience string)
 	return answered.agentToken(agent, audience)
 }
 
-// ReportProvisioningState tells garam what this operator sees of an agent's pod.
-// garam learns it here and nowhere else: it dials no cluster and reads no pod
-// (garam@e1e69fd:api/machine.yaml:201-231).
-//
-// epoch is the epoch this operator holds the agent at, and garam accepts the
-// report only at the epoch the assignment is currently on. A later one answers
-// [ErrReportStale]; an agent this operator is not assigned to and one that does
-// not exist answer [ErrAgentNotHeld], identically, so a caller learns nothing
-// from which it got.
-//
-// The state garam records is a latch it never expires, so what this writes
-// stands until it is written again and is evidence of what this operator saw
-// rather than evidence that this operator is still there.
-func (c *Client) ReportProvisioningState(ctx context.Context, agent GRN, epoch int64, state ProvisioningState) error {
-	report := provisioningStateReport{Epoch: epoch, State: string(state)}
-	err := c.send(ctx, http.MethodPost, "/agents/"+url.PathEscape(string(agent))+"/provisioning-state", "", report, nil)
-
-	// Discriminated the way each refusal allows: by kind where garam answers one
-	// status for two facts, and by status where it answers one fact, as
-	// MintAgentToken does for this same 403.
-	var refused *refusal
-	if errors.As(err, &refused) {
-		switch {
-		case refused.kind == kindFailedPrecondition:
-			return fmt.Errorf("report %s at epoch %d: %w: %w", agent, epoch, ErrReportStale, refused)
-		case refused.status == http.StatusForbidden:
-			return fmt.Errorf("report %s at epoch %d: %w: %w", agent, epoch, ErrAgentNotHeld, refused)
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("report %s at epoch %d: %w", agent, epoch, err)
-	}
-	return nil
-}
-
 const (
 	// contractHeader names the contract version a route of garam's speaks.
 	contractHeader = "Garam-Contract-Version"
@@ -142,11 +70,6 @@ const (
 // of the file the adapter reads it from (garam@afde8b8 api/machine.yaml
 // AgentToken, docs/architecture/adapter.md §Token mode).
 var agentTokenPattern = regexp.MustCompile(`^garam_at_[0-9a-f]{64}$`)
-
-// kindFailedPrecondition is the kind garam answers a report at a superseded
-// epoch under. garam tells its refusals apart by kind rather than by status
-// (garam@1150b88:internal/wire/error.go:16).
-const kindFailedPrecondition = "failed_precondition"
 
 // send performs one request against the machine listener, carrying body where
 // there is one, and decodes what it answered into out. A route that carries a
@@ -229,90 +152,6 @@ func refusalFrom(status int, body []byte) *refusal {
 		return &refusal{status: status}
 	}
 	return &refusal{status: status, kind: answered.Kind, message: answered.Message}
-}
-
-// provisioningStateReport is what this operator sends the machine listener about
-// an agent's pod. Both fields are required and garam refuses an epoch below 1
-// (garam@e1e69fd:api/machine.yaml:617-634).
-type provisioningStateReport struct {
-	Epoch int64  `json:"epoch"`
-	State string `json:"state"`
-}
-
-// definitionPayload is one definition as the machine listener answers it.
-type definitionPayload struct {
-	AgentGRN string            `json:"agentGrn"`
-	Values   map[string]string `json:"values"`
-	Claim    *claimPayload     `json:"claim"`
-}
-
-type claimPayload struct {
-	Epoch int64 `json:"epoch"`
-}
-
-// toolPinPrefix is the one value-key family this operator reads. The suffix is
-// a tool's name and the string beside it is that tool's pin. The name is
-// sherlock's own setting name, because this operator has to write that setting
-// anyway.
-const toolPinPrefix = "tools.pins."
-
-// readValues is where a definition's free-form values stop being free-form.
-// garam's answer is a third-party map and this is the one place it is read, so
-// what travels on is the typed selection and the names of the keys that were
-// not read — never the map, which is what keeps a key this operator has no
-// contract for from reaching the workload.
-//
-// A key the selection does not cover is ignored rather than refused: this
-// operator cannot tell a typo from a key a later release understands, and
-// refusing would turn either into an agent that never runs.
-func readValues(values map[string]string) (ToolSet, []string) {
-	var tools ToolSet
-	var ignored []string
-	for key, value := range values {
-		name, found := strings.CutPrefix(key, toolPinPrefix)
-		if !found || name == "" {
-			ignored = append(ignored, key)
-			continue
-		}
-		if tools.Pins == nil {
-			tools.Pins = make(map[string]string)
-		}
-		tools.Pins[name] = value
-	}
-	// Sorted, so that what is reported about one definition does not change
-	// between passes that read the same answer.
-	slices.Sort(ignored)
-
-	return tools, ignored
-}
-
-func (p definitionPayload) definition() (Definition, error) {
-	if p.AgentGRN == "" {
-		return Definition{}, errors.New("a definition garam answered names no agent")
-	}
-	definition := Definition{Agent: GRN(p.AgentGRN)}
-	definition.Tools, definition.Ignored = readValues(p.Values)
-	if p.Claim != nil {
-		if p.Claim.Epoch < 1 {
-			return Definition{}, fmt.Errorf("a definition garam answered claims %s at no epoch", p.AgentGRN)
-		}
-		definition.Claim = &Claim{Epoch: p.Claim.Epoch}
-	}
-	return definition, nil
-}
-
-// assignmentPayload is an assignment as the machine listener answers it.
-type assignmentPayload struct {
-	GRN      string `json:"grn"`
-	Operator string `json:"operator"`
-	Epoch    int64  `json:"epoch"`
-}
-
-func (p assignmentPayload) assignment() (Assignment, error) {
-	if p.GRN == "" || p.Operator == "" {
-		return Assignment{}, errors.New("an assignment garam answered names no agent or no operator")
-	}
-	return Assignment{Agent: GRN(p.GRN), Operator: GRN(p.Operator), Epoch: p.Epoch}, nil
 }
 
 // tokenRequest is what mintAgentToken is sent: the audience, absent for

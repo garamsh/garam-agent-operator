@@ -25,9 +25,6 @@ const (
 	// OperationAuthority is the contract of introspection and the controller proof, under a token
 	// (garam@9ba35c3).
 	OperationAuthority = "operation-authority.v2"
-	// AgentCutover is the contract of a legacy agent's cutover stages under a token (garam@9ba35c3,
-	// ADR-0086).
-	AgentCutover = "agent-cutover.v2"
 	// ExecutionFence is the contract of the execution routes under a token. Activation, execution
 	// introspection and credential recovery forward the agent's own token minted for this service
 	// (garam@afde8b8).

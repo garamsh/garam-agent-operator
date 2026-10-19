@@ -525,18 +525,23 @@ var _ = Describe("Agent workload", func() {
 		By("configuring it as the agent, against garam's listener and the agent's gateway")
 		gatewayAddress := agentTypeSherlock.gatewayAddress
 		Expect(environmentOf(adapter)).To(Equal(map[string]string{
-			adapterAgentSetting:      testGRN,
-			adapterMachineURLSetting: "https://" + testGaramAddress,
-			adapterGatewayURLSetting: "http://" + gatewayAddress,
-			adapterTokenFileSetting:  adapterCredentialsMountPath + "/token",
-			adapterServerRootSetting: adapterCredentialsMountPath + "/" + garam.ServerRootKey,
-			adapterOutboxDirSetting:  outboxMountPath,
+			adapterAgentSetting:          testGRN,
+			adapterMachineURLSetting:     "https://" + testGaramAddress,
+			adapterGatewayURLSetting:     "http://" + gatewayAddress,
+			adapterTokenFileSetting:      adapterCredentialsMountPath + "/token",
+			adapterServerRootSetting:     adapterCredentialsMountPath + "/" + garam.ServerRootKey,
+			adapterControlURLSetting:     "https://" + testControlAddress,
+			adapterControlRootSetting:    controlRootMountPath + "/" + controlRootFile,
+			adapterControlTokenSetting:   adapterCredentialsMountPath + "/" + garam.ControlTokenKey,
+			adapterPlacementTokenSetting: placementMountPath + "/" + placementTokenKey,
+			adapterOutboxDirSetting:      outboxMountPath,
 		}))
 
-		By("mounting the credential and placement token Secrets read-only, and the agent's outbox, and nothing else")
+		By("mounting the credential and placement token Secrets and the control root read-only, and the agent's outbox, and nothing else")
 		Expect(adapter.VolumeMounts).To(ConsistOf(
 			corev1.VolumeMount{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true},
 			corev1.VolumeMount{Name: placementVolumeName, MountPath: placementMountPath, ReadOnly: true},
+			corev1.VolumeMount{Name: controlRootVolumeName, MountPath: controlRootMountPath, ReadOnly: true},
 			corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: agentTypeSherlock.outboxDir()},
 		))
 
@@ -1040,12 +1045,12 @@ var _ = Describe("Agent workload", func() {
 			"  provider: openai-compatible\n"))
 	})
 
-	It("delivers a Control-source Agent's revision in its config file as a string, and moves the Pod when it changes", func() {
+	It("delivers an Agent's revision in its config file as a string, and moves the Pod when it changes", func() {
 		name := "carries-its-revision"
 		createSecret(credentialsSecretName(name))
 		createSecret(modelKeySecretName(name))
 		agent := newAgent(name)
-		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceControl}
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
 		agent.Spec.Model = newModel(name)
 		agent.Spec.Revision = "3"
 		createAgent(agent)
@@ -1079,7 +1084,7 @@ var _ = Describe("Agent workload", func() {
 		name := "carries-only-its-revision"
 		createSecret(credentialsSecretName(name))
 		agent := newAgent(name)
-		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceControl}
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
 		agent.Spec.Revision = "1"
 		createAgent(agent)
 
@@ -1092,12 +1097,12 @@ var _ = Describe("Agent workload", func() {
 			Name: configVolumeName, MountPath: agentTypeSherlock.configMountPath, ReadOnly: true}))
 	})
 
-	It("renders a Garam-source Agent's config file with no revision key, as before revisions were rendered", func() {
-		name := "garam-source-has-no-revision"
+	It("renders the config file of an Agent carrying no revision with no revision key", func() {
+		name := "has-no-revision"
 		createSecret(credentialsSecretName(name))
 		createSecret(modelKeySecretName(name))
 		agent := newAgent(name)
-		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceGaram}
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
 		agent.Spec.Model = newModel(name)
 		createAgent(agent)
 
@@ -1388,7 +1393,7 @@ func withoutWorkspace(pod corev1.PodSpec) corev1.PodSpec {
 }
 
 // withoutAdapter returns the Pod spec with the adapter's sidecar, the Secrets
-// it mounts, the gateway address it dials, and the instructions file its reply
+// and the control root it mounts, the gateway address it dials, and the instructions file its reply
 // instruction brings removed. What
 // is left is what this operator builds where it names no adapter image for an
 // Agent declaring nothing else, so the two being equal is what says the unset
@@ -1396,7 +1401,8 @@ func withoutWorkspace(pod corev1.PodSpec) corev1.PodSpec {
 func withoutAdapter(pod corev1.PodSpec) corev1.PodSpec {
 	stripped := withoutToolPins(pod)
 	stripped.Volumes = slices.DeleteFunc(stripped.Volumes, func(volume corev1.Volume) bool {
-		return volume.Name == placementVolumeName || volume.Name == credentialsVolumeName
+		return volume.Name == placementVolumeName || volume.Name == credentialsVolumeName ||
+			volume.Name == controlRootVolumeName
 	})
 	for i := range stripped.Containers {
 		if at := slices.Index(stripped.Containers[i].Args, sherlockInstructionsFlag); at >= 0 {

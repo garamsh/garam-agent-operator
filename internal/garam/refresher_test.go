@@ -17,8 +17,11 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
+// mintedAt is the test's clock when the stub mints a token.
+var mintedAt = time.Date(2026, 10, 14, 15, 0, 0, 0, time.UTC)
+
 const (
-	// controlGRN is the control service's operator, which a fenced agent's
+	// controlGRN is the control service's operator, which every agent's
 	// control token is minted for.
 	controlGRN = "grn:acme:default:operator:control"
 
@@ -170,30 +173,25 @@ func TestRefresherMintsWhereNoTokensArePlacedAndIsDueInGaramsWindow(t *testing.T
 	g := NewWithT(t)
 	clock := mintedAt
 	stub := newMintStub(t, clock)
-	fenced := garam.GRN("grn:acme:default:agent:fenced")
-	store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{
-		{Agent: sampleAgent, Epoch: 4},
-		{Agent: fenced, Epoch: 4, Fenced: true},
-	}}
+	store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{{Agent: sampleAgent, Epoch: 4}}}
 
 	refresherFor(t, stub, store, &clock).Refresh(context.Background())
 
-	// An unfenced agent gets garam's token alone; a fenced one the control
-	// service's beside it, minted for the control service's GRN.
-	g.Expect(stub.mints()).To(Equal(map[string][]string{
-		string(sampleAgent): {garamAudience},
-		string(fenced):      {garamAudience, controlGRN},
-	}))
+	// Every agent gets garam's token and the control service's beside it,
+	// minted for the control service's GRN.
+	g.Expect(stub.mints()).To(Equal(map[string][]string{string(sampleAgent): {garamAudience, controlGRN}}))
 	due := mintedAt.Add(time.Duration(float64(lifetime) * window))
 	g.Expect(store.written()[sampleAgent]).To(Equal(storedTokens{
-		tokens: garam.Tokens{Garam: garam.AgentToken{
-			Token: sampleToken, Epoch: 4, ExpiresAt: mintedAt.Add(lifetime), ServerRootPEM: []byte("a root"),
-		}},
+		tokens: garam.Tokens{
+			Garam: garam.AgentToken{
+				Token: sampleToken, Epoch: 4, ExpiresAt: mintedAt.Add(lifetime), ServerRootPEM: []byte("a root"),
+			},
+			Control: garam.AgentToken{
+				Token: controlToken, Epoch: 4, ExpiresAt: mintedAt.Add(lifetime), ServerRootPEM: []byte("a root"),
+			},
+		},
 		due: due,
 	}))
-	g.Expect(store.written()[fenced].tokens.Control).NotTo(BeNil())
-	g.Expect(store.written()[fenced].tokens.Control.Token).To(Equal(controlToken))
-	g.Expect(store.written()[fenced].due).To(Equal(due))
 
 	// Every mint was made under this operator's own token, never an agent's:
 	// no token is exchanged for its successor.
@@ -215,12 +213,12 @@ func TestRefresherMintsAgainOnlyOnceDueBeforeTheTokenExpires(t *testing.T) {
 	// Before it is due, a pass mints nothing.
 	clock = due.Add(-time.Second)
 	refresher.Refresh(context.Background())
-	g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(1))
+	g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(2))
 
 	// Control: once it is due, the next pass mints again.
 	clock = due
 	refresher.Refresh(context.Background())
-	g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(2))
+	g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(4))
 }
 
 func TestRefresherWindowIsGaramsTwoThirdsToThreeQuarters(t *testing.T) {
@@ -238,14 +236,14 @@ func TestRefresherMintsAgainAtOnceAfterARecovery(t *testing.T) {
 	store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{{Agent: sampleAgent, Epoch: 4}}}
 	refresher := refresherFor(t, stub, store, &clock)
 	refresher.Refresh(context.Background())
-	g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(1))
+	g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(2))
 
 	// The recoverer records the new lineage and removes the refresh time, as
 	// credential.Secrets does once a recovery is finalized.
 	clock = mintedAt.Add(time.Minute)
 	store.set(func(holders []garam.TokenHolder) { holders[0].Due, holders[0].Version = time.Time{}, "recovered" })
 	refresher.Refresh(context.Background())
-	g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(2), "the agent was not minted for in the new lineage")
+	g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(4), "the agent was not minted for in the new lineage")
 	// Due in the window of the new token, which the stub minted to expire at
 	// the same moment as the first.
 	g.Expect(store.written()[sampleAgent].due).To(Equal(clock.Add(time.Duration(float64(mintedAt.Add(lifetime).Sub(clock)) * window))))
@@ -307,7 +305,7 @@ func TestRefresherWritesTheTokensItMintedRatherThanMintingAgain(t *testing.T) {
 			clock = mintedAt.Add(time.Duration(i) * time.Minute)
 			refresher.Refresh(context.Background())
 		}
-		g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(1), "a failed write minted again")
+		g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(2), "a failed write minted again")
 
 		// Control: once the write is taken, the tokens minted first are written.
 		store.mu.Lock()
@@ -315,7 +313,7 @@ func TestRefresherWritesTheTokensItMintedRatherThanMintingAgain(t *testing.T) {
 		store.mu.Unlock()
 		clock = mintedAt.Add(7 * time.Minute)
 		refresher.Refresh(context.Background())
-		g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(1))
+		g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(2))
 		g.Expect(store.written()[sampleAgent].tokens.Garam.Token).To(Equal(sampleToken))
 	})
 
@@ -325,7 +323,7 @@ func TestRefresherWritesTheTokensItMintedRatherThanMintingAgain(t *testing.T) {
 		stub := newMintStub(t, clock)
 		stub.refuseControl = true
 		store := &memoryTokens{stored: map[garam.GRN]storedTokens{},
-			holders: []garam.TokenHolder{{Agent: sampleAgent, Epoch: 4, Fenced: true}}}
+			holders: []garam.TokenHolder{{Agent: sampleAgent, Epoch: 4}}}
 		refresher := refresherFor(t, stub, store, &clock)
 		for i := range 6 {
 			clock = mintedAt.Add(time.Duration(i) * time.Minute)
@@ -350,26 +348,8 @@ func TestRefresherWritesTheTokensItMintedRatherThanMintingAgain(t *testing.T) {
 		store.mu.Unlock()
 		clock = mintedAt.Add(time.Minute)
 		refresher.Refresh(context.Background())
-		g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(2), "a token of the ended lineage was written")
+		g.Expect(stub.mints()[string(sampleAgent)]).To(HaveLen(4), "a token of the ended lineage was written")
 	})
-}
-
-func TestRefresherRefusesAFencedAgentNoControlServiceIsNamedFor(t *testing.T) {
-	g := NewWithT(t)
-	clock := mintedAt
-	stub := newMintStub(t, clock)
-	store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{
-		{Agent: sampleAgent, Epoch: 4, Fenced: true}, {Agent: "grn:acme:default:agent:other", Epoch: 4},
-	}}
-	refresher := garam.NewRefresher(garam.NewClient(stub.address(), trustedBy(t, stub.stubListener)), store, "")
-	refresher.Now = func() time.Time { return clock }
-	for i := range 3 {
-		clock = mintedAt.Add(time.Duration(i) * 10 * time.Second)
-		refresher.Refresh(context.Background())
-	}
-	g.Expect(stub.mints()).NotTo(HaveKey(string(sampleAgent)))
-	// Control: the unfenced agent beside it is minted for.
-	g.Expect(stub.mints()).To(HaveKey("grn:acme:default:agent:other"))
 }
 
 // slicesCount is how many of values equal value.

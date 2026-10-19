@@ -9,10 +9,9 @@ import (
 
 // AgentSpec defines the desired state of Agent
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || (has(self.identity) && self.identity.grn == oldSelf.identity.grn)",message="identity.grn cannot be changed or removed once set"
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.identity) || !has(oldSelf.identity.source) || oldSelf.identity.source != 'Control' || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="identity.source cannot leave Control once set"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.model) || !has(oldSelf.model.embedding) || (has(self.model) && has(self.model.embedding) && self.model.embedding.name == oldSelf.model.embedding.name && self.model.embedding.baseURL == oldSelf.model.embedding.baseURL)",message="model.embedding.name and model.embedding.baseURL cannot be changed or removed once set, because the agent's stored memory is embedded under them"
-// +kubebuilder:validation:XValidation:rule="!has(self.revision) || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="revision is set only on an agent whose identity.source is Control"
-// +kubebuilder:validation:XValidation:rule="!has(self.stopped) || !self.stopped || (has(self.identity) && has(self.identity.source) && self.identity.source == 'Control')",message="stopped is set only on an agent whose identity.source is Control"
+// +kubebuilder:validation:XValidation:rule="!has(self.revision) || has(self.identity)",message="revision is set only on an agent with an identity"
+// +kubebuilder:validation:XValidation:rule="!has(self.stopped) || !self.stopped || has(self.identity)",message="stopped is set only on an agent with an identity"
 type AgentSpec struct {
 	// type names the agent binary the workload carries. Today three are admitted
 	// — sherlock, claude-code and codex — and each maps to a different
@@ -89,9 +88,8 @@ type AgentSpec struct {
 	// replacement: its workload is scaled to no replica as for suspended, and
 	// its Pod is released only once its writers are seen to stop. It is
 	// written by this operator from the control service's feed on every
-	// render of an agent on the Control source, and cleared when the stop
-	// ends. It is set only where identity.source is Control; suspended stays
-	// a person's.
+	// render of the agent, and cleared when the stop ends. It is set only
+	// where identity is; suspended stays a person's.
 	// +optional
 	Stopped bool `json:"stopped,omitempty"`
 
@@ -133,20 +131,20 @@ type AgentSpec struct {
 
 	// identity is who the agent is in garam: the GRN garam minted for it and
 	// the assignment epoch this operator was proved to hold it at. It is written
-	// by this operator when it constructs the agent, and the agent is started
-	// under it. Unset on an Agent a user wrote, which is started under its own
-	// metadata.name instead: a development identity, not a GRN. The GRN cannot
-	// be changed or removed once set.
+	// by this operator when it renders the agent from the control service's
+	// desired feed, which every new revision is rendered from, and the agent is
+	// started under it. Unset on an Agent a user wrote, which is started under
+	// its own metadata.name instead: a development identity, not a GRN. The GRN
+	// cannot be changed or removed once set.
 	// +optional
 	Identity *AgentIdentity `json:"identity,omitempty"`
 
 	// revision is the control service's definition revision this spec was
 	// rendered from, as the canonical decimal string its feed carries. It is
-	// written by this operator on every render of an agent on the Control
-	// source, and delivered to the agent in its config file, which the agent
-	// reports back as the revision it runs. It is set only where
-	// identity.source is Control: an agent on any other source has no
-	// definition revision.
+	// written by this operator on every render of the agent, and delivered to
+	// the agent in its config file, which the agent reports back as the
+	// revision it runs. It is set only where identity is: an Agent a user
+	// wrote has no definition revision.
 	// +optional
 	// +kubebuilder:validation:MaxLength=19
 	// +kubebuilder:validation:Pattern=`^[1-9][0-9]*$`
@@ -168,29 +166,7 @@ type AgentIdentity struct {
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	AssignmentEpoch string `json:"assignmentEpoch,omitempty"`
-
-	// source is where this agent's desired state comes from. Garam is a garam
-	// definition, read once when the agent is constructed. Control is the
-	// control service's desired feed, which every new revision is rendered from.
-	// Absent is Garam, which is every agent constructed before this field
-	// existed. One source holds a GRN at a time, and Control is never left once
-	// set.
-	// +optional
-	// +kubebuilder:validation:Enum=Garam;Control
-	Source DesiredSource `json:"source,omitempty"`
 }
-
-// DesiredSource names where an agent's desired state comes from.
-type DesiredSource string
-
-// The sources an agent's desired state can come from.
-const (
-	// DesiredSourceGaram is a garam definition.
-	DesiredSourceGaram DesiredSource = "Garam"
-
-	// DesiredSourceControl is the control service's desired feed.
-	DesiredSourceControl DesiredSource = "Control"
-)
 
 // MemoryMoveSpec names one move of an agent's memory and the volume it moves
 // to. A move is settled by its id, so its target is fixed once it is set.
@@ -331,29 +307,6 @@ type AgentStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-
-	// agent is the garam resource name of the agent this Agent was constructed
-	// for, and is empty on an Agent a user wrote. garam mints it when an
-	// organization defines an agent and this operator is admitted to it by
-	// claiming the definition, so it is reported here and never asked for in
-	// the spec.
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	Agent string `json:"agent,omitempty"`
-
-	// epoch is the assignment epoch garam held this agent at when this operator
-	// constructed it, and is absent on an Agent a user wrote. It rises with every
-	// assignment, and garam accepts a report about an agent only at the epoch the
-	// assignment is currently on, so a report this operator sends carries this
-	// value and is refused once the agent has been assigned again.
-	//
-	// It is recorded where garam's mint proved it and is never
-	// refreshed afterwards. A value re-read later would be whatever epoch the
-	// assignment stands at, which is current whoever holds the agent by then, and
-	// a report carrying it could never be found stale.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	Epoch int64 `json:"epoch,omitempty"`
 
 	// placement is the Pod this Agent's agent last ran in, and the volume claim
 	// it ran on, as the controller observed them. A new Pod is a new placement;

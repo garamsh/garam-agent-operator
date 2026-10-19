@@ -61,8 +61,8 @@ type AgentReconciler struct {
 
 	// ControlAddress is the control service's host and port, and
 	// ControlRootFile the file holding the root its serving certificate chains
-	// to. Both are given to the adapter of every Control-source agent, which
-	// activates through the control service (ADR 0049, ADR 0068).
+	// to. Both are given to the adapter of every agent, which activates
+	// through the control service (ADR 0049, ADR 0077).
 	ControlAddress  string
 	ControlRootFile string
 }
@@ -356,9 +356,9 @@ func secretsRequiredBy(agent *agentv1alpha1.Agent) []requiredSecret {
 // is read, and the condition is this controller's alone to write.
 func (r *AgentReconciler) reconcileRecovery(ctx context.Context, agent *agentv1alpha1.Agent) error {
 	identity := agent.Spec.Identity
-	if identity == nil || identity.Source != agentv1alpha1.DesiredSourceControl {
-		// Only the control service recovers a credential: an agent on no other
-		// source carries the condition.
+	if identity == nil {
+		// Only the control service recovers a credential: an Agent a user wrote
+		// carries no condition.
 		meta.RemoveStatusCondition(&agent.Status.Conditions, agentv1alpha1.ConditionRecovery)
 
 		return nil

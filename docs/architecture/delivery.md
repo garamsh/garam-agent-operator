@@ -86,7 +86,7 @@ That development images go to repositories under `garam-dev/` and `garam/` holds
 
 That a development image carries its hash tag alone, and that every push is checked against the two namespaces, is [ADR 0067](adr/0067-tag-a-development-image-with-its-commit-hash-alone-and-refuse-a-push-the-namespaces-forbid.md), settled on #323 and #325. It supersedes ADR 0066's unchanged tags and ADR 0051's `dev-` tag: the namespace marks the role, no reader uses the tag, and in an immutable repository a tag can be added later but never removed. `gitops` asked for the check at the source because it sees a development push to the wrong path only as `ImagePullBackOff`.
 
-That a constructed agent is built in the manager's own namespace is [ADR 0009](adr/0009-construct-a-claimed-agent-from-the-operators-own-configuration.md), which is why that namespace is in the delivery set rather than beside it.
+That the agents the renderer builds are built in the manager's own namespace, the one the manager hands the renderer (`cmd/main.go`), is [ADR 0077](adr/0077-build-agents-only-from-the-control-services-feed-and-remove-the-legacy-path-and-the-cut-over.md) decision 1, which leaves the renderer the only builder, beside the namespace [ADR 0009](adr/0009-construct-a-claimed-agent-from-the-operators-own-configuration.md) first chose. That is why that namespace is in the delivery set rather than beside it.
 
 That the image carries a revision label was decided on issue #160, after a downstream repository that cites the deployed commit found the image carried no label. It changes no rule, so it carries no ADR.
 

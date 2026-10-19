@@ -30,12 +30,6 @@ type Agent struct {
 	Profile       Profile
 	Configuration Configuration
 
-	// Origin is OriginCutover for an agent whose revisions began with a
-	// switched cutover import, and empty for every other (ADR 0050, #217). It is
-	// carried as the wire has it: a value outside that set is the renderer's to
-	// refuse.
-	Origin string
-
 	// Stopped is true while the control service's stop holds the agent: its
 	// runtime is kept stopped, with no replacement (ADR 0057).
 	Stopped bool
@@ -51,10 +45,6 @@ type OpenRecovery struct {
 	RequestID string
 	Epoch     string
 }
-
-// OriginCutover is the origin of an agent garam recorded as switched from the
-// source it was built from: the manager takes such an agent over (#217).
-const OriginCutover = "cutover"
 
 // Profile is the execution settings of the profile version a revision names.
 type Profile struct {
@@ -118,16 +108,16 @@ type PreviousPlacement struct {
 // Renderer writes an agent's desired state into the Agent this operator builds
 // for it.
 type Renderer interface {
-	// Render creates the Agent for agent where none exists, with Control as
-	// its source, and otherwise writes the revision's fields into it. It returns
-	// ErrNotControlSource for an Agent whose desired state comes from elsewhere,
-	// and ErrMalformed for a revision it cannot render; both leave the Agent as
-	// it was.
+	// Render creates the Agent for agent where none exists, with the agent's
+	// identity, and otherwise writes the revision's fields into it. It returns
+	// ErrNotControlSource for an Agent a person wrote under the name, and
+	// ErrMalformed for a revision it cannot render; both leave the Agent as it
+	// was.
 	Render(ctx context.Context, agent Agent) error
 }
 
-// ErrNotControlSource is a revision for an agent whose desired state another
-// source holds. One source holds a GRN at a time, so it is not rendered.
+// ErrNotControlSource is a revision for an agent whose Agent a person wrote:
+// it carries no identity, or another GRN, so it is not rendered.
 var ErrNotControlSource = errors.New("the agent's desired state does not come from the control service")
 
 // ErrMalformed is a revision that cannot be rendered as it stands.

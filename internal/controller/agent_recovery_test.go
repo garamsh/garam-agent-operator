@@ -36,7 +36,7 @@ var _ = Describe("Recovering an agent's credential", func() {
 		name := "recovers-its-credential"
 		createSecret(credentialsSecretName(name))
 		agent := newAgent(name)
-		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: recoveringGRN, Source: agentv1alpha1.DesiredSourceControl}
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: recoveringGRN}
 		createAgent(agent)
 		reconcileOnce(name)
 

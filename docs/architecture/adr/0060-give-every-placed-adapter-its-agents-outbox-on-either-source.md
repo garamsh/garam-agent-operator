@@ -1,6 +1,6 @@
 # ADR 0060: Give every placed adapter its agent's outbox on either source, and keep the control settings to the Control source
 
-> Status: accepted
+> Status: accepted; the unfenced adapter's outbox superseded by ADR-0077
 > Date: 2026-10-07
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

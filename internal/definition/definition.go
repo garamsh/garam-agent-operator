@@ -215,9 +215,6 @@ type Position int64
 type DesiredRevision struct {
 	Definition Definition
 	Settings   ExecutionSettings
-	// Cutover is true for an agent whose revisions began with a cutover import garam recorded as
-	// switched: the controller takes it over from the source it was built from.
-	Cutover bool
 	// Stopped is true while a stop holds the agent: the controller keeps its runtime stopped.
 	Stopped bool
 	// Recovery is the agent's open recovery, nil where none is open: the controller prepares its
@@ -445,23 +442,6 @@ var (
 	// embedding the agent's latest revision names, or removing it (ADR 0052).
 	ErrEmbeddingImmutable = errors.New("an agent's embedding cannot be changed or removed once set")
 
-	// ErrImportOpen is returned for a cutover import of an agent that holds another import.
-	ErrImportOpen = errors.New("another cutover import is open for the agent")
-
-	// ErrAlreadyDefined is returned for a cutover import of an agent that already has a definition.
-	ErrAlreadyDefined = errors.New("the agent already has a definition here")
-
-	// ErrCutoverPending is returned for a change to an agent whose cutover import is not switched:
-	// nothing of it is released, and nothing may be added to it, before garam records the switch.
-	ErrCutoverPending = errors.New("the agent's cutover is not switched")
-
-	// ErrCutoverStage is returned for a cutover stage the stored import is not ready for.
-	ErrCutoverStage = errors.New("the cutover import is not at a stage this one follows")
-
-	// ErrReverseMigrationRequired is returned for a rollback of a switched cutover: the source
-	// cannot return to garam from here.
-	ErrReverseMigrationRequired = errors.New("the cutover is switched; only a reverse migration returns it")
-
 	// ErrActivationMismatch is returned when garam answers a stored activation request with
 	// another activation than the one recorded for it.
 	ErrActivationMismatch = errors.New("garam answered another activation for the request")
@@ -619,50 +599,6 @@ type RuntimeApplied struct {
 	ActivationID string
 	Generation   string
 	ObservedAt   time.Time
-}
-
-// CutoverStage is how far a cutover import has gone.
-type CutoverStage string
-
-const (
-	// CutoverImported is an import read from garam and stored inactive.
-	CutoverImported CutoverStage = "imported"
-	// CutoverFrozen is an import garam froze, verified against its digest.
-	CutoverFrozen CutoverStage = "frozen"
-	// CutoverSwitched is an import garam recorded as switched: its revision 1 is active.
-	CutoverSwitched CutoverStage = "switched"
-)
-
-// Disposition is what a cutover import does with one of the source's values.
-type Disposition string
-
-const (
-	// DispositionImport puts a tools.pins.<tool> value into revision 1's tools.
-	DispositionImport Disposition = "import"
-	// DispositionArchive keeps a value verbatim and applies it nowhere.
-	DispositionArchive Disposition = "archive"
-	// DispositionNeverApplied is a value the legacy path never applied, archived as such.
-	DispositionNeverApplied Disposition = "never-applied"
-)
-
-// CutoverImport is a legacy agent's source as control imported it from garam: keyed by its GRN,
-// every value kept verbatim with what was done with it, and the digest garam's freeze verifies.
-type CutoverImport struct {
-	Agent GRN
-	// Organization is the one the import was requested in, where its profile is resolved.
-	Organization string
-	ImportID     string
-	Epoch        string
-	Assignee     string
-	SourceDigest string
-	Values       map[string]string
-	Dispositions map[string]Disposition
-	Profile      ProfileRef
-	Pins         ToolPins
-	Stage        CutoverStage
-	// ConfigureRef is the durable agent:configure reference the switch carried, which revision 1's
-	// first activation is sent under.
-	ConfigureRef string
 }
 
 // RecoveryStage is how far an agent's credential recovery has gone (ADR 0057).

@@ -311,7 +311,7 @@ type sherlockConfig struct {
 	// sherlock reports back verbatim as its config_revision
 	// (sherlock@v0.2.0:internal/config/config.go:80-84,
 	// internal/gateway/gateway.go:38-40). It is left out where the Agent carries
-	// none, which is every Agent not on the Control source.
+	// none, which is every Agent a user wrote.
 	Revision  string                   `json:"revision,omitempty"`
 	Tools     *sherlockConfigTools     `json:"tools,omitempty"`
 	Model     *sherlockConfigModel     `json:"model,omitempty"`

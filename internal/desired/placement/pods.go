@@ -47,7 +47,7 @@ func (p *Pods) Current(ctx context.Context) ([]desired.CurrentPlacement, error) 
 	for i := range agents.Items {
 		agent := &agents.Items[i]
 		identity := agent.Spec.Identity
-		if identity == nil || identity.Source != agentv1alpha1.DesiredSourceControl || identity.AssignmentEpoch == "" {
+		if identity == nil || identity.AssignmentEpoch == "" {
 			continue
 		}
 		placement, ok, err := p.placementOf(ctx, agent)

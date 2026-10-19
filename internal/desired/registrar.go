@@ -30,7 +30,7 @@ type CurrentPlacement struct {
 // PlacementStore reads the managed agents' current placements.
 type PlacementStore interface {
 	// Current lists the current placement of every agent that registers one:
-	// an agent on the control source, with garam's adapter placed, whose Pod
+	// an agent with an identity, with garam's adapter placed, whose Pod
 	// runs and has recorded the claim it started on.
 	Current(ctx context.Context) ([]CurrentPlacement, error)
 }

@@ -221,8 +221,6 @@ func (p presenting) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // feed is one answer of the desired feed.
 type feed struct {
-	// origins is each released agent's origin, empty where the answer names none.
-	origins map[string]string
 	status  int
 	cursor  string
 	agents  map[string]string
@@ -240,17 +238,15 @@ func (e *env) desired(t *testing.T, client *http.Client, query string) feed {
 		Agents []struct {
 			Agent    string `json:"agent"`
 			Revision string `json:"revision"`
-			Origin   string `json:"origin"`
 		} `json:"agents"`
 		Kind    string `json:"kind"`
 		Message string `json:"message"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	f := feed{status: resp.StatusCode, cursor: out.Cursor, agents: map[string]string{}, origins: map[string]string{},
+	f := feed{status: resp.StatusCode, cursor: out.Cursor, agents: map[string]string{},
 		kind: out.Kind, message: out.Message}
 	for _, a := range out.Agents {
 		f.agents[a.Agent] = a.Revision
-		f.origins[a.Agent] = a.Origin
 	}
 	return f
 }

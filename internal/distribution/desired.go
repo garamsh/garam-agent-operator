@@ -28,10 +28,6 @@ type desiredAgent struct {
 	Epoch         string        `json:"epoch"`
 	Profile       profile       `json:"profile"`
 	Configuration configuration `json:"configuration"`
-	// Origin is "cutover" for an agent garam recorded as switched from its legacy source, and
-	// absent otherwise: the manager takes such an agent over from the source it was built from
-	// (ADR 0050).
-	Origin string `json:"origin,omitempty"`
 	// Stopped is true while a stop holds the agent, and absent otherwise: the controller keeps its
 	// runtime stopped, with no replacement (ADR 0057).
 	Stopped bool `json:"stopped,omitempty"`
@@ -45,9 +41,6 @@ type recovery struct {
 	RequestID string `json:"requestId"`
 	Epoch     string `json:"epoch"`
 }
-
-// originCutover is the origin of an agent whose revisions began with a cutover import.
-const originCutover = "cutover"
 
 type profile struct {
 	Name             string                      `json:"name"`
@@ -182,10 +175,6 @@ func parseFeedQuery(r *http.Request) (*definition.Position, time.Duration, error
 
 func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 	def, settings := d.Definition, d.Settings
-	origin := ""
-	if d.Cutover {
-		origin = originCutover
-	}
 	var workspaceSize *string
 	if settings.WorkspaceStorageSize != nil {
 		size := settings.WorkspaceStorageSize.String()
@@ -202,7 +191,6 @@ func desiredAgentOf(d definition.DesiredRevision) desiredAgent {
 	return desiredAgent{
 		Stopped:  d.Stopped,
 		Recovery: open,
-		Origin:   origin,
 		Agent:    string(def.Agent),
 		Revision: def.Revision.String(),
 		Epoch:    def.Assignment.Epoch,

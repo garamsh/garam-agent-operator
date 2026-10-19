@@ -158,11 +158,10 @@ var conditionTypes = []string{
 // holds and not against a decision this reconcile made: Status is observed state
 // and never an input to what Reconcile does.
 //
-// A patch and not an update: the poller reports status.agent on an Agent this
-// operator constructed, and an update carries the resource version its object
+// A patch and not an update: an update carries the resource version its object
 // was read at, so a write landing between the read and it is refused. A merge
 // patch carries no resource version and names only the fields this reconcile
-// decided, which is what makes the two writers' disjoint fields disjoint writes.
+// decided.
 func (r *AgentReconciler) writeStatus(ctx context.Context, agent, held *agentv1alpha1.Agent) error {
 	agent.Status.Conditions = slices.DeleteFunc(agent.Status.Conditions, func(condition metav1.Condition) bool {
 		return !slices.Contains(conditionTypes, condition.Type)
