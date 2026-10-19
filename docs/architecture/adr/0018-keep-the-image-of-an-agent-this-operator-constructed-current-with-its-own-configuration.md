@@ -1,6 +1,6 @@
 # ADR 0018: Keep the image of an agent this operator constructed current with its own configuration
 
-> Status: accepted
+> Status: accepted; the constructor's correction superseded by ADR-0077
 > Date: 2026-09-04
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
