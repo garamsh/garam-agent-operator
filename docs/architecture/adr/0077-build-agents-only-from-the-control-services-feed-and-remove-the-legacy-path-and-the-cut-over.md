@@ -34,7 +34,7 @@ aurora runs operator `v0.2.0` with `--garam-address` set and no control service.
 4. **The flags only those paths read are removed.** These are `--garam-poll-interval`, `--garam-report-interval`, `--agent-storage-size` and `--agent-workspace-storage-size`. The renderer sizes both claims from the profile. `--agent-image`, `--garam-address`, `--garam-trust-file` and the three key files are required where `--control-address` is set.
 5. **The control service serves no cut-over.** The four console routes, `agent:cutover`, the `agent-cutover.v2` contract, the definition domain's imports and the feed's `origin` are removed. Migration 3 drops `cutover_imports`, and migrations 1 and 2 are not edited. A revision an unswitched import left with no assignment stays in `definitions` and is released to no controller.
 6. **No operator holds a certificate.** The control e2e suite registers both operators and has garam issue each a key, and enrolls neither. Its delegation names no `agent:cutover`. `internal/certificate` stays, because it is the control API's serving-certificate reloader, not client authentication. The mint answer's `serverRootPem` stays required (`internal/garam/client.go`), because it is still answered and is what the adapter and the agent verify garam's listener against.
-7. **No legacy agent is migrated.** An `Agent` that a legacy construction built is deleted before this version's CRD is applied, because the field it carries no longer exists.
+7. **No legacy agent is migrated.** An `Agent` that a legacy construction built is deleted before this version is deployed. It carries `spec.identity`, so by decision 2 this version reads it as the control service's: the refresher mints it a token for the control service, and its adapter is built fenced, to activate through a control service that holds no definition for its GRN and never released it.
 
 ## Consequences
 
@@ -44,7 +44,7 @@ aurora runs operator `v0.2.0` with `--garam-address` set and no control service.
   - [ADR 0018](0018-keep-the-image-of-an-agent-this-operator-constructed-current-with-its-own-configuration.md): the constructor's correction. The renderer writes `spec.image` on every render, and a restart renders every agent again.
   - [ADR 0043](0043-pull-managed-agents-desired-state-from-the-control-service-and-keep-each-grn-on-one-source.md): the source marker.
   - [ADR 0060](0060-give-every-placed-adapter-its-agents-outbox-on-either-source.md): the unfenced adapter's outbox.
-- **aurora.** A manager configured as aurora's is today, with `--garam-address` and no `--control-address`, builds no agents after this change. aurora deletes its legacy `Agent` before applying the CRD, and drops from its overlay any flag decision 4 removes.
+- **aurora.** A manager configured as aurora's is today, with `--garam-address` and no `--control-address`, builds no agents after this change. aurora deletes its legacy `Agent` before deploying this version (decision 7), and drops from its overlay any flag decision 4 removes.
 - **Deployer surface.** Go's flag parsing refuses a flag it does not define, so a manager still passed a removed flag does not start. The CRD loses three fields. RBAC is unchanged: the renderer still creates `Agent`s, and the token store and the recoverer still create Secrets.
 - **Tests.** The cut-over e2e tests and their fixtures go. The Kind suite's legacy move test becomes a revision roll on an `Agent` with an identity, which keeps the roll's coverage (#340).
 
