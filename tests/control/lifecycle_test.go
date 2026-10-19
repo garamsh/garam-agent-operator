@@ -9,10 +9,43 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// restartsPerWindow bounds the attached binary's starts in garam's exchange window. Each start
+// exchanges a token under the hosted operator's key, and garam admits ten exchanges a minute per
+// operator (garam@afde8b8 internal/operator/assertion.go ExchangesPerClient, ExchangeWindow); the
+// rest are the first start's and the suite's own client's.
+const restartsPerWindow = 6
+
+// restarts is when the attached binary was restarted, oldest first.
+var restarts []time.Time
+
+// restartAttached stops the attached binary and starts it again on the same database, as a
+// restart of the control service would: nothing it held in memory survives. attachedURL moves to
+// the new process. It waits first where another start would pass garam's exchange limit.
+func restartAttached(t *testing.T) {
+	t.Helper()
+	if n := len(restarts); n >= restartsPerWindow {
+		time.Sleep(time.Until(restarts[n-restartsPerWindow].Add(time.Minute)))
+	}
+	restarts = append(restarts, time.Now())
+	attached.stop()
+	restarted, err := attachedStart()
+	require.NoError(t, err)
+	attached = restarted
+}
+
+// requestBody is v as the JSON body a console request carries.
+func requestBody(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return b
+}
 
 // lifecycleRoute is the console route of agent under route.
 func lifecycleRoute(agent, route string) string {

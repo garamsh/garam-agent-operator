@@ -23,7 +23,6 @@ import (
 
 	"github.com/garamsh/garam-agent-operator/internal/certificate"
 	"github.com/garamsh/garam-agent-operator/internal/console"
-	"github.com/garamsh/garam-agent-operator/internal/console/cutover"
 	"github.com/garamsh/garam-agent-operator/internal/console/introspector"
 	"github.com/garamsh/garam-agent-operator/internal/console/lifecycle"
 	"github.com/garamsh/garam-agent-operator/internal/definition"
@@ -150,7 +149,6 @@ func run(ctx context.Context, o options, databaseURL string) error {
 	api.Handle("/v1/orgs/", console.NewHandler(console.Config{
 		Definitions:  definitions,
 		Introspector: introspector.NewGaram(garam),
-		Cutover:      cutover.NewGaram(garam),
 		Lifecycle:    lifecycle.NewGaram(garam),
 		Audience:     audience,
 		Now:          time.Now,

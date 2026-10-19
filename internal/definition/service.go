@@ -24,11 +24,6 @@ type Service interface {
 	RecordStatus(ctx context.Context, agent GRN, observed, rendered Revision) (Status, error)
 	RegisterPlacement(ctx context.Context, in PlacementInput) (p Placement, first bool, err error)
 	CurrentPlacement(ctx context.Context, agent GRN) (Placement, error)
-	ImportCutover(ctx context.Context, imp CutoverImport) (stored CutoverImport, first bool, err error)
-	CutoverImportOf(ctx context.Context, agent GRN) (CutoverImport, error)
-	FreezeCutover(ctx context.Context, agent GRN, importID string) error
-	SwitchCutover(ctx context.Context, agent GRN, importID, configureRef string) error
-	RollBackCutover(ctx context.Context, agent GRN, importID string) error
 	WithActivationLock(ctx context.Context, agent GRN, fn func(context.Context) error) error
 	PrepareActivation(ctx context.Context, agent GRN, req ActivationRequest) (Activation, error)
 	RecordActivation(ctx context.Context, agent GRN, requestID, activationID string) error

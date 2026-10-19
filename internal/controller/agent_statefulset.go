@@ -849,11 +849,12 @@ func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet, descri
 }
 
 // adapterBuilt reports whether an Agent's Pod carries garam's adapter. It needs
-// an image to run, the listener to claim from, and the GRN it carries messages
-// for, which garam refuses to start without; an Agent a user wrote carries no
-// GRN, and garam does not know it.
+// an image to run, the listener to claim from, the control service it
+// activates through, and the GRN it carries messages for, which garam refuses
+// to start without; an Agent a user wrote carries no GRN, and garam does not
+// know it (ADR 0049, ADR 0077).
 func (r *AgentReconciler) adapterBuilt(agent *agentv1alpha1.Agent) bool {
-	return r.AdapterImage != "" && r.GaramAddress != "" && agent.Spec.Identity != nil
+	return r.AdapterImage != "" && r.GaramAddress != "" && r.ControlAddress != "" && agent.Spec.Identity != nil
 }
 
 // applyAdapter builds garam's adapter as a native sidecar of the agent's Pod,
@@ -904,18 +905,6 @@ func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *
 	// (garam@e81a1e0:internal/delivery/outbox.go:142-157), so it writes, and it
 	// never sees the memory store.
 	outbox := corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: descriptor.outboxDir()}
-	if !r.adapterFenced(agent) {
-		// Legacy and unfenced, a Garam-source agent's: the outbox alone, which
-		// the legacy mode forwards on its own and never with a control socket
-		// (garam@59fe68d:internal/cli/delivery.go:98-118, internal/cli/cli.go:91-94;
-		// ADR 0060).
-		adapter.Env = append(adapter.Env,
-			corev1.EnvVar{Name: adapterOutboxDirSetting, Value: outboxMountPath})
-		adapter.VolumeMounts = append(adapter.VolumeMounts, outbox)
-
-		return
-	}
-
 	// Fenced (garam@e81a1e0, ADR-0084): the three control settings together, and
 	// the outbox beside them, which that adapter requires
 	// (garam@e81a1e0:internal/cli/cli.go:79-91,188-191;
@@ -951,19 +940,11 @@ func (r *AgentReconciler) issuerFor(agent *agentv1alpha1.Agent, descriptor agent
 	}
 }
 
-// adapterFenced reports whether the agent's adapter activates through the
-// control service: wherever the adapter is built for an agent that is the
-// control service's, since only those register a placement to activate
-// (ADR 0049, ADR 0068).
-func (r *AgentReconciler) adapterFenced(agent *agentv1alpha1.Agent) bool {
-	return r.adapterBuilt(agent) && agent.Spec.Identity.Source == agentv1alpha1.DesiredSourceControl
-}
-
 // controlRootFor is the control root to give the agent's adapter, nil where it
 // is given none. It is read at each reconcile, so a rotated root reaches the
 // next Pod.
 func (r *AgentReconciler) controlRootFor(agent *agentv1alpha1.Agent) ([]byte, error) {
-	if !r.adapterFenced(agent) {
+	if !r.adapterBuilt(agent) {
 		return nil, nil
 	}
 	root, err := os.ReadFile(r.ControlRootFile)
@@ -974,7 +955,7 @@ func (r *AgentReconciler) controlRootFor(agent *agentv1alpha1.Agent) ([]byte, er
 	return root, nil
 }
 
-// applyOutbox builds, wherever the adapter is placed, on either source, the init
+// applyOutbox builds, wherever the adapter is placed, the init
 // container that makes the agent's outbox directory on the state claim as the
 // Pod's user, before the adapter mounts it, and removes it elsewhere (ADR 0060).
 // It makes the directory only where it is absent and touches nothing else.

@@ -11,7 +11,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
 
-	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 	"github.com/garamsh/garam-agent-operator/internal/garam"
 )
 
@@ -22,8 +21,7 @@ const testGaramIssuer = "https://machine.dev.garam.sh"
 
 // reconcileAgentWithIssuer runs one reconcile for the named Agent, with this
 // operator placing garam's adapter where adapter is true, naming the control
-// service a Control-source agent's adapter activates through, and giving the
-// manager issuer.
+// service the adapter activates through, and giving the manager issuer.
 func reconcileAgentWithIssuer(name, issuer string, adapter bool) (reconcile.Result, error) {
 	GinkgoHelper()
 
@@ -64,36 +62,31 @@ var _ = Describe("Message issuer", func() {
 	// ADR 0071: one static entry, the keys fetched from the machine listener the
 	// adapter is given and verified against the garam server root the agent
 	// mounts out of its credential Secret (ADR 0073).
-	It("renders garam's issuer, its keys under the adapter's garam address, and the server root the agent mounts, on either source", func() {
-		for _, source := range []agentv1alpha1.DesiredSource{agentv1alpha1.DesiredSourceGaram, agentv1alpha1.DesiredSourceControl} {
-			By("an agent on the " + string(source) + " source")
-			name := "issuer-" + map[agentv1alpha1.DesiredSource]string{
-				agentv1alpha1.DesiredSourceGaram: "garam", agentv1alpha1.DesiredSourceControl: "control",
-			}[source]
-			agentFrom(name, source)
-			_, err := reconcileAgentWithIssuer(name, testGaramIssuer, true)
-			Expect(err).NotTo(HaveOccurred())
-			pod := statefulSetFor(name).Spec.Template.Spec
+	It("renders garam's issuer, its keys under the adapter's garam address, and the server root the agent mounts", func() {
+		name := "issuer-rendered"
+		agentFrom(name)
+		_, err := reconcileAgentWithIssuer(name, testGaramIssuer, true)
+		Expect(err).NotTo(HaveOccurred())
+		pod := statefulSetFor(name).Spec.Template.Spec
 
-			Expect(renderedConfig(pod)).To(HaveKeyWithValue("issuers", ConsistOf(map[string]any{
-				"issuer":       testGaramIssuer,
-				"keys-url":     "https://" + testGaramAddress + "/message-signing-keys",
-				"keys-ca-file": "/run/sherlock/credentials/" + garam.ServerRootKey,
-			})))
+		Expect(renderedConfig(pod)).To(HaveKeyWithValue("issuers", ConsistOf(map[string]any{
+			"issuer":       testGaramIssuer,
+			"keys-url":     "https://" + testGaramAddress + "/message-signing-keys",
+			"keys-ca-file": "/run/sherlock/credentials/" + garam.ServerRootKey,
+		})))
 
-			By("the keys-ca-file in the server root the agent container mounts, and nothing else of its credential")
-			Expect(containerOf(pod, agentContainerName).VolumeMounts).To(ContainElement(
-				corev1.VolumeMount{Name: serverRootVolumeName, MountPath: agentTypeSherlock.credentialsMountPath, ReadOnly: true}))
-			Expect(agentTypeSherlock.credentialsMountPath).To(Equal("/run/sherlock/credentials"))
-			Expect(volumeNamed(pod, serverRootVolumeName).Secret.Items).To(Equal(
-				[]corev1.KeyToPath{{Key: garam.ServerRootKey, Path: garam.ServerRootKey}}))
-			By("the same file the adapter reads as its server root, from the same Secret")
-			adapter := initContainerOf(pod, adapterContainerName)
-			Expect(environmentOf(adapter)).To(HaveKeyWithValue(adapterServerRootSetting,
-				adapterCredentialsMountPath+"/"+garam.ServerRootKey))
-			Expect(volumeNamed(pod, credentialsVolumeName).Secret.SecretName).
-				To(Equal(volumeNamed(pod, serverRootVolumeName).Secret.SecretName))
-		}
+		By("the keys-ca-file in the server root the agent container mounts, and nothing else of its credential")
+		Expect(containerOf(pod, agentContainerName).VolumeMounts).To(ContainElement(
+			corev1.VolumeMount{Name: serverRootVolumeName, MountPath: agentTypeSherlock.credentialsMountPath, ReadOnly: true}))
+		Expect(agentTypeSherlock.credentialsMountPath).To(Equal("/run/sherlock/credentials"))
+		Expect(volumeNamed(pod, serverRootVolumeName).Secret.Items).To(Equal(
+			[]corev1.KeyToPath{{Key: garam.ServerRootKey, Path: garam.ServerRootKey}}))
+		By("the same file the adapter reads as its server root, from the same Secret")
+		adapter := initContainerOf(pod, adapterContainerName)
+		Expect(environmentOf(adapter)).To(HaveKeyWithValue(adapterServerRootSetting,
+			adapterCredentialsMountPath+"/"+garam.ServerRootKey))
+		Expect(volumeNamed(pod, credentialsVolumeName).Secret.SecretName).
+			To(Equal(volumeNamed(pod, serverRootVolumeName).Secret.SecretName))
 	})
 
 	It("renders the issuer byte for byte, normalising nothing sherlock compares exactly", func() {
@@ -101,7 +94,7 @@ var _ = Describe("Message issuer", func() {
 		// upper-case host.
 		const unnormalised = "https://Machine.Dev.Garam.sh/"
 		name := "issuer-verbatim"
-		agentFrom(name, agentv1alpha1.DesiredSourceGaram)
+		agentFrom(name)
 		_, err := reconcileAgentWithIssuer(name, unnormalised, true)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -111,7 +104,7 @@ var _ = Describe("Message issuer", func() {
 
 	It("renders no issuer where the manager names none, or where the agent's Pod carries no adapter", func() {
 		name := "issuer-absent"
-		agentFrom(name, agentv1alpha1.DesiredSourceGaram)
+		agentFrom(name)
 
 		By("the control: with the issuer and the adapter, the entry is rendered")
 		_, err := reconcileAgentWithIssuer(name, testGaramIssuer, true)

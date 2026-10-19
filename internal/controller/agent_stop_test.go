@@ -26,14 +26,14 @@ func setStopped(name string, stopped bool) {
 	Expect(readAgent(name).Spec.Stopped).To(Equal(stopped))
 }
 
-// controlAgent creates a Control-source Agent and its workload, the claim of its volume, and its
-// Pod on node with every container in state, as fencedAgent does for an Agent of no source.
+// controlAgent creates an Agent with an identity and its workload, the claim of its volume, and its
+// Pod on node with every container in state, as fencedAgent does for an Agent with none.
 func controlAgent(name, node string, state corev1.ContainerState) *corev1.Pod {
 	GinkgoHelper()
 
 	createSecret(credentialsSecretName(name))
 	agent := newAgent(name)
-	agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceControl}
+	agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
 	createAgent(agent)
 	reconcileOnce(name)
 	createClaim(name)
@@ -49,7 +49,7 @@ var _ = Describe("Stopping an agent from the control service", func() {
 		createNode("stop-node-unknown", corev1.ConditionUnknown)
 		pod := controlAgent(name, "stop-node-unknown", runningState)
 
-		By("the control: a Control-source agent the control service does not stop runs one replica")
+		By("the control: an agent the control service does not stop runs one replica")
 		Expect(statefulSetFor(name).Spec.Replicas).To(Equal(ptr.To[int32](1)))
 		expectCondition(name, agentv1alpha1.ConditionSuspended, metav1.ConditionFalse, agentv1alpha1.ReasonNotSuspended)
 
@@ -79,25 +79,17 @@ var _ = Describe("Stopping an agent from the control service", func() {
 		Expect(held.UID).To(Equal(pod.UID), "a replacement Pod was made")
 	})
 
-	It("admits spec.stopped only on a Control-source Agent", func() {
-		By("the control: a Control-source Agent may be stopped")
+	It("admits spec.stopped only on an Agent with an identity", func() {
+		By("the control: an Agent with an identity may be stopped")
 		agent := newAgent("stopped-on-control")
-		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceControl}
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
 		agent.Spec.Stopped = true
 		createAgent(agent)
 		Expect(readAgent(agent.Name).Spec.Stopped).To(BeTrue())
 
-		for _, identity := range []*agentv1alpha1.AgentIdentity{
-			nil,
-			{GRN: testGRN},
-			{GRN: testGRN, Source: agentv1alpha1.DesiredSourceGaram},
-		} {
-			elsewhere := newAgent("stopped-elsewhere")
-			elsewhere.Spec.Identity = identity
-			elsewhere.Spec.Stopped = true
-			Expect(k8sClient.Create(ctx, elsewhere)).
-				To(MatchError(ContainSubstring("stopped is set only on an agent whose identity.source is Control")),
-					"identity %+v", identity)
-		}
+		elsewhere := newAgent("stopped-elsewhere")
+		elsewhere.Spec.Stopped = true
+		Expect(k8sClient.Create(ctx, elsewhere)).
+			To(MatchError(ContainSubstring("stopped is set only on an agent with an identity")))
 	})
 })

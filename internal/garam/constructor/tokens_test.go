@@ -74,36 +74,34 @@ func holderOf(store *constructor.Tokens, grn string) garam.TokenHolder {
 	return garam.TokenHolder{}
 }
 
-// tokensOf is what one refresh mints for a fenced agent: its token, and the one
-// for the control service.
+// tokensOf is what one refresh mints for an agent: its token, and the one for
+// the control service.
 func tokensOf(token string) garam.Tokens {
 	return garam.Tokens{
 		Garam:   garam.AgentToken{Token: token, ServerRootPEM: []byte("a root")},
-		Control: &garam.AgentToken{Token: "control " + token},
+		Control: garam.AgentToken{Token: "control " + token},
 	}
 }
 
 var _ = Describe("Token store", func() {
-	It("lists every agent with an identity, on either source, and no agent a user wrote", func() {
-		managed, claimed, written := "grn:acme:default:agent:managed", "grn:acme:default:agent:claimed", "written"
-		agentWith(managed, &agentv1alpha1.AgentIdentity{
-			GRN: managed, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceControl,
-		})
-		agentWith(claimed, &agentv1alpha1.AgentIdentity{GRN: claimed, Source: agentv1alpha1.DesiredSourceGaram})
+	It("lists every agent with an identity, and no agent a user wrote", func() {
+		managed, unknown, written := "grn:acme:default:agent:managed", "grn:acme:default:agent:unknown", "written"
+		agentWith(managed, &agentv1alpha1.AgentIdentity{GRN: managed, AssignmentEpoch: "7"})
+		agentWith(unknown, &agentv1alpha1.AgentIdentity{GRN: unknown})
 		agentWith(written, nil)
 
 		holders, err := constructor.NewTokens(k8sClient, scheme.Scheme, tokensNamespace).Holders(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(holders).To(ConsistOf(
-			garam.TokenHolder{Agent: garam.GRN(managed), Epoch: 7, Fenced: true},
-			garam.TokenHolder{Agent: garam.GRN(claimed)},
+			garam.TokenHolder{Agent: garam.GRN(managed), Epoch: 7},
+			garam.TokenHolder{Agent: garam.GRN(unknown)},
 		))
 	})
 
 	It("lists an agent whose epoch does not parse beside the others, so the others are still refreshed", func() {
 		malformed, sound := "grn:acme:default:agent:malformed", "grn:acme:default:agent:sound"
-		agentWith(malformed, &agentv1alpha1.AgentIdentity{GRN: malformed, AssignmentEpoch: "x", Source: agentv1alpha1.DesiredSourceGaram})
-		agentWith(sound, &agentv1alpha1.AgentIdentity{GRN: sound, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceGaram})
+		agentWith(malformed, &agentv1alpha1.AgentIdentity{GRN: malformed, AssignmentEpoch: "x"})
+		agentWith(sound, &agentv1alpha1.AgentIdentity{GRN: sound, AssignmentEpoch: "7"})
 
 		holders, err := constructor.NewTokens(k8sClient, scheme.Scheme, tokensNamespace).Holders(ctx)
 		Expect(err).NotTo(HaveOccurred(), "one agent's epoch failed the whole list")
@@ -122,8 +120,8 @@ var _ = Describe("Token store", func() {
 	})
 
 	It("creates the credential owned by the agent's Agent, then replaces its tokens and refresh time in one write", func() {
-		grn := "grn:acme:default:agent:fenced"
-		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceControl})
+		grn := "grn:acme:default:agent:stored"
+		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7"})
 		store := constructor.NewTokens(k8sClient, scheme.Scheme, tokensNamespace)
 		due := time.Date(2026, 10, 14, 15, 40, 0, 0, time.UTC)
 
@@ -150,33 +148,9 @@ var _ = Describe("Token store", func() {
 		Expect(holderOf(store, grn).Due).To(Equal(later))
 	})
 
-	It("mints at once for an agent a cutover fenced, whose credential holds no token for the control service", func() {
-		grn := "grn:acme:default:agent:cutover"
-		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceGaram})
-		store := constructor.NewTokens(k8sClient, scheme.Scheme, tokensNamespace)
-		due := time.Date(2026, 10, 14, 15, 40, 0, 0, time.UTC)
-		unfenced := tokensOf("garam's alone")
-		unfenced.Control = nil
-		Expect(store.Store(ctx, holderOf(store, grn), unfenced, due)).To(Succeed())
-		Expect(holderOf(store, grn).Due).To(Equal(due), "the unfenced agent's tokens are not due at their refresh time")
-
-		By("moving the agent to the control service, as a cutover does")
-		agent := &agentv1alpha1.Agent{}
-		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: tokensNamespace, Name: agentname.Agent(grn)}, agent)).To(Succeed())
-		agent.Spec.Identity.Source = agentv1alpha1.DesiredSourceControl
-		Expect(k8sClient.Update(ctx, agent)).To(Succeed())
-		moved := holderOf(store, grn)
-		Expect(moved.Fenced).To(BeTrue())
-		Expect(moved.Due).To(BeZero(), "a fenced agent with no control token waits for its refresh time")
-
-		// Control: once its control token is written, it is due at its refresh time again.
-		Expect(store.Store(ctx, moved, tokensOf("fenced"), due)).To(Succeed())
-		Expect(holderOf(store, grn).Due).To(Equal(due))
-	})
-
 	It("refuses to write over a credential a recovery changed since it was read", func() {
 		grn := "grn:acme:default:agent:recovered"
-		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceControl})
+		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7"})
 		store := constructor.NewTokens(k8sClient, scheme.Scheme, tokensNamespace)
 		due := time.Date(2026, 10, 14, 15, 40, 0, 0, time.UTC)
 		Expect(store.Store(ctx, holderOf(store, grn), tokensOf("old lineage"), due)).To(Succeed())

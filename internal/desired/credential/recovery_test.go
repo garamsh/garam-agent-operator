@@ -41,9 +41,7 @@ func managedAgent(grn string) {
 			Image:                 "example.com/sherlock:v1",
 			CredentialsSecretName: agentname.CredentialsSecret(grn),
 			StorageSize:           resource.MustParse("1Gi"),
-			Identity: &agentv1alpha1.AgentIdentity{
-				GRN: grn, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceControl,
-			},
+			Identity:              &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7"},
 		},
 	}
 	Expect(k8sClient.Create(ctx, agent)).To(Succeed())

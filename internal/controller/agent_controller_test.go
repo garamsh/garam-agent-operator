@@ -2,6 +2,8 @@ package controller
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -172,14 +174,22 @@ const (
 )
 
 // reconcileAgentWithAdapter runs one reconcile for the named Agent, with this
-// operator placing garam's adapter from testAdapterImage.
+// operator placing garam's adapter from testAdapterImage, and naming the
+// control service it activates through.
 func reconcileAgentWithAdapter(name string) (reconcile.Result, error) {
+	GinkgoHelper()
+
+	rootFile := filepath.Join(GinkgoT().TempDir(), "control-root.pem")
+	Expect(os.WriteFile(rootFile, []byte(testControlRoot), 0o600)).To(Succeed())
+
 	return runReconcile(name, &AgentReconciler{
-		Client:       k8sClient,
-		Scheme:       k8sClient.Scheme(),
-		CopyImage:    testCopyImage,
-		AdapterImage: testAdapterImage,
-		GaramAddress: testGaramAddress,
+		Client:          k8sClient,
+		Scheme:          k8sClient.Scheme(),
+		CopyImage:       testCopyImage,
+		AdapterImage:    testAdapterImage,
+		GaramAddress:    testGaramAddress,
+		ControlAddress:  testControlAddress,
+		ControlRootFile: rootFile,
 	})
 }
 
@@ -377,33 +387,10 @@ var _ = Describe("Agent", func() {
 			&agentv1alpha1.AgentIdentity{GRN: testGRN, AssignmentEpoch: "8"}))
 	})
 
-	It("lets an identity's source move from Garam to Control and never back", func() {
-		agent := newAgent("moves-its-source")
-		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceGaram}
-		createAgent(agent)
-
-		By("the control: switching from Garam to Control, which the #1171 switch does")
-		switched := readAgent(agent.Name)
-		switched.Spec.Identity.Source = agentv1alpha1.DesiredSourceControl
-		Expect(k8sClient.Update(ctx, switched)).To(Succeed())
-
-		By("moving back to Garam")
-		back := readAgent(agent.Name)
-		back.Spec.Identity.Source = agentv1alpha1.DesiredSourceGaram
-		Expect(k8sClient.Update(ctx, back)).To(MatchError(ContainSubstring("identity.source cannot leave Control once set")))
-
-		By("clearing it, which would read as Garam")
-		cleared := readAgent(agent.Name)
-		cleared.Spec.Identity.Source = ""
-		Expect(k8sClient.Update(ctx, cleared)).To(MatchError(ContainSubstring("identity.source cannot leave Control once set")))
-
-		Expect(readAgent(agent.Name).Spec.Identity.Source).To(Equal(agentv1alpha1.DesiredSourceControl))
-	})
-
-	It("admits a revision only on a Control-source Agent, and only as a canonical decimal string", func() {
-		By("the control: a Control-source Agent carrying a canonical revision")
+	It("admits a revision only on an Agent with an identity, and only as a canonical decimal string", func() {
+		By("the control: an Agent with an identity carrying a canonical revision")
 		agent := newAgent("carries-a-revision")
-		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN, Source: agentv1alpha1.DesiredSourceControl}
+		agent.Spec.Identity = &agentv1alpha1.AgentIdentity{GRN: testGRN}
 		agent.Spec.Revision = "9223372036854775807"
 		createAgent(agent)
 		Expect(readAgent(agent.Name).Spec.Revision).To(Equal("9223372036854775807"))
@@ -414,18 +401,10 @@ var _ = Describe("Agent", func() {
 			Expect(k8sClient.Update(ctx, malformed)).To(MatchError(ContainSubstring("spec.revision")), "revision %q", revision)
 		}
 
-		for _, identity := range []*agentv1alpha1.AgentIdentity{
-			nil,
-			{GRN: testGRN},
-			{GRN: testGRN, Source: agentv1alpha1.DesiredSourceGaram},
-		} {
-			elsewhere := newAgent("carries-a-revision-elsewhere")
-			elsewhere.Spec.Identity = identity
-			elsewhere.Spec.Revision = "1"
-			Expect(k8sClient.Create(ctx, elsewhere)).
-				To(MatchError(ContainSubstring("revision is set only on an agent whose identity.source is Control")),
-					"identity %+v", identity)
-		}
+		elsewhere := newAgent("carries-a-revision-elsewhere")
+		elsewhere.Spec.Revision = "1"
+		Expect(k8sClient.Create(ctx, elsewhere)).
+			To(MatchError(ContainSubstring("revision is set only on an agent with an identity")))
 	})
 
 	It("reports a storage class the claimed volume cannot change to, beside an unchanged one", func() {

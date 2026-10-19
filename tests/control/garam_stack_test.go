@@ -31,8 +31,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/machinetoken"
 )
 
-// garamContract is the operation-authority contract version garam's browser API speaks here, and its
-// machine listener beside a certificate.
+// garamContract is the operation-authority contract version garam's browser API speaks here.
 const garamContract = "operation-authority.v1"
 
 // enrollmentContract is garam's agent-enrollment.v1, which its agent admission speaks beside a token
@@ -52,7 +51,7 @@ type garamStack struct {
 	session    *http.Cookie
 	// orgGRN and orgID are the organization the signed-in user created, and its identifier.
 	orgGRN, orgID string
-	// hosted and controllerGRN are the two operators garam enrolled: this service, and the
+	// hosted and controllerGRN are the two operators the suite registered: this service, and the
 	// controller agents are assigned to.
 	hosted, controllerGRN string
 	// hostedFiles are the key garam issued this service, and garam's server root.
@@ -69,9 +68,6 @@ type garamStack struct {
 	// garam keeps a key's five newest tokens (garam@37567a4 internal/operator/token.go
 	// LiveTokensPerCredential), and every binary the suite starts exchanges under the binaries' key.
 	controllerMachine, hostedMachine *http.Client
-	// controller is the certificate garam enrolled the controller with, which the suite presents
-	// itself to make on garam what the binary takes as given: its legacy agents.
-	controller tls.Certificate
 	// processes are garam's three running for the suite.
 	processes []*process
 }
@@ -85,7 +81,7 @@ func (s *garamStack) stop() {
 
 // startGaram brings garam up on loopback ports over a fresh database on the PostgreSQL server
 // serverURL names, signs in the fixture's first user, and makes through garam's public routes an
-// organization, this service's hosted operator and one controller, each enrolled, and a
+// organization, this service's hosted operator and one controller, each issued a key, and a
 // delegation from the one to the other.
 func startGaram(ctx context.Context, binDir, migrations, serverURL, dir string) (_ *garamStack, err error) {
 	if binDir == "" || migrations == "" {
@@ -192,7 +188,7 @@ type garamKeys struct {
 }
 
 // writeGaramKeys writes a garam server root, the listener certificate it signed for 127.0.0.1,
-// and the key-encryption key garam seals its certificate authorities under, each readable by its
+// and the key-encryption key garam seals its message-signing keys under, each readable by its
 // owner alone, as garam requires.
 func writeGaramKeys(dir string) (garamKeys, error) {
 	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -253,9 +249,8 @@ func writeGaramKeys(dir string) (garamKeys, error) {
 	return k, nil
 }
 
-// setUp makes, through garam's public routes, the organization, the two operators each enrolled
-// over a key generated here and issued a key of garam's, and the hosted operator's delegation over
-// the controller.
+// setUp makes, through garam's public routes, the organization, the two operators each registered
+// and issued a key of garam's, and the hosted operator's delegation over the controller.
 func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	var org struct {
 		GRN string `json:"grn"`
@@ -268,15 +263,15 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	s.orgGRN = org.GRN
 	s.orgID = org.GRN[strings.LastIndex(org.GRN, ":")+1:]
 
-	hosted, err := s.enroll("control")
+	hosted, err := s.register("control")
 	if err != nil {
-		return step("register and enroll the hosted operator", err, s.processes...)
+		return step("register the hosted operator", err, s.processes...)
 	}
-	controller, err := s.enroll("k8s")
+	controller, err := s.register("k8s")
 	if err != nil {
-		return step("register and enroll the controller", err, s.processes...)
+		return step("register the controller", err, s.processes...)
 	}
-	s.hosted, s.controllerGRN, s.controller = hosted.grn, controller.grn, controller.pair
+	s.hosted, s.controllerGRN = hosted, controller
 	s.hostedFiles = identity{serverRoot: keys.serverRoot}
 	if s.hostedFiles.operatorKeys, err = s.issueKey(dir, "control", "control", "immediate"); err != nil {
 		return step("issue the hosted operator's key", err, s.processes...)
@@ -303,7 +298,7 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	}{
 		RequestID:   "e2e-delegation",
 		Controllers: []string{s.controllerGRN},
-		Operations: []string{"agent:create", "agent:configure", "agent:activate", "agent:recover", "agent:cutover",
+		Operations: []string{"agent:create", "agent:configure", "agent:activate", "agent:recover",
 			"agent-template:read", "agent-template:publish", "execution-profile:read", "agent:execution-read",
 			"operator:read"},
 		ExpiresAt: time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
@@ -337,12 +332,6 @@ func (s *garamStack) mintAgentToken(agent, audience string) (string, error) {
 	return minted.Token, err
 }
 
-// enrolled is an operator garam signed a certificate for, over a key generated here.
-type enrolled struct {
-	grn  string
-	pair tls.Certificate
-}
-
 // issueKey has garam issue the operator under identifier a key under rotation, as a person does
 // through the console (garam@37567a4 api/openapi.yaml issueOperatorKey), and places the answer in
 // dir under prefix. A planned key goes beside the live one, which goes on verifying.
@@ -360,53 +349,23 @@ func (s *garamStack) issueKey(dir, identifier, prefix, rotation string) (machine
 	return writeKeyIssuance(dir, prefix, issued.ClientID, issued.TokenURL, issued.PrivateKeyPEM)
 }
 
-// enroll registers an operator under identifier and enrolls it with the token the registration
-// answered, as an operator enrolls itself: its key never leaves this process.
-func (s *garamStack) enroll(identifier string) (enrolled, error) {
+// register registers an operator under identifier, as a person does through the console
+// (garam@72e9369 api/openapi.yaml registerOperator), and returns its GRN. It issues nothing: the
+// operator enters by the key issueKey has garam issue.
+func (s *garamStack) register(identifier string) (string, error) {
 	var registered struct {
-		Operator struct {
-			GRN string `json:"grn"`
-		} `json:"operator"`
-		Enrollment struct {
-			Token string `json:"token"`
-		} `json:"enrollment"`
+		GRN string `json:"grn"`
 	}
 	if err := s.create(http.MethodPost, "/orgs/"+s.orgID+"/operators", "", struct {
 		Identifier string `json:"identifier"`
 		Name       string `json:"name"`
 	}{Identifier: identifier, Name: identifier}, &registered); err != nil {
-		return enrolled{}, err
+		return "", err
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return enrolled{}, err
+	if registered.GRN == "" {
+		return "", fmt.Errorf("garam registered %s under no GRN", identifier)
 	}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
-	if err != nil {
-		return enrolled{}, err
-	}
-	var issued struct {
-		GRN            string `json:"grn"`
-		CertificatePEM string `json:"certificatePem"`
-		IssuerPEM      string `json:"issuerPem"`
-	}
-	body := map[string]string{
-		"token":                 registered.Enrollment.Token,
-		"certificateRequestPem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr})),
-	}
-	if err := s.machineCall(s.machine, "/enrollment", "", body, http.StatusCreated, &issued); err != nil {
-		return enrolled{}, err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return enrolled{}, err
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: pemECKey, Bytes: keyDER})
-	pair, err := tls.X509KeyPair([]byte(issued.CertificatePEM), keyPEM)
-	if err != nil {
-		return enrolled{}, fmt.Errorf("enrolled certificate for %s: %w", identifier, err)
-	}
-	return enrolled{grn: issued.GRN, pair: pair}, nil
+	return registered.GRN, nil
 }
 
 // mintAuthority has garam mint, for the signed-in user, an authority handing this service

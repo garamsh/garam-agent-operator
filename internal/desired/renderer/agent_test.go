@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -80,36 +79,15 @@ func agentFor(grn string) *agentv1alpha1.Agent {
 	return agent
 }
 
-// writtenAgent creates the Agent a garam definition's construction, or a
-// person, would have built for grn, with identity's source as given.
-func writtenAgent(grn string, source agentv1alpha1.DesiredSource) *agentv1alpha1.Agent {
-	GinkgoHelper()
-
-	agent := &agentv1alpha1.Agent{
-		ObjectMeta: metav1.ObjectMeta{Name: agentname.Agent(grn), Namespace: namespace},
-		Spec: agentv1alpha1.AgentSpec{
-			Image:                 image,
-			CredentialsSecretName: agentname.CredentialsSecret(grn),
-			StorageSize:           resource.MustParse("1Gi"),
-			Tools:                 agentv1alpha1.ToolSet{Pins: map[string]string{requiredTool: "sha256:garam"}},
-			Identity:              &agentv1alpha1.AgentIdentity{GRN: grn, Source: source},
-		},
-	}
-	Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-
-	return agent
-}
-
 var _ = Describe("Renderer", func() {
-	It("creates the Agent of a new GRN on the control source, and renders every later revision into it", func() {
+	It("creates the Agent of a new GRN with its identity, and renders every later revision into it", func() {
 		grn := "grn:acme:default:agent:1111111111111111"
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
 
 		Expect(rendering.Render(ctx, revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, "first"))).
 			To(Succeed())
 		first := agentFor(grn)
-		Expect(first.Spec.Identity).To(Equal(&agentv1alpha1.AgentIdentity{
-			GRN: grn, AssignmentEpoch: "7", Source: agentv1alpha1.DesiredSourceControl}))
+		Expect(first.Spec.Identity).To(Equal(&agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7"}))
 		Expect(first.Spec.CredentialsSecretName).To(Equal(agentname.CredentialsSecret(grn)))
 		Expect(first.Spec.Image).To(Equal(image))
 		Expect(first.Spec.StorageSize).To(Equal(resource.MustParse("1Gi")))
@@ -185,10 +163,10 @@ var _ = Describe("Renderer", func() {
 		Expect(ended.Spec.Suspended).To(BeTrue(), "the renderer wrote a person's field")
 	})
 
-	It("never renders a GRN whose Agent is on the garam source, beside one on the control source", func() {
+	It("never renders a GRN whose Agent a person wrote under its name, beside one the renderer created", func() {
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
 
-		By("the control: an Agent the control source created takes a later revision")
+		By("the control: an Agent the renderer created takes a later revision")
 		controlled := "grn:acme:default:agent:2222222222222222"
 		Expect(rendering.Render(ctx, revision(controlled, "1", "7", map[string]string{requiredTool: firstPin}, ""))).
 			To(Succeed())
@@ -196,15 +174,20 @@ var _ = Describe("Renderer", func() {
 			To(Succeed())
 		Expect(agentFor(controlled).Spec.Tools.Pins).To(HaveKeyWithValue(requiredTool, "sha256:cc"))
 
-		for _, source := range []agentv1alpha1.DesiredSource{agentv1alpha1.DesiredSourceGaram, ""} {
-			grn := "grn:acme:default:agent:333333333333333" + map[agentv1alpha1.DesiredSource]string{
-				agentv1alpha1.DesiredSourceGaram: "3", "": "4"}[source]
-			before := writtenAgent(grn, source)
+		for name, grn := range map[string]string{
+			"no identity":     "grn:acme:default:agent:3333333333333333",
+			"another agent's": "grn:acme:default:agent:3333333333333334",
+		} {
+			var identity *agentv1alpha1.AgentIdentity
+			if name == "another agent's" {
+				identity = &agentv1alpha1.AgentIdentity{GRN: "grn:acme:default:agent:0000000000000000"}
+			}
+			agentNamed(grn, identity)
+			before := agentFor(grn)
 
 			err := rendering.Render(ctx, revision(grn, "1", "7", map[string]string{requiredTool: "sha256:control"}, "ego"))
-			Expect(err).To(MatchError(desired.ErrNotControlSource), "source %q", source)
-			after := agentFor(grn)
-			Expect(after.Spec).To(Equal(before.Spec), "source %q", source)
+			Expect(err).To(MatchError(desired.ErrNotControlSource), "an Agent with %s identity", name)
+			Expect(agentFor(grn).Spec).To(Equal(before.Spec), "an Agent with %s identity", name)
 		}
 	})
 
@@ -454,7 +437,6 @@ func feedAnswer(cursor string, agents ...desired.Agent) string {
 			Ego   string            `json:"ego"`
 			Tools map[string]string `json:"tools"`
 		} `json:"configuration"`
-		Origin string `json:"origin,omitempty"`
 	}
 	out := struct {
 		Cursor string `json:"cursor"`
@@ -472,7 +454,6 @@ func feedAnswer(cursor string, agents ...desired.Agent) string {
 			w.Configuration.Model.Embedding = (*embedding)(m.Embedding)
 		}
 		w.Configuration.Ego, w.Configuration.Tools = agent.Configuration.Ego, agent.Configuration.Tools
-		w.Origin = agent.Origin
 		out.Agents = append(out.Agents, w)
 	}
 	raw, err := json.Marshal(out)
@@ -549,100 +530,3 @@ func agentNamed(grn string, identity *agentv1alpha1.AgentIdentity) {
 		},
 	})).To(Succeed())
 }
-
-// cutoverOf is a revision the feed marks as an agent cut over from garam.
-func cutoverOf(grn, number string, pins map[string]string, ego string) desired.Agent {
-	cut := revision(grn, number, "7", pins, ego)
-	cut.Origin = desired.OriginCutover
-
-	return cut
-}
-
-var _ = Describe("Renderer and a cutover", func() {
-	It("moves a garam-source Agent the feed marks as cut over to the control source and renders it, beside one it does not mark", func() {
-		cut := "grn:acme:default:agent:8888888888888881"
-		absent := "grn:acme:default:agent:8888888888888882"
-		unmarked := "grn:acme:default:agent:8888888888888883"
-		before := writtenAgent(cut, agentv1alpha1.DesiredSourceGaram)
-		writtenAgent(absent, "")
-		untouched := writtenAgent(unmarked, agentv1alpha1.DesiredSourceGaram)
-		feed := serveFeed(feedAnswer("1",
-			cutoverOf(cut, "1", map[string]string{requiredTool: firstPin}, "imported"),
-			cutoverOf(absent, "1", map[string]string{requiredTool: firstPin}, "imported"),
-			revision(unmarked, "1", "7", map[string]string{requiredTool: firstPin}, "unmarked")))
-		runPuller(feed)
-
-		for _, grn := range []string{cut, absent} {
-			Eventually(func(g Gomega) {
-				agent := &agentv1alpha1.Agent{}
-				g.Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: agentname.Agent(grn)}, agent)).
-					To(Succeed())
-				g.Expect(agent.Spec.Identity.Source).To(Equal(agentv1alpha1.DesiredSourceControl))
-				g.Expect(agent.Spec.Ego).To(Equal("imported"))
-				g.Expect(agent.Spec.Tools.Pins).To(Equal(map[string]string{requiredTool: firstPin}))
-				g.Expect(agent.Spec.Identity.AssignmentEpoch).To(Equal("7"))
-				g.Expect(agent.Spec.Revision).To(Equal("1"))
-			}).Should(Succeed(), grn)
-		}
-		moved := agentFor(cut)
-		Expect(moved.UID).To(Equal(before.UID))
-		Expect(moved.Spec.CredentialsSecretName).To(Equal(before.Spec.CredentialsSecretName))
-		Expect(ownersOf(moved, "f:spec", "f:identity", "f:source")).To(ContainElement("garam-operator-renderer"))
-
-		By("the control: a garam-source Agent the feed names without the mark is refused, as before")
-		Consistently(func() agentv1alpha1.AgentSpec { return agentFor(unmarked).Spec }, 2*time.Second).
-			Should(Equal(untouched.Spec))
-	})
-
-	It("moves no Agent written by hand or naming another GRN, and refuses an origin nobody defined", func() {
-		rendering := renderer.NewAgent(k8sClient, namespace, image)
-
-		By("the control: a garam-source Agent of the same GRN moves")
-		moves := "grn:acme:default:agent:9999999999999991"
-		writtenAgent(moves, agentv1alpha1.DesiredSourceGaram)
-		Expect(rendering.Render(ctx, cutoverOf(moves, "1", map[string]string{requiredTool: firstPin}, ""))).To(Succeed())
-		Expect(agentFor(moves).Spec.Identity.Source).To(Equal(agentv1alpha1.DesiredSourceControl))
-
-		By("an Agent written by hand, with no identity, under the GRN's name")
-		handWritten := "grn:acme:default:agent:9999999999999992"
-		agentNamed(handWritten, nil)
-		Expect(rendering.Render(ctx, cutoverOf(handWritten, "1", map[string]string{requiredTool: firstPin}, ""))).
-			To(MatchError(desired.ErrNotControlSource))
-		Expect(agentFor(handWritten).Spec.Identity).To(BeNil())
-
-		By("an Agent under the GRN's name whose identity names another GRN")
-		other := "grn:acme:default:agent:9999999999999993"
-		agentNamed(other, &agentv1alpha1.AgentIdentity{
-			GRN: "grn:acme:default:agent:0000000000000000", Source: agentv1alpha1.DesiredSourceGaram})
-		Expect(rendering.Render(ctx, cutoverOf(other, "1", map[string]string{requiredTool: firstPin}, ""))).
-			To(MatchError(desired.ErrNotControlSource))
-		Expect(agentFor(other).Spec.Identity.Source).To(Equal(agentv1alpha1.DesiredSourceGaram))
-
-		By("an origin outside the closed set, which moves nothing")
-		unknown := "grn:acme:default:agent:9999999999999994"
-		writtenAgent(unknown, agentv1alpha1.DesiredSourceGaram)
-		strange := cutoverOf(unknown, "1", map[string]string{requiredTool: firstPin}, "")
-		strange.Origin = "migrated"
-		Expect(rendering.Render(ctx, strange)).To(MatchError(desired.ErrMalformed))
-		Expect(agentFor(unknown).Spec.Identity.Source).To(Equal(agentv1alpha1.DesiredSourceGaram))
-	})
-
-	It("writes nothing for the same cutover revision again, and renders a later one as any control-source revision", func() {
-		grn := "grn:acme:default:agent:aaaaaaaaaaaaaaa1"
-		rendering := renderer.NewAgent(k8sClient, namespace, image)
-		writtenAgent(grn, agentv1alpha1.DesiredSourceGaram)
-		Expect(rendering.Render(ctx, cutoverOf(grn, "1", map[string]string{requiredTool: firstPin}, "imported"))).To(Succeed())
-		moved := agentFor(grn)
-
-		By("the same cutover revision again")
-		Expect(rendering.Render(ctx, cutoverOf(grn, "1", map[string]string{requiredTool: firstPin}, "imported"))).To(Succeed())
-		Expect(agentFor(grn).ResourceVersion).To(Equal(moved.ResourceVersion))
-
-		By("the control: a later revision, still marked, is rendered")
-		Expect(rendering.Render(ctx, cutoverOf(grn, "2", map[string]string{requiredTool: secondPin}, "second"))).To(Succeed())
-		later := agentFor(grn)
-		Expect(later.Spec.Ego).To(Equal("second"))
-		Expect(later.Spec.Identity.Source).To(Equal(agentv1alpha1.DesiredSourceControl))
-		Expect(later.Spec.Revision).To(Equal("2"))
-	})
-})

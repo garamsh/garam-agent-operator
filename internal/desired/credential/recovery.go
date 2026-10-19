@@ -28,7 +28,7 @@ func (s *Secrets) Recovering(ctx context.Context) ([]string, error) {
 	var recovering []string
 	for i := range agents.Items {
 		identity := agents.Items[i].Spec.Identity
-		if identity == nil || identity.Source != agentv1alpha1.DesiredSourceControl {
+		if identity == nil {
 			continue
 		}
 		persisted, err := s.exists(ctx, agentname.RecoveryRequestSecret(identity.GRN))

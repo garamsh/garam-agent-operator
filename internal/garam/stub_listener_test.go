@@ -185,10 +185,10 @@ func writeKeyIssuance(t *testing.T, dir string) machinetoken.Files {
 	}
 }
 
-// answerNoDefinitions is what a listener with nothing to say answers a read.
-func answerNoDefinitions(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`[]`))
+// answerAgentToken answers every call with sampleAgent's token, as
+// mintAgentToken answers one it admits.
+func answerAgentToken(w http.ResponseWriter, _ *http.Request) {
+	answerMint(w, http.StatusCreated, agentTokenAnswer)
 }
 
 // TestStubListenerRefusesACallCarryingNoToken is what makes the rest of this
@@ -197,19 +197,19 @@ func answerNoDefinitions(w http.ResponseWriter, _ *http.Request) {
 // its identity exactly as it answers one that presents it.
 func TestStubListenerRefusesACallCarryingNoToken(t *testing.T) {
 	g := NewWithT(t)
-	stub := newStubListener(t, answerNoDefinitions)
+	stub := newStubListener(t, answerAgentToken)
 
 	tlsConfig, err := garam.ServerTLS(stub.trustFile)
 	g.Expect(err).NotTo(HaveOccurred())
 	presentingNothing := &http.Transport{TLSClientConfig: tlsConfig}
-	_, err = garam.NewClient(stub.address(), presentingNothing).ListDefinitions(context.Background())
-	g.Expect(err).To(MatchError(ContainSubstring("401 unauthenticated")))
+	_, err = garam.NewClient(stub.address(), presentingNothing).MintAgentToken(context.Background(), sampleAgent, "")
+	g.Expect(err).To(MatchError(ContainSubstring("garam answered 401")))
 	g.Expect(stub.requests()).To(BeEmpty())
 
 	// The control, one input away from the call above: the same route under a
 	// token is answered, so what refused that call is the missing token and not
 	// the route.
-	_, err = garam.NewClient(stub.address(), trustedBy(t, stub)).ListDefinitions(context.Background())
+	_, err = garam.NewClient(stub.address(), trustedBy(t, stub)).MintAgentToken(context.Background(), sampleAgent, "")
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(stub.requests()).To(HaveLen(1))
 	g.Expect(stub.requests()[0].token).To(HavePrefix("garam_ot_"))
@@ -231,7 +231,7 @@ func newCertificate(t *testing.T, commonName string) (certificatePEM, keyPEM []b
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)

@@ -17,8 +17,6 @@ type Config struct {
 	Definitions definition.Service
 	// Introspector reads each request's operation authority from garam.
 	Introspector Introspector
-	// Cutover carries a legacy agent's cutover stages to garam.
-	Cutover Cutover
 	// Lifecycle carries an agent's credential recovery and its deactivation to garam.
 	Lifecycle Lifecycle
 	// Audience is this control service's operator GRN, the audience every authority must name.
@@ -35,7 +33,6 @@ type Config struct {
 type server struct {
 	definitions  definition.Service
 	introspector Introspector
-	cutover      Cutover
 	lifecycle    Lifecycle
 	audience     string
 	now          func() time.Time
@@ -47,7 +44,6 @@ type server struct {
 //
 //	POST /v1/orgs/{org}/agents                    create an agent on a controller
 //	POST /v1/orgs/{org}/agents/{agent}/revisions  configure an agent's definition
-//	POST /v1/orgs/{org}/agents/{agent}/cutover/{import,freeze,switch,rollback}  one cutover stage
 //	GET  /v1/orgs/{org}/templates                     agent-template:read     the latest version of each template
 //	GET  /v1/orgs/{org}/templates/{name}/versions/{v} agent-template:read     one template version
 //	POST /v1/orgs/{org}/templates/{name}/versions     agent-template:publish  publish a template's next version
@@ -64,7 +60,6 @@ func NewHandler(c Config) http.Handler {
 	s := &server{
 		definitions:  c.Definitions,
 		introspector: c.Introspector,
-		cutover:      c.Cutover,
 		lifecycle:    c.Lifecycle,
 		audience:     c.Audience,
 		now:          c.Now,
@@ -77,10 +72,6 @@ func NewHandler(c Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/orgs/{org}/agents", s.create)
 	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/revisions", s.configure)
-	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/cutover/import", s.importCutover)
-	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/cutover/freeze", s.freezeCutover)
-	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/cutover/switch", s.switchCutover)
-	mux.HandleFunc("POST /v1/orgs/{org}/agents/{agent}/cutover/rollback", s.rollBackCutover)
 	mux.HandleFunc("GET /v1/orgs/{org}/templates", s.listTemplates)
 	mux.HandleFunc("GET /v1/orgs/{org}/templates/{name}/versions/{version}", s.getTemplate)
 	mux.HandleFunc("POST /v1/orgs/{org}/templates/{name}/versions", s.publish)

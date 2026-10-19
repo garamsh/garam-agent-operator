@@ -34,7 +34,7 @@ func (s *service) OpenRecovery(ctx context.Context, in OpenRecoveryInput) (Recov
 		return Recovery{}, false, ErrNotFound
 	}
 	if d.Assignment == nil {
-		return Recovery{}, false, ErrCutoverPending
+		return Recovery{}, false, fmt.Errorf("agent %s: its latest revision records no assignment", in.Agent)
 	}
 	stored, first, err := s.repository.OpenRecovery(ctx, Recovery{
 		Agent: in.Agent, RequestID: in.RequestID, Key: in.Key, Binding: in.Binding,

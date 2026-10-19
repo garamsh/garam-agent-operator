@@ -64,7 +64,6 @@ type (
 		Epoch         string            `json:"epoch"`
 		Profile       wireProfile       `json:"profile"`
 		Configuration wireConfiguration `json:"configuration"`
-		Origin        string            `json:"origin"`
 		Stopped       bool              `json:"stopped"`
 		Recovery      *wireRecovery     `json:"recovery"`
 	}
@@ -182,7 +181,6 @@ func (c *Client) Desired(ctx context.Context, after string, wait time.Duration) 
 				},
 				Ego: agent.Configuration.Ego, Tools: agent.Configuration.Tools,
 			},
-			Origin:   agent.Origin,
 			Stopped:  agent.Stopped,
 			Recovery: recoveryOf(agent.Recovery),
 		})

@@ -363,72 +363,64 @@ var _ = Describe("Agent workload", Ordered, func() {
 			"the replacement was created at %s, before the evidence was read at %s", createdAt, observedAt)
 	})
 
-	It("keeps a claimed agent's workload, claim and Secret across its move to Control, with new pin and revision", func() {
-		// #217 AC1. A claimed agent is one the poller built from garam, on the
-		// Garam source. The move is what the renderer patches when the feed marks
-		// it cut over: spec.identity.source, and the revision's spec, its number
-		// included (#291). Kind runs no control service, so the spec makes that
-		// patch; the renderer's own patch is asserted in internal/desired/renderer.
+	It("keeps an agent's workload, claim and Secret across a revision with a new pin, rolling its Pod", func() {
+		// The renderer patches the revision's spec, its number included (#291).
+		// Kind runs no control service, so the spec makes that patch; the
+		// renderer's own patch is asserted in internal/desired/renderer.
 		const (
-			migrated    = "e2e-migrated"
-			migratedPod = migrated + "-0"
-			stateClaim  = "state-" + migratedPod
-			configEnv   = `.initContainers[*].env[?(@.name=="AGENT_CONFIG_CONTENT")].value}`
+			revised    = "e2e-revised"
+			revisedPod = revised + "-0"
+			stateClaim = "state-" + revisedPod
+			configEnv  = `.initContainers[*].env[?(@.name=="AGENT_CONFIG_CONTENT")].value}`
 		)
 		apply := exec.Command("kubectl", "apply", "-f", "-")
-		apply.Stdin = strings.NewReader(agentManifestFor(migrated, agentImage) + `  identity:
-    grn: grn:acme:default:agent:e2e0migrated0001
+		apply.Stdin = strings.NewReader(agentManifestFor(revised, agentImage) + `  identity:
+    grn: grn:acme:default:agent:e2e0revised00001
     assignmentEpoch: "1"
-    source: Garam
+  revision: "1"
   tools:
     pins:
       message_send: sha256:before
 `)
 		_, err := utils.Run(apply)
 		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { deleteAgent(migrated) })
+		DeferCleanup(func() { deleteAgent(revised) })
 
 		uidOf := func(kind, name string) (string, error) {
 			return kubectlIn("get", kind, name, "-o", "jsonpath={.metadata.uid}")
 		}
 		ownedStatefulSets := func() (string, error) {
 			return kubectlIn("get", "statefulsets", "-o", `jsonpath={range .items[?(@.metadata.ownerReferences[0].name=="`+
-				migrated+`")]}{.metadata.name}{" "}{end}`)
+				revised+`")]}{.metadata.name}{" "}{end}`)
 		}
 		var statefulSet, claim, secret, pod string
-		By("reading the workload the Garam-source agent was built with, its pin in its Pod")
+		By("reading the workload the agent was built with, its pin and revision in its Pod")
 		Eventually(func(g Gomega) {
 			var err error
-			statefulSet, err = uidOf("statefulset", migrated)
+			statefulSet, err = uidOf("statefulset", revised)
 			g.Expect(err).NotTo(HaveOccurred())
 			claim, err = uidOf("pvc", stateClaim)
 			g.Expect(err).NotTo(HaveOccurred())
-			pod, err = uidOf("pod", migratedPod)
+			pod, err = uidOf("pod", revisedPod)
 			g.Expect(err).NotTo(HaveOccurred())
-			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec"+configEnv)
+			config, err := kubectlIn("get", "pod", revisedPod, "-o", "jsonpath={.spec"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring("sha256:before"))
-			// The control for this is the same read after the move, below, carrying one.
-			g.Expect(config).NotTo(ContainSubstring("revision:"), "a Garam-source agent has no definition revision")
+			g.Expect(config).To(ContainSubstring(`revision: "1"`))
 		}, 3*time.Minute, time.Second).Should(Succeed())
 		secret, err = uidOf("secret", credentialsSecret)
 		Expect(err).NotTo(HaveOccurred())
 		Expect([]string{statefulSet, claim, secret, pod}).NotTo(ContainElement(""))
 
-		By("refusing a revision on the agent while it is on the Garam source")
-		refused, err := kubectlIn("patch", "agent", migrated, "--type", "merge", "-p", `{"spec":{"revision":"1"}}`)
-		Expect(err).To(HaveOccurred())
-		Expect(refused).To(ContainSubstring("revision is set only on an agent whose identity.source is Control"))
-
-		By("moving the agent to the Control source with an edited pin and its revision, as the renderer's cutover patch does")
-		_, err = kubectlIn("patch", "agent", migrated, "--type", "merge", "-p",
-			`{"spec":{"identity":{"source":"Control"},"revision":"1","tools":{"pins":{"message_send":"sha256:after"}}}}`)
+		By("rendering a later revision with an edited pin, as the renderer's patch does")
+		_, err = kubectlIn("patch", "agent", revised, "--type", "merge", "-p",
+			`{"spec":{"revision":"2","tools":{"pins":{"message_send":"sha256:after"}}}}`)
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(func(g Gomega) {
-			config, err := kubectlIn("get", "statefulset", migrated, "-o", "jsonpath={.spec.template.spec"+configEnv)
+			config, err := kubectlIn("get", "statefulset", revised, "-o", "jsonpath={.spec.template.spec"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring("sha256:after"))
-			g.Expect(config).To(ContainSubstring(`revision: "1"`))
+			g.Expect(config).To(ContainSubstring(`revision: "2"`))
 		}, 2*time.Minute, time.Second).Should(Succeed())
 
 		// The Pod on the earlier revision is rolled onto the template the
@@ -436,50 +428,29 @@ var _ = Describe("Agent workload", Ordered, func() {
 		// gates its replacement on the old Pod's evidence.
 		By("rolling the Pod onto the StatefulSet's template")
 		Eventually(func(g Gomega) {
-			uid, err := uidOf("pod", migratedPod)
+			uid, err := uidOf("pod", revisedPod)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(uid).NotTo(Equal(pod))
-			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec"+configEnv)
+			config, err := kubectlIn("get", "pod", revisedPod, "-o", "jsonpath={.spec"+configEnv)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(config).To(ContainSubstring("sha256:after"), "the edited pin did not reach the Pod")
-			g.Expect(config).To(ContainSubstring(`revision: "1"`), "the revision did not reach the Pod")
+			g.Expect(config).To(ContainSubstring(`revision: "2"`), "the revision did not reach the Pod")
 		}, 3*time.Minute, time.Second).Should(Succeed())
 
 		By("finding the same StatefulSet, the only one, on the same claim, beside the same Secret")
-		Expect(uidOf("statefulset", migrated)).To(Equal(statefulSet))
-		Expect(ownedStatefulSets()).To(Equal(migrated + " "))
+		Expect(uidOf("statefulset", revised)).To(Equal(statefulSet))
+		Expect(ownedStatefulSets()).To(Equal(revised + " "))
 		Expect(uidOf("pvc", stateClaim)).To(Equal(claim))
 		Expect(uidOf("secret", credentialsSecret)).To(Equal(secret))
-		Expect(kubectlIn("get", "agent", migrated, "-o", "jsonpath={.spec.credentialsSecretName}")).
+		Expect(kubectlIn("get", "agent", revised, "-o", "jsonpath={.spec.credentialsSecretName}")).
 			To(Equal(credentialsSecret))
-
-		By("rendering the revision a configure released next, which the replaced Pod's config file carries")
-		// Read before the patch: the Pod is rolled as soon as the StatefulSet's
-		// revision moves, so after it the Pod may already be gone.
-		replaced, err := uidOf("pod", migratedPod)
-		Expect(err).NotTo(HaveOccurred())
-		_, err = kubectlIn("patch", "agent", migrated, "--type", "merge", "-p", `{"spec":{"revision":"2"}}`)
-		Expect(err).NotTo(HaveOccurred())
-		Eventually(func(g Gomega) {
-			config, err := kubectlIn("get", "statefulset", migrated, "-o", "jsonpath={.spec.template.spec"+configEnv)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(config).To(ContainSubstring(`revision: "2"`))
-		}, 2*time.Minute, time.Second).Should(Succeed())
-		Eventually(func(g Gomega) {
-			uid, err := uidOf("pod", migratedPod)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(uid).NotTo(Equal(replaced))
-			config, err := kubectlIn("get", "pod", migratedPod, "-o", "jsonpath={.spec"+configEnv)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(config).To(ContainSubstring(`revision: "2"`), "the later revision did not reach the Pod")
-		}, 3*time.Minute, time.Second).Should(Succeed())
 	})
 
-	It("keeps a Control-source agent the control service stopped at no replica, "+
+	It("keeps an agent the control service stopped at no replica, "+
 		"its Pod released on evidence, across a manager restart", func() {
 		// #280 (D). The renderer writes spec.stopped from the control service's
 		// feed; Kind runs no control service, so the spec makes that patch, as
-		// the move to Control above does. The renderer's own write is asserted in
+		// the revision above does. The renderer's own write is asserted in
 		// internal/desired/renderer, and the refused activation of a later
 		// placement against a real garam in tests/control.
 		const (
@@ -490,7 +461,6 @@ var _ = Describe("Agent workload", Ordered, func() {
 		apply.Stdin = strings.NewReader(agentManifestFor(stopped, agentImage) + `  identity:
     grn: grn:acme:default:agent:e2e0stopped00001
     assignmentEpoch: "1"
-    source: Control
   revision: "1"
 `)
 		_, err := utils.Run(apply)

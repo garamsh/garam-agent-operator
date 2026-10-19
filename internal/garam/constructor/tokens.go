@@ -1,3 +1,5 @@
+// Package constructor keeps the garam tokens of the agents this operator holds
+// in their credential Secrets, in the namespace the manager runs in.
 package constructor
 
 import (
@@ -49,10 +51,7 @@ func (t *Tokens) Holders(ctx context.Context) ([]garam.TokenHolder, error) {
 		if identity == nil {
 			continue
 		}
-		holder := garam.TokenHolder{
-			Agent:  garam.GRN(identity.GRN),
-			Fenced: identity.Source == agentv1alpha1.DesiredSourceControl,
-		}
+		holder := garam.TokenHolder{Agent: garam.GRN(identity.GRN)}
 		if identity.AssignmentEpoch != "" {
 			epoch, err := strconv.ParseInt(identity.AssignmentEpoch, 10, 64)
 			if err != nil {
@@ -82,10 +81,6 @@ func (t *Tokens) readDue(ctx context.Context, holder *garam.TokenHolder) error {
 		return fmt.Errorf("get the credential of %s: %w", holder.Agent, err)
 	}
 	holder.Version = secret.ResourceVersion
-	if holder.Fenced && secret.Annotations[agentname.TokensFencedAnnotation] != "true" {
-		// No token for the control service is placed: due at once.
-		return nil
-	}
 	due, ok := secret.Annotations[agentname.TokensRefreshAnnotation]
 	if !ok {
 		return nil
@@ -106,9 +101,6 @@ func (t *Tokens) readDue(ctx context.Context, holder *garam.TokenHolder) error {
 func (t *Tokens) Store(ctx context.Context, holder garam.TokenHolder, tokens garam.Tokens, due time.Time) error {
 	agent := string(holder.Agent)
 	annotations := map[string]string{agentname.TokensRefreshAnnotation: due.UTC().Format(time.RFC3339)}
-	if tokens.Control != nil {
-		annotations[agentname.TokensFencedAnnotation] = "true"
-	}
 	if holder.Version == "" {
 		owner := &agentv1alpha1.Agent{}
 		if err := t.client.Get(ctx, client.ObjectKey{Namespace: t.namespace, Name: agentname.Agent(agent)}, owner); err != nil {
@@ -155,12 +147,9 @@ func (t *Tokens) credentialsKey(agent garam.GRN) client.ObjectKey {
 // key its adapter's file is named for, and the garam server root the mint
 // answered beside them (ADR 0073).
 func tokenData(tokens garam.Tokens) map[string][]byte {
-	data := map[string][]byte{
-		garam.TokenKey:      []byte(tokens.Garam.Token),
-		garam.ServerRootKey: tokens.Garam.ServerRootPEM,
+	return map[string][]byte{
+		garam.TokenKey:        []byte(tokens.Garam.Token),
+		garam.ControlTokenKey: []byte(tokens.Control.Token),
+		garam.ServerRootKey:   tokens.Garam.ServerRootPEM,
 	}
-	if tokens.Control != nil {
-		data[garam.ControlTokenKey] = []byte(tokens.Control.Token)
-	}
-	return data
 }

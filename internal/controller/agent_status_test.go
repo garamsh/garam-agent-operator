@@ -10,15 +10,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
 )
-
-// reportedGRN is what the poller reports on an Agent this operator constructed.
-// The reconciler writes no part of it: the spec below is about the two writes
-// meeting on one object rather than about the value.
-const reportedGRN = "grn:garam:default:agent:95f1823fe036d0f4"
 
 // syncedCondition is the Synced condition an Agent of that name carries, and
 // fails the spec when it carries none.
@@ -232,33 +226,6 @@ var _ = Describe("Agent status", func() {
 
 		reconciled := readAgent(name)
 		Expect(reconciled.Status.ObservedGeneration).To(Equal(reconciled.Generation))
-	})
-
-	It("writes its condition when the poller reported the agent GRN after this reconcile's read", func() {
-		name := "writes-beside-the-poller"
-		createSecret(credentialsSecretName(name))
-		createAgent(newAgent(name))
-
-		_, err := reconcileAgent(name)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("reading the Agent as a reconcile does, and deciding a condition from it")
-		agent := readAgent(name)
-		held := agent.DeepCopy()
-		setSynced(agent, metav1.ConditionFalse, agentv1alpha1.ReasonCredentialsSecretMissing,
-			"the Secret this Agent names is gone")
-
-		By("reporting the agent GRN the way the poller does, after that read")
-		Expect(k8sClient.Status().Patch(ctx, readAgent(name), client.RawPatch(types.MergePatchType,
-			[]byte(`{"status":{"agent":"`+reportedGRN+`"}}`)))).To(Succeed())
-
-		By("writing the condition out of the copy read before that report")
-		reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-		Expect(reconciler.writeStatus(ctx, agent, held)).To(Succeed())
-
-		By("leaving both writers' fields on the object")
-		Expect(readAgent(name).Status.Agent).To(Equal(reportedGRN))
-		Expect(syncedCondition(name).Reason).To(Equal(agentv1alpha1.ReasonCredentialsSecretMissing))
 	})
 
 	It("writes the status no second time when nothing it observed changed", func() {

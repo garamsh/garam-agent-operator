@@ -84,13 +84,13 @@ spec:
           - --garam-token-url-file=/etc/garam/credential/token-url
           # What garam's listener is verified against: garam's server root.
           - --garam-trust-file=/etc/garam/credential/server-root.pem
-          # --garam-address, --agent-image and --agent-storage-size are the
+          # --garam-address, --control-address and --agent-image are the
           # deploying overlay's and are never set here: each names something one
           # cluster owns. docs/architecture/configuration.md names the overlay.
         image: controller:latest
         name: manager
         env:
-        # The namespace the agents this operator constructs are built in. It is
+        # The namespace the agents this operator renders are built in. It is
         # this Pod's own, and it arrives here because the kustomize transformer
         # that sets the namespace does not reach into an argument.
         - name: POD_NAMESPACE

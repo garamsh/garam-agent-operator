@@ -162,11 +162,11 @@ func start(route *routeDouble) (stop func()) {
 	}
 }
 
-// placed creates what the manager builds for grn: an Agent on source at epoch
-// 7, a placement Secret holding token and annotated with previous, and the
+// placed creates what the manager builds for grn: an Agent at epoch 7, a
+// placement Secret holding token and annotated with previous, and the
 // running Pod of its workload, carrying garam's adapter where adapter is set and
 // the claim the writer fence recorded. It returns the Pod.
-func placed(grn string, source agentv1alpha1.DesiredSource, adapter bool, token string,
+func placed(grn string, adapter bool, token string,
 	previous map[string]string) *corev1.Pod {
 	GinkgoHelper()
 
@@ -176,7 +176,7 @@ func placed(grn string, source agentv1alpha1.DesiredSource, adapter bool, token 
 		Spec: agentv1alpha1.AgentSpec{
 			Image: "example.com/sherlock:v1", CredentialsSecretName: agentname.CredentialsSecret(grn),
 			StorageSize: resource.MustParse("1Gi"),
-			Identity:    &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7", Source: source},
+			Identity:    &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7"},
 		},
 	})).To(Succeed())
 	Expect(k8sClient.Create(ctx, &corev1.Secret{
@@ -221,9 +221,8 @@ func sha256Hex(text string) string {
 var _ = Describe("Placement registrar", func() {
 	It("registers a managed agent's first placement with no previous, and no agent that does not register", func() {
 		managed := "grn:acme:default:agent:1111111111111111"
-		pod := placed(managed, agentv1alpha1.DesiredSourceControl, true, "token-one", nil)
-		placed("grn:acme:default:agent:2222222222222222", agentv1alpha1.DesiredSourceGaram, true, "token-two", nil)
-		placed("grn:acme:default:agent:3333333333333333", agentv1alpha1.DesiredSourceControl, false, "token-three", nil)
+		pod := placed(managed, true, "token-one", nil)
+		placed("grn:acme:default:agent:3333333333333333", false, "token-three", nil)
 		route := serveRoute()
 		run(route)
 
@@ -237,7 +236,7 @@ var _ = Describe("Placement registrar", func() {
 	It("names the placement a replacement replaces, with the digest of its evidence", func() {
 		managed := "grn:acme:default:agent:4444444444444444"
 		digest := sha256Hex("evidence")
-		pod := placed(managed, agentv1alpha1.DesiredSourceControl, true, "token-next", map[string]string{
+		pod := placed(managed, true, "token-next", map[string]string{
 			agentname.PreviousPodUIDAnnotation:        podBefore,
 			agentname.PreviousWriterStoppedAnnotation: digest,
 		})
@@ -256,7 +255,7 @@ var _ = Describe("Placement registrar", func() {
 		// placement Secret and removed its finalizer, and the replacing Pod runs.
 		managed := "grn:acme:default:agent:4545454545454545"
 		digest := sha256Hex("evidence")
-		pod := placed(managed, agentv1alpha1.DesiredSourceControl, true, "token-next", map[string]string{
+		pod := placed(managed, true, "token-next", map[string]string{
 			agentname.PreviousPodUIDAnnotation:        podBefore,
 			agentname.PreviousWriterStoppedAnnotation: digest,
 		})
@@ -294,7 +293,7 @@ var _ = Describe("Placement registrar", func() {
 
 	It("presents a superseded placement once and surfaces it, and presents the Pod that replaced it", func() {
 		managed := "grn:acme:default:agent:6666666666666666"
-		superseded := placed(managed, agentv1alpha1.DesiredSourceControl, true, "token-one", nil)
+		superseded := placed(managed, true, "token-one", nil)
 		route := serveRoute()
 		route.mu.Lock()
 		route.refuse, route.kind = http.StatusConflict, "placement_superseded"

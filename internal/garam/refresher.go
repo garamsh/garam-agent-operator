@@ -41,11 +41,6 @@ const (
 // refresh.
 var ErrMintEpochSuperseded = errors.New("garam minted the token at another epoch than the agent's spec names")
 
-// ErrNoControlAudience is a fenced agent this operator names no control
-// service for, so its adapter's token for that service cannot be minted. It
-// waits as a refusal does.
-var ErrNoControlAudience = errors.New("no control service is named to mint a fenced agent's control token for")
-
 // Refresher keeps the tokens of every agent this operator holds current in the
 // file its adapter reads (ADR 0073). It mints an agent's tokens where none are
 // placed, where a recovery was finalized, and at a random point in garam's
@@ -56,9 +51,8 @@ var ErrNoControlAudience = errors.New("no control service is named to mint a fen
 type Refresher struct {
 	client *Client
 	store  TokenStore
-	// controlAudience is the control service's operator GRN, which a fenced
-	// agent's control token is minted for; empty where no control service is
-	// configured.
+	// controlAudience is the control service's operator GRN, which every
+	// agent's control token is minted for.
 	controlAudience string
 
 	// Now is the clock, and Window the point in the refresh window each refresh
@@ -88,7 +82,7 @@ type unwritten struct {
 }
 
 // NewRefresher returns a Refresher minting through client and writing through
-// store, minting a fenced agent's control token for controlAudience.
+// store, minting each agent's control token for controlAudience.
 func NewRefresher(client *Client, store TokenStore, controlAudience string) *Refresher {
 	return &Refresher{
 		client: client, store: store, controlAudience: controlAudience,
@@ -129,7 +123,7 @@ func (r *Refresher) Refresh(ctx context.Context) {
 		}
 		if err != nil {
 			pause := failedWait
-			if errors.Is(err, ErrAgentNotHeld) || errors.Is(err, ErrMintEpochSuperseded) || errors.Is(err, ErrNoControlAudience) ||
+			if errors.Is(err, ErrAgentNotHeld) || errors.Is(err, ErrMintEpochSuperseded) ||
 				errors.Is(err, ErrEpochUnreadable) {
 				pause = refusedWait
 			}
@@ -156,9 +150,6 @@ func (r *Refresher) Refresh(ctx context.Context) {
 // minted against the same version of the Secret, and that has not expired, is
 // written rather than minted again.
 func (r *Refresher) refresh(ctx context.Context, holder TokenHolder) error {
-	if holder.Fenced && r.controlAudience == "" {
-		return fmt.Errorf("mint the tokens of %s: %w", holder.Agent, ErrNoControlAudience)
-	}
 	now := r.Now()
 	held, ok := r.unwritten[holder.Agent]
 	if !ok || held.version != holder.Version || !now.Before(held.tokens.Garam.ExpiresAt) {
@@ -172,19 +163,17 @@ func (r *Refresher) refresh(ctx context.Context, holder TokenHolder) error {
 		held.tokens.Garam = token
 		r.unwritten[holder.Agent] = held
 	}
+	if held.tokens.Control.Token == "" {
+		control, err := r.mint(ctx, holder, r.controlAudience)
+		if err != nil {
+			return err
+		}
+		held.tokens.Control = control
+		r.unwritten[holder.Agent] = held
+	}
 	expires := held.tokens.Garam.ExpiresAt
-	if holder.Fenced {
-		if held.tokens.Control == nil {
-			control, err := r.mint(ctx, holder, r.controlAudience)
-			if err != nil {
-				return err
-			}
-			held.tokens.Control = &control
-			r.unwritten[holder.Agent] = held
-		}
-		if held.tokens.Control.ExpiresAt.Before(expires) {
-			expires = held.tokens.Control.ExpiresAt
-		}
+	if held.tokens.Control.ExpiresAt.Before(expires) {
+		expires = held.tokens.Control.ExpiresAt
 	}
 	due := held.minted.Add(time.Duration(float64(expires.Sub(held.minted)) * r.Window()))
 	if err := r.store.Store(ctx, holder, held.tokens, due); err != nil {
