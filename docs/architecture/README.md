@@ -124,3 +124,11 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0075-hold-the-manager-and-the-control-service-not-ready-while-their-garam-authentication-has-failed-for-an-hour.md` | Hold the manager and the control service not ready while their garam authentication has failed for an hour | accepted |
 | `adr/0076-create-a-managed-agent-through-garams-agent-enrollment-v1-prepared-then-admitted.md` | Create a managed agent through garam's agent-enrollment.v1, prepared then admitted | accepted |
 | `adr/0077-build-agents-only-from-the-control-services-feed-and-remove-the-legacy-path-and-the-cut-over.md` | Build agents only from the control service's feed, and remove the legacy path and the cut-over | accepted |
+
+### Templates
+
+A file in `adr/` that records no decision is a template, and is listed here rather than in the table above.
+
+| Template | Covers |
+|---|---|
+| `adr/0000-template.md` | The shape an ADR file takes, for one not yet written |
