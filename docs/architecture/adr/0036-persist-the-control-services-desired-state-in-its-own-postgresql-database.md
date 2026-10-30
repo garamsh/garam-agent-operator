@@ -1,6 +1,6 @@
 # ADR 0036: Persist the control service's desired state in its own PostgreSQL database, through pgx v5
 
-> Status: accepted
+> Status: accepted; the customer's cluster as the ground for rejecting Kubernetes objects amended by ADR-0079
 > Date: 2026-10-04
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
