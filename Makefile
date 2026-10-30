@@ -295,9 +295,15 @@ build: manifests generate fmt vet ## Build the manager and control binaries.
 	go build -o bin/manager cmd/main.go
 	go build -o bin/control ./cmd/control
 
+# Departs from the scaffold, and a regeneration restores the scaffold's form: the
+# manager refuses to start without an image for its init containers, so run takes
+# one rather than leaving the refusal to the program.
+AGENT_COPY_IMAGE ?=
+
 .PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/main.go
+run: manifests generate fmt vet ## Run a controller from your host. Needs AGENT_COPY_IMAGE=<image>.
+	@test -n "$(AGENT_COPY_IMAGE)" || { echo "run: AGENT_COPY_IMAGE is empty; pass one: make run AGENT_COPY_IMAGE=<image>"; exit 1; }
+	go run ./cmd/main.go --agent-copy-image="$(AGENT_COPY_IMAGE)"
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.

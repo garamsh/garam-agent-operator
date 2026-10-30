@@ -62,7 +62,7 @@ The Makefile downloads controller-gen, kustomize, setup-envtest, and golangci-li
 
 ## Running the checks
 
-`make ci` runs the whole check set — module tidiness, lint, format, test, build, and the image build context. An untidy `go.mod` or `go.sum` fails it first, with the fix named: run `go mod tidy` and commit what it changes. It is what CI invokes, and what to run before pushing. `make help` lists every target.
+`make ci` runs the whole check set — module tidiness, the lint configuration, lint, format, test, build, the image build context, and the action pins. An untidy `go.mod` or `go.sum` fails it first, with the fix named: run `go mod tidy` and commit what it changes. It is what CI invokes, and what to run before pushing. `make help` lists every target.
 
 End-to-end tests need Docker and a cluster and are not part of that set: `make test-e2e` runs the control service's suite against a PostgreSQL container and a real garam at `GARAM_REVISION` (`make test-e2e-control` alone), then creates a Kind cluster, runs the manager's, and tears it down. garam's files are copied out of its private test image in ECR, pinned by digest, which needs an ECR login that can pull it. Where that login is not available, `make garam-e2e-from-source test-e2e-control` builds them from `garamsh/garam` instead, with git credentials that can read it.
 
@@ -79,7 +79,7 @@ make install                                        # apply the CRDs
 go run ./cmd/main.go --agent-copy-image=<image>     # run the manager locally
 ```
 
-`make run` starts the same program with no flags, so it stops with `agent-copy-image is required`. With `--control-address` unset, as here, the manager builds no agents and reconciles only a hand-written `Agent`.
+`make run AGENT_COPY_IMAGE=<image>` runs the same program after the code generators, `fmt` and `vet`, and without that value it stops and says what to pass. With `--control-address` unset, as here, the manager builds no agents and reconciles only a hand-written `Agent`.
 
 The manager deployed into the cluster instead:
 
