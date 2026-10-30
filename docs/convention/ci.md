@@ -28,8 +28,10 @@ This section states which names exist and what each owes, not the commands behin
 
 ## Run the checks before pushing
 
-- Run the project's checks locally before code leaves the machine. CI is the second line of defence, not the only one.
-- Automating that locally — a version-control hook, a watch task, an on-save editor command — is the contributor's choice. No tool is mandated, and running the checks by hand satisfies the rule.
+- Before code leaves the machine, run the cheap entry points: lint and format, and whatever the project folds into them. They catch the ordinary mistakes in seconds, so they are the first line of defence, and CI is not the only one.
+- Where a pipeline run against the change being pushed will be the record §One entry point per task requires, test and build are the pipeline's to run, over the whole set. Where no pipeline run will be that change's record, they run locally before pushing too.
+- Running more locally, the whole set included, is always allowed. This rule sets the least that runs before pushing, not the most.
+- Automating the local run — a version-control hook, a watch task, an on-save editor command — is the contributor's choice. No tool is mandated, and running the checks by hand satisfies this section.
 
 ## Reuse
 
@@ -56,6 +58,8 @@ Pre-trained recollection is a starting point, not source of truth. An agent that
 Pin to a reference that cannot come to mean something else. A digest or a full commit SHA always satisfies that. So does a version where the ecosystem verifies content against a checksum log the repository also records — a Go module version under `go.sum` and the checksum database, where republishing a tag over different content fails verification instead of substituting silently; bypass that database and the property goes with it. A tag resolved through a mutable pointer, and any branch, satisfies it nowhere.
 
 A pin fixes what a reference means, not what it points at: a digest never receives the patch its tag would have carried. So a pinned dependency also names how it gets moved — a bot that proposes the bump, a scheduled review, an owner — because pinning without that trades a moving dependency for a frozen one.
+
+A reference no ecosystem can make immutable — a hosted runner label, a rolling base image, anything published without a digest — cannot be pinned, so neither "Pin to a reference that cannot come to mean something else" nor the obligation that a pinned dependency names how it gets moved reaches it. What it owes instead: the version it holds, named in the reference itself where the platform offers versioned forms; a mover, as a pin owes one; and a record, on each run, of what the reference actually resolved to. Fixing what a reference means in advance and knowing what it meant afterwards are the only two ways to read a failure that no change explains, and where the first is unavailable the second is not optional.
 
 For every third-party dependency, also check the ecosystem's advisory source for known vulnerabilities in the candidate version.
 
