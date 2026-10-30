@@ -16,3 +16,7 @@ The chosen direction, stated in one or two sentences.
 ## Consequences
 
 What becomes easier, what becomes harder, what this rules out.
+
+## Signs the decision was wrong
+
+What would be observed if it was, written now while the rejected alternatives are still in view. Consequences are what the decision commits the project to; these are what a later reader looks for to find that commitment misplaced.

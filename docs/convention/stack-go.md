@@ -138,8 +138,11 @@ file declares and which depends.
 - **The import goes one way.** `internal/<domain>/<pkg>/` may import
   `internal/<domain>` for the types in the interface's signatures; the
   reverse import never happens.
-- Go rejects an import cycle at compile time but does not detect a
-  `type → struct → type` cycle. Those are found by reading.
+- Go rejects an import cycle at compile time, and a struct holding
+  itself by value through another (`type A struct{ b B }`, `type B
+  struct{ a A }`) as `invalid recursive type`. A cycle through a
+  pointer, slice, map or interface compiles; those are found by
+  reading.
 
 ## 3. Naming
 
@@ -283,10 +286,15 @@ Where the project generates mocks, generate them with
 - **Generated location:** declared in that file by `dir`, the output
   directory, with `filename` for the file itself — at the top level,
   or per interface in that interface's `config:` block under
-  `interfaces:`. Default: `mocks/<package>/<Interface>.go` at module
-  root. A dependency interface is scoped to the one domain that
-  declares it, so `dir: internal/<domain>/mocks/` fits it too. Pick
-  one convention per project.
+  `interfaces:`. With neither set, mockery writes `mocks_test.go` in
+  the interface's own directory and package, so
+  `mocks/<package>/<Interface>.go` at module root is one `dir` and
+  `filename` declare. A dependency interface is scoped to the one
+  domain that declares it, so `dir: internal/<domain>/mocks/` fits it
+  too. A project whose tests live outside the interface's directory
+  — a suite in `tests/` among them — sets `dir` and `filename` to a
+  location those tests can import, because a `_test.go` mock is not
+  importable across directories. Pick one convention per project.
 - **Generation:** `mockery` (reads config) or `go generate ./...`
   when interfaces carry `//go:generate mockery` directives. Pick one.
 - **In tests:** the generated mock satisfies the interface; pass it
@@ -324,12 +332,41 @@ to report prints it itself, before invoking `go test`.
 | Test | `go test ./...` |
 | Test (one) | `go test -run TestName ./pkg/...` |
 | Vet | `go vet ./...` |
-| Format check | `gofmt -l .` |
-| Format apply | `gofmt -w .` |
+| Format check | `gofmt -l` over `git ls-files --cached --others --exclude-standard -z -- '*.go'` |
+| Format apply | `gofmt -w` over the same set |
 | Module tidy | `go mod tidy` |
 | Lint (if configured) | `golangci-lint run` |
 | Coverage | `go test -cover ./...` |
 | Generate (mockery) | `mockery` (config) or `go generate ./...` |
+
+The format rows take their set from git: CI checks out the tracked
+set, a `.` walk also reaches ignored trees CI never sees and `-w`
+rewrites them, `--cached --others --exclude-standard` adds back the
+untracked files the ignore files leave so that a new file fails here
+before it fails in CI, and the set reaches `gofmt` as arguments rather
+than through a shell substitution, because `gofmt` with no file
+arguments reads standard input: over an empty set `gofmt -l $(…)`
+blocks, where `xargs -0` hands the process `/dev/null` and it returns.
+
+The Build, Test, Vet and Coverage rows take their set from the working
+tree: `./...` is the module's packages as the directory on disk holds
+them, which is neither git's set nor CI's checkout. It never consults
+git. It skips a directory named `testdata` or beginning with `.` or
+`_`, tracked or not, by the go tool's own rule, and reaches an ignored
+directory with any other name as it reaches a tracked one. So a package
+in such a directory is built here and never in CI: a failure there is
+not a CI failure, and a pass here is not a CI pass.
+
+The Build, Test, Vet and Coverage entry points each run `go list ./...`
+before their command, print the number of packages it lists beside the
+selector `./...`, and fail where that number is zero. `go list ./...`
+selects as the command after it does, so the number counts the
+packages `./...` selected, not what the command built, tested or
+vetted. `go list` exits 0 when it lists nothing, so the entry point
+compares the number itself. Over a module holding no packages, `go
+build ./...` exits 0 and prints only `go: warning: "./..." matched no
+packages`; `go test ./...`, `go test -cover ./...` and `go vet ./...`
+exit 1 there, with `no packages to test` or `no packages to vet`.
 
 Every tool the module invokes is built with a toolchain at least the
 module's `go` directive. `go install tool@version` and `go run
