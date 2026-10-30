@@ -1,6 +1,6 @@
 # ADR 0067: Tag a development image with its commit hash alone, and refuse a push the namespaces forbid
 
-> Status: accepted
+> Status: accepted; the refusal by namespace superseded by ADR-0078
 > Date: 2026-10-09
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
