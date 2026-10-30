@@ -1,7 +1,7 @@
 name: release
 
-# Publishes a release: the manager's image to garam/garam-agent-operator and the
-# control service's to garam/garam-agent-operator-control, each as X.Y.Z, from a
+# Publishes a release: the manager's image to garam-agent-operator/manager and the
+# control service's to garam-agent-operator/control, each as X.Y.Z, from a
 # vX.Y.Z git tag on main (ADR 0051, delivery.md). Modelled on sherlock's release
 # workflow (garamsh/sherlock@b3c05c2:.github/workflows/release.yml), which garam's
 # shares (garamsh/garam@9a3f8a6:.github/workflows/release.yml, its ADR-0039).
@@ -107,12 +107,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          for image in garam-agent-operator garam-agent-operator-control; do
-            make verify-image-ref IMAGE_REF="$REGISTRY/garam/$image:$VERSION"
-            docker tag "$image:$GITHUB_SHA" "$REGISTRY/garam/$image:$VERSION"
+          for image in manager control; do
+            make verify-image-ref IMAGE_REF="$REGISTRY/garam-agent-operator/$image:$VERSION"
+            docker tag "garam-agent-operator/$image:$GITHUB_SHA" "$REGISTRY/garam-agent-operator/$image:$VERSION"
           done
-          for image in garam-agent-operator garam-agent-operator-control; do
-            docker push "$REGISTRY/garam/$image:$VERSION"
+          for image in manager control; do
+            docker push "$REGISTRY/garam-agent-operator/$image:$VERSION"
           done
 
       # What the registry holds, read back from the registry: the digest each
@@ -132,10 +132,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          for image in garam-agent-operator garam-agent-operator-control; do
-            ref="$REGISTRY/garam/$image:$VERSION"
+          for image in manager control; do
+            ref="$REGISTRY/garam-agent-operator/$image:$VERSION"
             fields=$(aws ecr batch-get-image \
-              --repository-name "garam/$image" \
+              --repository-name "garam-agent-operator/$image" \
               --image-ids imageTag="$VERSION" \
               --query 'images[0].[imageManifestMediaType, imageId.imageDigest]' \
               --output text)
