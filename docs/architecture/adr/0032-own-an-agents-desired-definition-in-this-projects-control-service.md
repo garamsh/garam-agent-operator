@@ -1,6 +1,6 @@
 # ADR 0032: Own an agent's desired definition in this project's control service, and render every Agent carrying a GRN from it
 
-> Status: accepted
+> Status: accepted; the customer's cluster as where the manager runs amended by ADR-0079
 > Date: 2026-10-04
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
