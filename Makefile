@@ -295,8 +295,9 @@ build: manifests generate fmt vet ## Build the manager and control binaries.
 	go build -o bin/manager cmd/main.go
 	go build -o bin/control ./cmd/control
 
-# The manager refuses to start without an image for its init containers, so run
-# takes one rather than leaving the refusal to the program.
+# Departs from the scaffold, and a regeneration restores the scaffold's form: the
+# manager refuses to start without an image for its init containers, so run takes
+# one rather than leaving the refusal to the program.
 AGENT_COPY_IMAGE ?=
 
 .PHONY: run
