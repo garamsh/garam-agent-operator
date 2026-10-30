@@ -320,7 +320,7 @@ docker-build-control: ## Build docker image with the control service.
 # The two images this project publishes, built for publishing and pushed by nothing
 # here (delivery.md, ADR 0051): the manager's from Dockerfile and the control
 # service's from build/control.Dockerfile, each one linux/amd64 manifest, tagged
-# locally garam-agent-operator:<REVISION> and garam-agent-operator-control:<REVISION>
+# locally garam-agent-operator/manager:<REVISION> and garam-agent-operator/control:<REVISION>
 # and labelled with REVISION. The release workflow and the manual procedure for a
 # development image both build through this target, then tag and push what it built.
 #
@@ -337,16 +337,16 @@ IMAGE_PLATFORM = linux/amd64
 .PHONY: build-images
 build-images: ## Build the manager's and the control service's images to publish, one linux/amd64 manifest each, and push nothing.
 	@test -n "$(REVISION)" || { echo "build-images: REVISION is empty; pass one: make build-images REVISION=<commit>"; exit 1; }
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -t garam-agent-operator:$(REVISION) .
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/control.Dockerfile -t garam-agent-operator-control:$(REVISION) .
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -t garam-agent-operator/manager:$(REVISION) .
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/control.Dockerfile -t garam-agent-operator/control:$(REVISION) .
 
-# Refuses IMAGE_REF where a push would put it in a repository ADR 0066 or ADR 0067
-# forbids: under garam/, anything but a release from release.yml's run for its tag;
-# under garam-dev/, a dev- tag (#325). Every target that pushes runs it first, and
-# so does release.yml. It stops mistakes, not a determined pusher, since a local
-# shell can export GITHUB_WORKFLOW_REF; IAM stops the rest.
+# Refuses IMAGE_REF where ADR 0078's tag rule forbids its push: under
+# garam-agent-operator/, an X.Y.Z tag outside release.yml's run for that version, and
+# any tag but X.Y.Z or the 12-hex commit hash (#401). Every target that pushes runs it
+# first, and so does release.yml. It stops mistakes, not a determined pusher, since a
+# local shell can export GITHUB_WORKFLOW_REF; IAM stops the rest.
 .PHONY: verify-image-ref
-verify-image-ref: ## Refuse an IMAGE_REF a push would put under garam/ outside a release, or under garam-dev/ with a dev- tag.
+verify-image-ref: ## Refuse an IMAGE_REF under garam-agent-operator/ unless it is the 12-hex commit hash, or X.Y.Z in its release run.
 	go run ./hack/imageref "$(IMAGE_REF)"
 
 # Departs from the scaffold, and a regeneration restores the scaffold's form: it
