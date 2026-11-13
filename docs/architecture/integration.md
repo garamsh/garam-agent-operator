@@ -11,7 +11,7 @@ How a change reaches `dev` and then `main`, and which checks run at each step.
 |---|---|---|
 | `Checks` | `pull_request` with base `main` | The promotion is where a batch of `dev` is checked before it becomes released state. |
 | `E2E Tests` | `pull_request` with base `main` | Same, and it is the only automated run of the layer that exercises the built artifact against a real garam. |
-| `release` | `push` of a `v*` tag | Publishes a release (`delivery.md`, ADR 0051). It checks nothing: what it builds is a commit the promotion already checked. |
+| `release` | `push` of a `v*` tag | Publishes a release: the operator, guest and control images (`delivery.md`, ADR 0051, ADR 0084). It checks nothing: what it builds is a commit the promotion already checked. |
 
 - **No `push` trigger remains.** The promotion is merged by fast-forward and `main` moves only by a promotion, so `main` lands on the commit the pull-request run already checked. A run on the `push` to `main` would check that tree twice for one promotion.
 - **The author's local run is the only gate before `dev`.** A contributor runs `make ci`, `make test-e2e-control` and `make pair-run` before pushing, which `README.md` states where the commands are. A pull request into `dev` carries no check suite, so a reviewer relies on the run the author reports in the pull request's Verification field, and nothing on the forge ties that report to the head commit.

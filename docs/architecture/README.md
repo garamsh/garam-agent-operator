@@ -130,6 +130,7 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0081-release-as-0-1-0-dev-n-and-0-1-0-rc-n-until-launch-and-0-1-0-at-launch.md` | Release as `0.1.0-dev.N` and `0.1.0-rc.N` until launch, and `0.1.0` at launch | accepted |
 | `adr/0082-import-garams-gaon-operator-and-keep-it-in-this-repository.md` | Import garam's gaon operator and keep it in this repository | accepted; the root `Dockerfile` it raised the builder of superseded by ADR-0083 |
 | `adr/0083-remove-the-kubernetes-manager.md` | Remove the Kubernetes manager and everything only it uses | accepted |
+| `adr/0084-publish-the-gaon-operator-and-the-guest-image-from-the-release-workflow.md` | Publish the gaon operator and the guest image from the release workflow | accepted |
 
 ### Templates
 
