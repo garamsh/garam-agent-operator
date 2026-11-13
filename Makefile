@@ -291,9 +291,12 @@ ci: verify-tidy lint-config lint fmt test build verify-build-context verify-pins
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build the manager and control binaries.
+build: manifests generate fmt vet ## Build the manager, control, gaon operator, guest supervisor and render binaries.
 	go build -o bin/manager cmd/main.go
 	go build -o bin/control ./cmd/control
+	go build -o bin/gaon-operator ./cmd/gaon-operator
+	go build -o bin/gaon-guest ./cmd/gaon-guest
+	go build -o bin/gaon-render ./cmd/gaon-render
 
 # Departs from the scaffold, and a regeneration restores the scaffold's form: the
 # manager refuses to start without an image for its init containers, so run takes
@@ -345,6 +348,57 @@ build-images: ## Build the manager's and the control service's images to publish
 	@test -n "$(REVISION)" || { echo "build-images: REVISION is empty; pass one: make build-images REVISION=<commit>"; exit 1; }
 	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -t garam-agent-operator/manager:$(REVISION) .
 	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/control.Dockerfile -t garam-agent-operator/control:$(REVISION) .
+
+# The gaon operator's image and the composed guest image of a gaon MicroVM
+# (ADR 0082), built as build-images builds the two above: one linux/amd64
+# manifest each, tagged locally garam-agent-operator/gaon-operator:<REVISION> and
+# garam-agent-operator/gaon-guest:<REVISION>, and pushed by nothing here. They are
+# not in build-images because the guest image's three source images are pinned by
+# digest in build/guest.Dockerfile and live in a private registry: building it
+# needs a login that can pull them, as `make garam-e2e` needs one for garam's
+# test image.
+.PHONY: operator-image
+operator-image: ## Build the gaon operator's image, one linux/amd64 manifest, and push nothing.
+	@test -n "$(REVISION)" || { echo "operator-image: REVISION is empty; pass one: make operator-image REVISION=<commit>"; exit 1; }
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg IMAGE_REVISION="$(REVISION)" --build-arg IMAGE_VERSION="$(REVISION)" -f build/operator.Dockerfile -t garam-agent-operator/gaon-operator:$(REVISION) .
+
+.PHONY: guest-image
+guest-image: ## Build the composed guest image, one linux/amd64 manifest, and push nothing. Needs a login that pulls its three pinned source images.
+	@test -n "$(REVISION)" || { echo "guest-image: REVISION is empty; pass one: make guest-image REVISION=<commit>"; exit 1; }
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/guest.Dockerfile -t garam-agent-operator/gaon-guest:$(REVISION) .
+
+# What only the built images can break; neither is part of ci, because each
+# needs a Docker daemon, and guest-run a login for the pinned source images.
+.PHONY: operator-image-check
+operator-image-check: operator-image ## Check the gaon operator's image runs as a numeric non-root account, ships no shell and names its missing settings.
+	GAON_OPERATOR_IMAGE=garam-agent-operator/gaon-operator:$(REVISION) sh tests/gaon/operator-image.sh
+
+.PHONY: guest-run
+guest-run: guest-image ## Run the composed guest image as one container and check the supervisor's start order, readiness port and drain.
+	sh tests/gaon/guest-image.sh garam-agent-operator/gaon-guest:$(REVISION)
+
+# The gaon operator against a real garam, at GARAM_REVISION and run from garam-e2e's
+# files, and a real control service built from this tree, with tests/gaon/gaonstandin
+# for gaon's API. It needs a Docker daemon (one PostgreSQL container), openssl, jq,
+# curl, python3 and the Go toolchain, prints each check, and exits non-zero where an
+# answer is not the one it names. Name the compose project with PAIR_RUN_PROJECT.
+# Not part of ci.
+.PHONY: pair-run
+pair-run: garam-e2e ## Run the gaon operator against garam and the control service, with a stand-in for gaon's API.
+	GARAM_DIR="$(GARAM_DIR)" sh tests/pairrun/pair-run.sh
+
+# The same run against gaon's own built services in place of the stand-in, with
+# authorization on. GAON_REPO names a gaon checkout, which is cloned and not
+# changed, and GAON_COMMIT the commit built from it; the commit moves with the
+# github.com/garamsh/gaon/lib/api pin in go.mod, to the same commit of gaon, in the
+# same pull request. It needs the module cache to hold gaon's etcd and mvmd's
+# runtime API (tests/pairrun/gaon-build.sh). Not part of ci.
+GAON_COMMIT ?= 2387cebd0b44b322b7da2ff485144a7456a97c6f
+
+.PHONY: pair-run-gaon
+pair-run-gaon: garam-e2e ## Run the same pair run against gaon's own built services. Needs GAON_REPO=<gaon checkout>.
+	@test -n "$(GAON_REPO)" || { echo "pair-run-gaon: GAON_REPO names the gaon checkout to clone" >&2; exit 1; }
+	GARAM_DIR="$(GARAM_DIR)" PAIR_RUN_GAON=gaon GAON_REPO="$(GAON_REPO)" GAON_COMMIT="$(GAON_COMMIT)" sh tests/pairrun/pair-run.sh
 
 # Refuses IMAGE_REF where ADR 0078's tag rule forbids its push: under
 # garam-agent-operator/, a release version tag (0.1.0-dev.N, 0.1.0-rc.N or 0.1.0, ADR 0081)
@@ -556,7 +610,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
 # The PM moves this pin too, for the reason above. Nothing schedules the
 # review: no Kubernetes release bears on it, so it moves when a Go release or a
 # lint failure requires it.
-GOLANGCI_LINT_VERSION ?= v2.12.2
+GOLANGCI_LINT_VERSION ?= v2.15.0
 
 .PHONY: kind
 kind: $(KIND) ## Download kind locally if necessary.

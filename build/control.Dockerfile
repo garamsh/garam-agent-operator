@@ -3,7 +3,8 @@
 # build's target platform still selects each base.
 # Dependabot moves both lines (`.github/dependabot.yml`, the `/build` entry), rewriting
 # tag and digest together.
-FROM golang:1.26@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS builder
+# go.mod's go directive is 1.27.4 (the gaon operator needs it), so the builder is that release.
+FROM mirror.gcr.io/library/golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS builder
 ARG TARGETOS
 ARG TARGETARCH
 

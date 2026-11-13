@@ -1,0 +1,30 @@
+# What `make pair-run` starts in a container: the one PostgreSQL server
+# garam's database and the control service's database are made on.
+# tests/pairrun/pair-run.sh names the project, makes the two databases
+# and removes the project with its volume at the end. garam's processes,
+# the control service, the operator and gaon's stand-in run on the host.
+#
+# The port is published to a free one on the loopback, which the script
+# asks compose for, so a run can sit beside any other stack.
+
+services:
+  postgres:
+    # Digest as well as tag: the tag resolves through a mutable pointer.
+    # garam's test-principal fixture refuses a server that is not on this
+    # machine, which is why the port is published on the loopback.
+    image: postgres:17.11-alpine3.24@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    environment:
+      POSTGRES_USER: garam
+      POSTGRES_PASSWORD: garam
+      POSTGRES_DB: garam
+    ports:
+      - "127.0.0.1::5432"
+    # Over TCP, not the unix socket: the image runs a temporary server on
+    # that socket to initialise the data directory, so a socket probe
+    # reports healthy while the real server is still to start.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U garam"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 60s

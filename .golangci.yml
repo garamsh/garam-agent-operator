@@ -6,6 +6,7 @@ run:
   # reports `0 issues.` either way.
   build-tags:
     - e2e
+    - gaonharness
 linters:
   default: none
   enable:
@@ -58,6 +59,18 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # The gaon operator's tests and stand-ins repeat wire names and
+      # fixture values on purpose, so a reader sees each case's input.
+      - linters:
+          - goconst
+        path: ^(internal/gaon|tests/gaon)/
+      # Go 1.27 needs golangci-lint v2.15.0, whose modernize reports these
+      # three in code the gaon import does not touch. Each goes when its
+      # file is next changed, and then so does its entry here.
+      - linters:
+          - modernize
+        path: ^(internal/(controller|desired|garam|gaon)|tests/(control|gaon))/
+        text: '^(embedlit|stringscut|errorsastype):'
     paths:
       - third_party$
       - builtin$
