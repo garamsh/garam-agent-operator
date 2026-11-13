@@ -1,0 +1,11 @@
+#!/bin/sh
+# Copies as cp does. Where the e2e suite marks a memory move's source claim for
+# it, it then flips the first byte of a memory store it copied, so that only the
+# move's verification can tell the copy from its source. The mark sits at the
+# claim's root, outside the state a move copies and verifies.
+/bin/cp "$@" || exit
+[ -e /run/garam/move/source/e2e-corrupt-copy ] || exit 0
+for last; do :; done
+case "$last" in
+  */memory.db) printf 'X' | dd of="$last" bs=1 count=1 conv=notrunc 2>/dev/null ;;
+esac

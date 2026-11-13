@@ -41,7 +41,7 @@ COPY --from=build /out/gaon-operator /usr/local/bin/gaon-operator
 # The commit and the version the build was given.
 ARG IMAGE_REVISION
 ARG IMAGE_VERSION
-LABEL org.opencontainers.image.title="garam-agent-operator-operator" \
+LABEL org.opencontainers.image.title="garam-agent-operator-gaon-operator" \
   org.opencontainers.image.source="https://github.com/garamsh/garam-agent-operator" \
   org.opencontainers.image.revision=$IMAGE_REVISION \
   org.opencontainers.image.version=$IMAGE_VERSION

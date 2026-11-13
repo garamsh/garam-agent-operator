@@ -14,6 +14,7 @@ linters:
     - depguard
     - dupl
     - errcheck
+    - ginkgolinter
     - goconst
     - gocyclo
     - govet
@@ -28,7 +29,12 @@ linters:
     - unconvert
     - unparam
     - unused
+    - logcheck
   settings:
+    custom:
+      logcheck:
+        type: "module"
+        description: Checks Go logging calls for Kubernetes logging conventions.
     depguard:
       rules:
         forbid-sort-pkg:
@@ -47,6 +53,9 @@ linters:
     generated: lax
     rules:
       - linters:
+          - lll
+        path: api/*
+      - linters:
           - dupl
           - lll
         path: internal/*
@@ -60,7 +69,7 @@ linters:
       # file is next changed, and then so does its entry here.
       - linters:
           - modernize
-        path: ^(internal/gaon|tests/(control|gaon))/
+        path: ^(internal/(controller|desired|garam|gaon)|tests/(control|gaon))/
         text: '^(embedlit|stringscut|errorsastype):'
     paths:
       - third_party$

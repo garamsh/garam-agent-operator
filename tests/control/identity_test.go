@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/garamsh/garam-agent-operator/internal/gaon/agent/controlapi"
+	"github.com/garamsh/garam-agent-operator/internal/desired"
 	"github.com/garamsh/garam-agent-operator/internal/machinetoken"
 )
 
@@ -153,7 +153,7 @@ func writeKeyIssuance(dir, prefix, clientID, tokenURL, privateKeyPEM string) (ma
 func bearerClient(roots *x509.CertPool, grn, token string) *http.Client {
 	return &http.Client{Transport: presenting{
 		base:   &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots}},
-		header: http.Header{"Authorization": {"Bearer " + token}, controlapi.ControllerHeader: {grn}},
+		header: http.Header{"Authorization": {"Bearer " + token}, desired.ControllerHeader: {grn}},
 	}}
 }
 

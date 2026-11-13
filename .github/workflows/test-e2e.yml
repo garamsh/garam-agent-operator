@@ -1,8 +1,8 @@
 name: E2E Tests
 
 # Runs only on the `dev` -> `main` promotion pull request, beside `Checks`. An author
-# runs `make test-e2e-control` and `make pair-run` before a change reaches `dev`; CI
-# runs them once per promotion rather than once per merge. No `push` trigger, for the reason `checks.yml` gives
+# runs `make test-e2e` before a change reaches `dev`; CI runs it once per promotion
+# rather than once per merge. No `push` trigger, for the reason `checks.yml` gives
 # (ADR 0028).
 on:
   pull_request:
@@ -56,11 +56,9 @@ jobs:
 
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
-      # The control service's e2e suite against a real garam, then the gaon operator's
-      # pair run against that garam and the control service. Each is one `make`
-      # invocation, and each pulls garam's files through the ECR login above.
-      - name: Run the control service's e2e tests
-        run: make test-e2e-control
-
-      - name: Run the gaon operator's pair run
-        run: make pair-run
+      # `make test-e2e` installs kind itself, at the version the Makefile pins, so
+      # this job holds no kind version of its own. helm/kind-action would put that
+      # version and the cluster back here, where a contributor's command cannot
+      # reach either.
+      - name: Run the e2e tests
+        run: make test-e2e

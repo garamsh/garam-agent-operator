@@ -1,0 +1,1057 @@
+package controller
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path"
+	"slices"
+	"strconv"
+	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	agentv1alpha1 "github.com/garamsh/garam-agent-operator/api/v1alpha1"
+	"github.com/garamsh/garam-agent-operator/internal/agentname"
+	"github.com/garamsh/garam-agent-operator/internal/garam"
+)
+
+const (
+	agentContainerName = "agent"
+
+	// configContainerName is the init container that writes the config file an
+	// agent resolves its settings from, and its ego file. It is built only where
+	// an Agent declares something to write into one.
+	configContainerName = "config"
+
+	// workspaceContainerName is the container serving the files an agent reads
+	// and writes and the commands it runs. The agent executes nothing itself
+	// and reaches this process over the Pod's loopback interface, at the address
+	// the agent type's descriptor names.
+	workspaceContainerName = "workspace"
+
+	// adapterContainerName is garam's adapter: the process carrying messages
+	// between garam and the agent's gateway. It is a native sidecar, an init
+	// container that keeps running, because it has to outlive the agent while
+	// the Pod shuts down (garam@fdfb76d:docs/architecture/adapter.md:28-33).
+	adapterContainerName = agentname.AdapterContainer
+
+	// adapterCredentialsMountPath is where the adapter reads the agent's
+	// tokens and the garam server root. It is this operator's path for garam's
+	// process, the same for every agent type, so it is not the descriptor's.
+	adapterCredentialsMountPath = "/run/garam/credentials"
+
+	// placementMountPath is where the adapter reads the placement token, as the
+	// file named placementTokenKey.
+	placementMountPath = "/run/garam/placement"
+
+	// credentialsVolumeName is the credential Secret's projection, which only
+	// the adapter mounts; serverRootVolumeName projects the garam server root
+	// out of the same Secret, and nothing else of it, for the agent (ADR 0073).
+	credentialsVolumeName = "credentials"
+	serverRootVolumeName  = "server-root"
+
+	// controlRootMountPath is where the adapter reads the root the control
+	// service's serving certificate chains to, as controlRootFile; outboxMountPath
+	// is where it reads and clears the agent's outbox. Both are this operator's
+	// paths for garam's process (#218).
+	controlRootMountPath = "/run/garam/control"
+	controlRootFile      = "root.pem"
+	outboxMountPath      = "/run/garam/outbox"
+
+	// controlRootVolumeName holds the control root the config writer copies in,
+	// which only the adapter reads.
+	controlRootVolumeName = "control-root"
+
+	// controlRootContentVariable carries the control root's text to the config
+	// writer, on configContentVariable's ground.
+	controlRootContentVariable = "AGENT_CONTROL_ROOT_CONTENT"
+
+	// outboxContainerName is the init container that makes the agent's outbox
+	// directory on the state claim before the adapter mounts it, and
+	// outboxStateMountPath is where it mounts that claim. Created by anything
+	// else, the directory the adapter's subPath names would be the kubelet's,
+	// owned by root, and the agent could not write it.
+	outboxContainerName  = "outbox"
+	outboxStateMountPath = "/run/garam/state"
+
+	// outboxDirMode lets the Pod's user and group write the outbox and nobody
+	// else; sherlock's own creation of it leaves an existing directory as it
+	// is (sherlock@44aaa55:tools/message_send/message_send.go:108).
+	outboxDirMode = "0770"
+
+	// placementVolumeName is the placement token's Secret projected, which only
+	// the adapter mounts (ADR 0042, ADR 0073).
+	placementVolumeName = "placement"
+	configVolumeName    = "config"
+
+	// stateVolumeName is the claim the agent's state is kept on: its memory store
+	// and the outbox beside it. Only the agent's container mounts it. The name is
+	// the one the claim had when the workspace shared it, so the claim an existing
+	// agent already holds is the one it keeps (ADR 0044).
+	stateVolumeName = "state"
+
+	// workspaceVolumeName is the claim the workspace serves its files from. Only
+	// the workspace's container mounts it, so nothing the agent runs reaches the
+	// agent's state (ADR 0044).
+	workspaceVolumeName = "workspace"
+
+	// configContentVariable carries the file's whole text to the init container
+	// that writes it. It is this operator's name, set on that container and on no
+	// other, so nothing the agent spawns inherits a pin set — which is the custody
+	// the sherlock descriptor's agent refuses the environment road to keep
+	// (sherlock@fc5fca4:internal/config/config.go:216-234).
+	configContentVariable = "AGENT_CONFIG_CONTENT"
+
+	// egoContentVariable carries the ego file's text to the same init
+	// container, on the same ground.
+	egoContentVariable = "AGENT_EGO_CONTENT"
+
+	// instructionsContentVariable carries the operator instructions file's text
+	// to the same init container, on the same ground.
+	instructionsContentVariable = "AGENT_INSTRUCTIONS_CONTENT"
+
+	// configFileMask leaves the file readable by its owner and nobody else. The
+	// sherlock descriptor's agent refuses a config file carrying any group or
+	// other bit (sherlock@8218189:docs/architecture/deployment.md:78), so an
+	// agent handed one it refuses does not start. A mask rather than a mode set
+	// afterwards, so the file is never briefly readable by anyone else.
+	configFileMask = "077"
+
+	// workspaceDirName is the subtree of the state volume the workspace serves,
+	// and the only part of it the workspace touches. The path is absolute and
+	// this operator's: the sherlock descriptor's workspace defaults to a relative
+	// one, its published image declares no working directory, and the /data it
+	// therefore resolves against is root-owned at 0755 — which the user this Pod
+	// names cannot create in, so the workspace would exit at startup
+	// (sherlock@9b0e399:internal/workspace/files/files.go:56).
+	workspaceDirName = "workspace"
+
+	// credentialsFileMode keeps the projected credential files readable by the
+	// group the Pod carries and by nothing else. A Secret volume's files are
+	// owned by root, so owner-only would leave them unreadable to the adapter,
+	// which does not run as root. Tightening it back to owner-only would not
+	// survive the kubelet anyway: where a Pod carries a group, it ORs group-read
+	// into every file it writes into the volume. What confines an agent's tokens
+	// is which containers mount the volume, not the mode: every container of the
+	// Pod runs as one user, so an owner-only copy would exclude none of them
+	// (ADR 0073).
+	credentialsFileMode = 0o440
+
+	// agentFSGroup is the group the kubelet gives every volume in the Pod and
+	// adds to the supplementary groups of each container's initial process. It is
+	// what lets the adapter and the agent open the Secret projections, whose
+	// files the kubelet writes root-owned at 0440.
+	agentFSGroup = 65532
+
+	// agentRunAsUser is the user every container of the Pod runs as, so that
+	// what one container writes another reads as its owner. The operator names
+	// it rather than reading it off the image: an owner has to be one value for
+	// the whole Pod, and no image can be asked what the others run as.
+	agentRunAsUser = 65532
+)
+
+// The settings garam's adapter reads, by the names garam@e81a1e0 gives them
+// (internal/cli/cli.go:182-191).
+const (
+	adapterAgentSetting          = "GARAM_ADAPTER_AGENT"
+	adapterMachineURLSetting     = "GARAM_ADAPTER_MACHINE_URL"
+	adapterGatewayURLSetting     = "GARAM_ADAPTER_GATEWAY_URL"
+	adapterTokenFileSetting      = "GARAM_ADAPTER_TOKEN_FILE"
+	adapterServerRootSetting     = "GARAM_ADAPTER_SERVER_ROOT_FILE"
+	adapterControlURLSetting     = "GARAM_ADAPTER_CONTROL_URL"
+	adapterControlRootSetting    = "GARAM_ADAPTER_CONTROL_ROOT_FILE"
+	adapterControlTokenSetting   = "GARAM_ADAPTER_CONTROL_TOKEN_FILE"
+	adapterPlacementTokenSetting = "GARAM_ADAPTER_PLACEMENT_TOKEN_FILE"
+	adapterOutboxDirSetting      = "GARAM_ADAPTER_OUTBOX_DIR"
+)
+
+// messageSigningKeysPath is the machine listener's route serving the keys garam
+// signs messages with (garam@5f178278:api/machine.yaml:776-783).
+const messageSigningKeysPath = "/message-signing-keys"
+
+// containerSecurityContext is what every container of the agent's Pod carries.
+// It holds the two fields PodSecurity restricted asks of a container and nothing
+// else: readOnlyRootFilesystem is no part of that standard, and naming a user
+// here would take the Pod's own away from whichever container named it.
+func containerSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: ptr.To(false),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+}
+
+// shellCommand runs script in a shell that stops at the first command to fail.
+func shellCommand(script string) []string {
+	return []string{"/bin/sh", "-ec", script}
+}
+
+// writeConfigCommand writes the agent's config file into dir, its ego file where
+// ego is set, and its operator instructions file where instructions is set, at
+// the paths the descriptor names under it, before the agent starts and at a mode
+// only the user that reads them can reach.
+//
+// The text travels in the environment and is never part of the command. A pin
+// reaches this operator from a console field it does not read, and a value
+// interpolated into a command is one that can stop being a value — which is the
+// ground ci.md §Security baseline states for a pipeline's inputs, met here at an
+// init container's.
+func writeConfigCommand(dir string, descriptor agentTypeDescriptor, ego, instructions, controlRoot bool) []string {
+	script := fmt.Sprintf("umask %s && %s", configFileMask,
+		writeFileCommand(descriptor.configFileIn(dir), configContentVariable))
+	if ego {
+		script += " && " + writeFileCommand(descriptor.egoFileIn(dir), egoContentVariable)
+	}
+	if instructions {
+		script += " && " + writeFileCommand(descriptor.instructionsFileIn(dir), instructionsContentVariable)
+	}
+	if controlRoot {
+		script += " && " + writeFileCommand(controlRootMountPath+"/"+controlRootFile, controlRootContentVariable)
+	}
+
+	return shellCommand(script)
+}
+
+// writeFileCommand is the shell that writes the text variable holds to file.
+func writeFileCommand(file, variable string) string {
+	return fmt.Sprintf("mkdir -p %s && printf '%%s' \"$%s\" > %s", path.Dir(file), variable, file)
+}
+
+// errReplacing reports that the StatefulSet is being replaced, so there is none
+// to reconcile until the old one is gone.
+var errReplacing = errors.New("the statefulset is being replaced")
+
+// errReplacingForMove reports that the StatefulSet is being replaced because
+// the agent's memory moved off the claim its template makes (ADR 0065).
+var errReplacingForMove = errors.New("the statefulset is being replaced for a memory move")
+
+// replicasFor is the number of replicas the Agent's workload runs: one, or none
+// while it is suspended or stopped.
+func replicasFor(agent *agentv1alpha1.Agent, plan statePlan) int32 {
+	if heldStopped(agent) || plan.hold {
+		return 0
+	}
+
+	return 1
+}
+
+// heldStopped reports whether the spec keeps the agent stopped: a person's
+// suspension, or the control service's stop (ADR 0057). Both take the same
+// road: no replica, and the Pod released only on the writer fence's evidence.
+func heldStopped(agent *agentv1alpha1.Agent) bool {
+	return agent.Spec.Suspended || agent.Spec.Stopped
+}
+
+// reconcileStatefulSet brings the StatefulSet an Agent describes into being, or
+// brings an existing one back to what the Agent's spec says, and returns it as
+// the cluster now holds it. A StatefulSet whose workspace shares the state claim
+// is replaced first, which returns errReplacing until the old one is gone.
+func (r *AgentReconciler) reconcileStatefulSet(ctx context.Context, agent *agentv1alpha1.Agent,
+	descriptor agentTypeDescriptor, plan statePlan) (*appsv1.StatefulSet, error) {
+	statefulSet := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: agent.Name, Namespace: agent.Namespace},
+	}
+
+	if err := r.replaceSharedShape(ctx, statefulSet); err != nil {
+		return nil, err
+	}
+	plan, err := r.replaceStateTemplate(ctx, agent, statefulSet, plan)
+	if err != nil {
+		return nil, err
+	}
+
+	lineage, err := r.credentialLineage(ctx, agent)
+	if err != nil {
+		return nil, err
+	}
+
+	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, statefulSet, func() error {
+		applyLineage(statefulSet, lineage)
+
+		return r.applyAgent(agent, statefulSet, descriptor, plan)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create or update statefulset: %w", err)
+	}
+
+	if operation != controllerutil.OperationResultNone {
+		logf.FromContext(ctx).Info("Reconciled the StatefulSet", "statefulSet", statefulSet.Name, "operation", operation)
+	}
+
+	return statefulSet, nil
+}
+
+// credentialLineage is the lineage garam recovered the agent's credential under,
+// as the recoverer records it on the credential Secret, and empty for a first
+// credential (ADR 0059). Only the Secret's metadata is read.
+func (r *AgentReconciler) credentialLineage(ctx context.Context, agent *agentv1alpha1.Agent) (string, error) {
+	secret := &metav1.PartialObjectMetadata{}
+	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
+	err := r.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: agent.Spec.CredentialsSecretName}, secret)
+	if apierrors.IsNotFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read the credential of the agent: %w", err)
+	}
+
+	return secret.GetAnnotations()[agentname.CredentialLineageAnnotation], nil
+}
+
+// applyLineage carries a recovered lineage on the Pod template, so a recovery
+// moves the Pod to a new placement, whose generation garam activates under the
+// new lineage's token (ADR 0073). An agent never recovered carries none and
+// changes nothing in the template.
+func applyLineage(statefulSet *appsv1.StatefulSet, lineage string) {
+	if lineage == "" {
+		delete(statefulSet.Spec.Template.Annotations, agentname.CredentialLineageAnnotation)
+
+		return
+	}
+	if statefulSet.Spec.Template.Annotations == nil {
+		statefulSet.Spec.Template.Annotations = map[string]string{}
+	}
+	statefulSet.Spec.Template.Annotations[agentname.CredentialLineageAnnotation] = lineage
+}
+
+// replaceSharedShape deletes a StatefulSet whose workspace shares the state
+// claim, leaving its Pod and its claims where they are. Every such StatefulSet
+// is replaced (ADR 0068). A claim template cannot be changed after creation, so
+// a second claim needs a second StatefulSet (ADR 0044). The next one keeps the
+// state claim, by its name, and gives the workspace a new, empty claim: nothing
+// is copied onto it.
+//
+// The old Pod is the only writer of the state claim throughout. Orphaned, it
+// keeps running alone until the new StatefulSet adopts it by its labels;
+// rollOutdatedPod then deletes it to roll it, since that StatefulSet can record
+// the rollout complete without doing so (#340), and its writer fence holds it
+// until its writers are seen to stop (ADR 0042). The new Pod has the old one's name, so it cannot
+// be created while the old one exists, and the state claim is the same claim by
+// name, so the fence reads the claim the old Pod started on.
+func (r *AgentReconciler) replaceSharedShape(ctx context.Context, statefulSet *appsv1.StatefulSet) error {
+	existing := &appsv1.StatefulSet{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(statefulSet), existing)
+	if err == nil {
+		if hasWorkspaceClaim(existing) {
+			return nil
+		}
+		// A shared-shape StatefulSet still deleting is deleted again, which
+		// changes nothing, and is waited for the same way.
+
+		uid := existing.UID
+		err := r.Delete(ctx, existing, client.PropagationPolicy(metav1.DeletePropagationOrphan),
+			client.Preconditions{UID: &uid})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete the statefulset its workspace shares a claim in, leaving its pod: %w", err)
+		}
+		logf.FromContext(ctx).Info("Replacing the StatefulSet to give the workspace a claim of its own",
+			"statefulSet", existing.Name)
+
+		return errReplacing
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("get statefulset: %w", err)
+	}
+
+	return nil
+}
+
+// podRollout is what rollOutdatedPod found of the agent's Pod against its
+// StatefulSet's revision: nothing to report where reason is empty, otherwise
+// the reason the workload is not reconciled and a message saying why.
+type podRollout struct {
+	reason, message string
+}
+
+// rollOutdatedPod deletes the agent's Pod where it runs a revision other than
+// the StatefulSet's update revision, and reports it rolling. A StatefulSet that
+// replaced a shared-shape one adopts the old Pod and can record its rollout
+// complete with that Pod on the old revision, so it never rolls it (#340). The
+// delete is an ordinary one, which the writer fence's finalizer holds until the
+// Pod's writers are seen to stop; it is never forced. A Pod the StatefulSet does
+// not yet own is left for it to adopt, and only reported.
+//
+// Where a Pod exists and the StatefulSet's status has not observed its
+// generation, or names no update revision, which revision the Pod should run is
+// not known yet: nothing is deleted, and the rollout is reported not observed
+// rather than reconciled. A replacing StatefulSet sits in that state until its
+// controller first writes status, beside the Pod it is about to adopt. It
+// reports nothing only where no Pod exists or the Pod is on the update revision.
+func (r *AgentReconciler) rollOutdatedPod(ctx context.Context, statefulSet *appsv1.StatefulSet) (podRollout, error) {
+	pod := &corev1.Pod{}
+	name := statefulSet.Name + "-0"
+	if err := r.Get(ctx, client.ObjectKey{Namespace: statefulSet.Namespace, Name: name}, pod); err != nil {
+		if apierrors.IsNotFound(err) {
+			return podRollout{}, nil
+		}
+
+		return podRollout{}, fmt.Errorf("get the agent's pod: %w", err)
+	}
+	revision := pod.Labels[appsv1.ControllerRevisionHashLabelKey]
+	update := statefulSet.Status.UpdateRevision
+	if update == "" || statefulSet.Status.ObservedGeneration < statefulSet.Generation {
+		return podRollout{reason: agentv1alpha1.ReasonRolloutNotObserved, message: fmt.Sprintf(
+			"Pod %q runs revision %q and StatefulSet %q's status has not observed generation %d yet "+
+				"(observed %d, update revision %q), so which revision the Pod should run is not known",
+			pod.Name, revision, statefulSet.Name, statefulSet.Generation, statefulSet.Status.ObservedGeneration,
+			update)}, nil
+	}
+	if revision == update {
+		return podRollout{}, nil
+	}
+	rolling := func(why string) podRollout {
+		return podRollout{reason: agentv1alpha1.ReasonWorkloadRolling, message: fmt.Sprintf(
+			"Pod %q runs revision %q and StatefulSet %q is at %q; %s", pod.Name, revision, statefulSet.Name, update,
+			why)}
+	}
+	if pod.DeletionTimestamp != nil {
+		return rolling("the Pod is deleting, held by the writer fence until its writers stop"), nil
+	}
+	owner := metav1.GetControllerOf(pod)
+	if owner == nil || owner.UID != statefulSet.UID {
+		return rolling("the StatefulSet has not adopted the Pod yet"), nil
+	}
+
+	uid := pod.UID
+	if err := r.Delete(ctx, pod, client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
+		return podRollout{}, fmt.Errorf("delete the agent's pod to roll it onto the statefulset's revision: %w", err)
+	}
+	logf.FromContext(ctx).Info("Rolling the agent's Pod onto the StatefulSet's revision", "pod", pod.Name,
+		"revision", revision, "updateRevision", update)
+
+	return rolling("the Pod is deleted to roll it, and the writer fence holds it until its writers stop"), nil
+}
+
+// replaceStateTemplate deletes a StatefulSet whose own claim template still
+// makes the state claim, once the agent's memory is on a claim it mounts by
+// name: a claim template cannot be removed from a StatefulSet. Only a move
+// names such a claim, and only with no Pod left, so the deletion orphans
+// nothing that runs; its claims are kept either way. A StatefulSet that already
+// lost the template mounts even its own claim by name, which is where a refused
+// move puts the memory back.
+func (r *AgentReconciler) replaceStateTemplate(ctx context.Context, agent *agentv1alpha1.Agent,
+	statefulSet *appsv1.StatefulSet, plan statePlan) (statePlan, error) {
+	existing := &appsv1.StatefulSet{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(statefulSet), existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			return plan, nil
+		}
+
+		return plan, fmt.Errorf("get statefulset: %w", err)
+	}
+	templated := claimTemplate(existing, stateVolumeName) != nil
+	if plan.claim == "" && !templated {
+		plan.claim = stateClaimName(agent)
+	}
+	if plan.claim == "" || !templated {
+		return plan, nil
+	}
+
+	uid := existing.UID
+	if err := r.Delete(ctx, existing, client.PropagationPolicy(metav1.DeletePropagationOrphan),
+		client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
+		return plan, fmt.Errorf("delete the statefulset whose template makes the claim the memory moved off: %w", err)
+	}
+	logf.FromContext(ctx).Info("Replacing the StatefulSet to mount the claim the agent's memory moved to",
+		"statefulSet", existing.Name, "claim", plan.claim)
+
+	return plan, errReplacingForMove
+}
+
+// claimTemplate is the StatefulSet's claim template called name, nil where it
+// has none.
+func claimTemplate(statefulSet *appsv1.StatefulSet, name string) *corev1.PersistentVolumeClaim {
+	for i := range statefulSet.Spec.VolumeClaimTemplates {
+		if statefulSet.Spec.VolumeClaimTemplates[i].Name == name {
+			return &statefulSet.Spec.VolumeClaimTemplates[i]
+		}
+	}
+
+	return nil
+}
+
+// hasWorkspaceClaim reports whether the StatefulSet claims the workspace
+// separately. Only a StatefulSet in the shared shape does not, and it is
+// replaced before anything else reads it (ADR 0044, ADR 0068).
+func hasWorkspaceClaim(statefulSet *appsv1.StatefulSet) bool {
+	return claimTemplate(statefulSet, workspaceVolumeName) != nil
+}
+
+// claimedStorageSize is the size of the volume the StatefulSet claims from the
+// template called name, and the zero quantity when it claims none. A claim
+// template cannot be changed after creation, so this is what an Agent's storage
+// size is worth comparing against.
+func claimedStorageSize(statefulSet *appsv1.StatefulSet, name string) resource.Quantity {
+	if claim := claimTemplate(statefulSet, name); claim != nil {
+		return *claim.Spec.Resources.Requests.Storage()
+	}
+
+	return resource.Quantity{}
+}
+
+// workspaceStorageSize is the size an Agent asks for its workspace's volume:
+// its own where it names one, and its state's where it does not.
+func workspaceStorageSize(agent *agentv1alpha1.Agent) resource.Quantity {
+	if agent.Spec.WorkspaceStorageSize != nil {
+		return *agent.Spec.WorkspaceStorageSize
+	}
+
+	return agent.Spec.StorageSize
+}
+
+// claimedStorageClass is the storage class the StatefulSet claims the agent's
+// state volume from, nil where it names none.
+func claimedStorageClass(statefulSet *appsv1.StatefulSet) *string {
+	for _, claim := range statefulSet.Spec.VolumeClaimTemplates {
+		if claim.Name == stateVolumeName {
+			return claim.Spec.StorageClassName
+		}
+	}
+
+	return nil
+}
+
+// describeStorageClass names a storage class in a message, and says where none
+// is named.
+func describeStorageClass(class *string) string {
+	if class == nil {
+		return "the cluster's default"
+	}
+
+	return fmt.Sprintf("%q", *class)
+}
+
+// applyAgent writes the fields an Agent's spec decides onto statefulSet and
+// leaves every other field as it found it, so that an unchanged Agent produces
+// an unchanged object. The fields a StatefulSet refuses a change to are written
+// at creation only. What the workload carries that no Agent names — the image
+// its init containers run and the image its workspace runs — is
+// read off the reconciler, which is where this operator's own configuration
+// reaches the workload. Every path and variable name that belongs to the agent
+// binary is read off descriptor.
+func (r *AgentReconciler) applyAgent(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
+	descriptor agentTypeDescriptor, plan statePlan) error {
+	if statefulSet.CreationTimestamp.IsZero() {
+		labels := workloadLabels(agent)
+		statefulSet.Labels = labels
+		statefulSet.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+		statefulSet.Spec.Template.Labels = labels
+		statefulSet.Spec.VolumeClaimTemplates = []corev1.PersistentVolumeClaim{
+			claim(workspaceVolumeName, workspaceStorageSize(agent), agent),
+		}
+		// A claim a move put the memory on is mounted by name instead (ADR 0065).
+		if plan.claim == "" {
+			statefulSet.Spec.VolumeClaimTemplates = append([]corev1.PersistentVolumeClaim{
+				claim(stateVolumeName, agent.Spec.StorageSize, agent),
+			}, statefulSet.Spec.VolumeClaimTemplates...)
+		}
+	}
+
+	// The agent's state is a single-writer store, so a second replica is never
+	// correct. A suspended agent has none, and its Pod is released by its writer
+	// fence (ADR 0046).
+	statefulSet.Spec.Replicas = ptr.To(replicasFor(agent, plan))
+
+	// Every Pod the StatefulSet creates carries the writer fence, so a deleted
+	// one is held until its writers are seen to stop (ADR 0042).
+	statefulSet.Spec.Template.Finalizers = []string{writerStoppedFinalizer}
+	// Long enough for the agent's drain to commit the step in flight, so that
+	// the fence reads a clean exit rather than the kubelet's SIGKILL (ADR 0064).
+	statefulSet.Spec.Template.Spec.TerminationGracePeriodSeconds =
+		ptr.To(int64(descriptor.terminationGrace / time.Second))
+
+	if statefulSet.Spec.Template.Spec.SecurityContext == nil {
+		statefulSet.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{}
+	}
+	podSecurity := statefulSet.Spec.Template.Spec.SecurityContext
+	podSecurity.FSGroup = ptr.To[int64](agentFSGroup)
+	podSecurity.RunAsUser = ptr.To[int64](agentRunAsUser)
+	// Naming a user PodSecurity restricted would accept is not the same as
+	// asserting one: it reads runAsNonRoot and refuses a Pod that leaves it
+	// unset. Both fields sit here rather than on the containers because both are
+	// one value for the whole Pod.
+	podSecurity.RunAsNonRoot = ptr.To(true)
+	podSecurity.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
+
+	statefulSet.Spec.Template.Spec.Volumes = nil
+	if plan.claim != "" {
+		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes,
+			claimVolume(stateVolumeName, plan.claim, false))
+	}
+
+	// The agent's tokens and its placement token reach the adapter as the
+	// kubelet projects their Secrets, which it swaps by rename, so a token the
+	// refresher replaces is read on the adapter's next call with no restart
+	// (ADR 0073). Only the adapter mounts either.
+	if r.adapterBuilt(agent) {
+		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes,
+			secretVolume(credentialsVolumeName, agent.Spec.CredentialsSecretName),
+			secretVolume(placementVolumeName, placementSecretName(agent)))
+	}
+
+	container := containerNamed(&statefulSet.Spec.Template.Spec.Containers, agentContainerName)
+	container.Image = agent.Spec.Image
+	// Always, for every type: the sherlock descriptor's agent requires a consumer
+	// of its images to pull always, because an image a reference names can be
+	// deleted from the repository holding it and the default IfNotPresent turns a
+	// reference that stopped resolving into a per-node stale cache
+	// (sherlock@8218189:docs/architecture/deployment.md:252).
+	container.ImagePullPolicy = corev1.PullAlways
+	container.Resources = agent.Spec.Resources
+	container.SecurityContext = containerSecurityContext()
+	container.VolumeMounts = []corev1.VolumeMount{
+		{Name: stateVolumeName, MountPath: descriptor.stateMountPath},
+	}
+	// The garam server root, and no token: the agent verifies the listener it
+	// fetches garam's signing keys from against it (ADR 0071).
+	if r.issuerFor(agent, descriptor) != nil {
+		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: serverRootVolumeName,
+			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName:  agent.Spec.CredentialsSecretName,
+				Items:       []corev1.KeyToPath{{Key: garam.ServerRootKey, Path: garam.ServerRootKey}},
+				DefaultMode: ptr.To[int32](credentialsFileMode),
+			}},
+		})
+		container.VolumeMounts = append(container.VolumeMounts,
+			corev1.VolumeMount{Name: serverRootVolumeName, MountPath: descriptor.credentialsMountPath, ReadOnly: true})
+	}
+	// Written on every pass, so that an operator that stops naming an image
+	// stops pointing the agent at what the Pod no longer carries.
+	container.Env = []corev1.EnvVar{{Name: descriptor.memoryPathVariable, Value: descriptor.memoryPath()}}
+	args := r.agentArgumentsFor(agent, descriptor)
+	args.requireStore = plan.requireStore
+	container.Args = descriptor.renderArgs(args)
+
+	// The key reaches the agent's container and no other, from the Secret the
+	// spec names. sherlock reads a key from a variable only
+	// (sherlock@07aa5c4:internal/config/config.go:133), so the file road the
+	// credential takes does not reach it.
+	if agent.Spec.Model != nil {
+		container.Env = append(container.Env, corev1.EnvVar{
+			Name: descriptor.modelKeyVariable,
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: agent.Spec.Model.APIKeySecretRef.Name},
+				Key:                  agent.Spec.Model.APIKeySecretRef.Key,
+			}},
+		})
+		if key := embeddingKeyOf(agent); key != nil {
+			container.Env = append(container.Env, corev1.EnvVar{
+				Name: descriptor.embeddingKeyVariable,
+				ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: key.Name},
+					Key:                  key.Key,
+				}},
+			})
+		}
+	}
+
+	// The agent's end of the link, written only where the other end is built:
+	// an agent told where to dial with nothing listening there is the failure
+	// this container exists to remove, reported one call later instead of at
+	// startup.
+	if r.WorkspaceImage != "" {
+		container.Env = append(container.Env,
+			corev1.EnvVar{Name: descriptor.workspaceAddressVariable, Value: descriptor.workspaceAddress})
+	}
+
+	// The agent's end of the adapter's link, written only where the adapter is
+	// built, as the workspace's address is.
+	if r.adapterBuilt(agent) {
+		container.Env = append(container.Env,
+			corev1.EnvVar{Name: descriptor.listenAddressVariable, Value: descriptor.gatewayAddress})
+	}
+
+	controlRoot, err := r.controlRootFor(agent)
+	if err != nil {
+		return err
+	}
+	if err := r.applyConfig(agent, statefulSet, container, descriptor, controlRoot); err != nil {
+		return err
+	}
+	r.applyOutbox(agent, statefulSet, descriptor)
+	// After the init containers that run to completion, which make what the
+	// adapter mounts: the outbox directory and the control root.
+	r.applyAdapter(agent, statefulSet, descriptor)
+
+	// Last, because appending to the container slice can move it and leave
+	// every pointer taken out of it above stale.
+	r.applyWorkspace(statefulSet, descriptor)
+
+	return controllerutil.SetControllerReference(agent, statefulSet, r.Scheme)
+}
+
+// agentArgumentsFor is what an Agent's spec passes its agent on the command
+// line. It reads the spec alone: the identity an agent is started under is a
+// Pod input, so it is never taken from the Agent's status.
+func (r *AgentReconciler) agentArgumentsFor(agent *agentv1alpha1.Agent,
+	descriptor agentTypeDescriptor) agentArguments {
+	// An Agent a user wrote carries no identity and is started under its own
+	// name: a development identity, unique in its namespace, and not a GRN.
+	args := agentArguments{agentID: agent.Name}
+	if identity := agent.Spec.Identity; identity != nil {
+		args.agentID = identity.GRN
+		args.assignmentEpoch = identity.AssignmentEpoch
+	}
+	if agent.Spec.Ego != "" {
+		args.egoFile = descriptor.egoFileIn(descriptor.configMountPath)
+	}
+	if r.instructionsFor(agent, descriptor) != "" {
+		args.instructionsFile = descriptor.instructionsFileIn(descriptor.configMountPath)
+	}
+
+	return args
+}
+
+// instructionsFor is the text of the operator instructions file an Agent's
+// agent is given: garam's reply instruction wherever the adapter is placed,
+// because only then does a message in garam's envelope arrive, and this operator
+// renders the file at all. The agent composes it between its ego and its own
+// contract and never in place of the ego (ADR 0045). Empty means no file.
+func (r *AgentReconciler) instructionsFor(agent *agentv1alpha1.Agent, descriptor agentTypeDescriptor) string {
+	if !r.adapterBuilt(agent) {
+		return ""
+	}
+
+	return descriptor.garamReplyInstruction
+}
+
+// applyConfig builds the config file an Agent's declared tool set and model
+// become, the ego file its ego becomes, and the init container that writes
+// them, and takes all of it back out again where the Agent declares nothing —
+// so that an Agent that stops declaring builds the workload it built before it
+// declared anything.
+//
+// The file is written into the Pod rather than mounted from an object of its
+// own. A ConfigMap would not remove this container: the kubelet ORs group access
+// into every file it writes into a volume of a Pod carrying a group, and this
+// Pod carries one, so a mounted file cannot be owner-only however its mode is
+// set — which is the same measurement credentialsFileMode records. It would buy
+// a name to invent and a permission to hold for a value that is not secret,
+// while the file still had to be copied to be readable at all.
+//
+// It takes no memory-backed volume, because a pin set is public. The mode is
+// not.
+func (r *AgentReconciler) applyConfig(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
+	container *corev1.Container, descriptor agentTypeDescriptor, controlRoot []byte) error {
+	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
+	egoText := agent.Spec.Ego
+	ego := egoText != ""
+	instructionsText := r.instructionsFor(agent, descriptor)
+	instructions := instructionsText != ""
+	issuer := r.issuerFor(agent, descriptor)
+	if len(agent.Spec.Tools.Pins) == 0 && agent.Spec.Model == nil && agent.Spec.Revision == "" && !ego && !instructions &&
+		controlRoot == nil && issuer == nil {
+		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
+			return initContainer.Name == configContainerName
+		})
+
+		return nil
+	}
+
+	file, err := descriptor.renderConfig(agent.Spec, issuer)
+	if err != nil {
+		return err
+	}
+
+	statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes, corev1.Volume{
+		Name: configVolumeName,
+		// Bounded by the Pod spec that carries the text rather than by a limit
+		// here: one file is written and the API server is what bounds its size.
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	})
+
+	config := containerNamed(initContainers, configContainerName)
+	config.Image = r.CopyImage
+	// Always, on the ground the credential's init container already carries: the
+	// image is the deployer's and nothing here requires its tag to name one build.
+	config.ImagePullPolicy = corev1.PullAlways
+	config.Command = writeConfigCommand(descriptor.configMountPath, descriptor, ego, instructions, controlRoot != nil)
+	config.Env = []corev1.EnvVar{{Name: configContentVariable, Value: file}}
+	if ego {
+		config.Env = append(config.Env, corev1.EnvVar{Name: egoContentVariable, Value: egoText})
+	}
+	if instructions {
+		config.Env = append(config.Env, corev1.EnvVar{Name: instructionsContentVariable, Value: instructionsText})
+	}
+	config.SecurityContext = containerSecurityContext()
+	config.VolumeMounts = []corev1.VolumeMount{{Name: configVolumeName, MountPath: descriptor.configMountPath}}
+
+	// The control root is public, and the manager already reads it, so it takes
+	// the config file's road into the Pod: a variable on this container alone,
+	// written into a volume of its own that only the adapter mounts (ADR 0049).
+	if controlRoot != nil {
+		config.Env = append(config.Env, corev1.EnvVar{Name: controlRootContentVariable, Value: string(controlRoot)})
+		config.VolumeMounts = append(config.VolumeMounts,
+			corev1.VolumeMount{Name: controlRootVolumeName, MountPath: controlRootMountPath})
+		statefulSet.Spec.Template.Spec.Volumes = append(statefulSet.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name:         controlRootVolumeName,
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+	}
+
+	// Read-only, because the agent reads these files and writes nothing back to
+	// them. Only the agent mounts them: the instructions file is no other
+	// container's, and sherlock does not mode-check it.
+	container.VolumeMounts = append(container.VolumeMounts,
+		corev1.VolumeMount{Name: configVolumeName, MountPath: descriptor.configMountPath, ReadOnly: true})
+	container.Env = append(container.Env,
+		corev1.EnvVar{Name: descriptor.configHomeVariable, Value: descriptor.configMountPath})
+
+	return nil
+}
+
+// applyWorkspace builds the container an agent's files and commands are served
+// by, and removes it again where this operator names no workspace image — so
+// that an operator that stops naming one builds the workload it built before
+// one could be named. It is a function of its own because it adds a
+// container, which is the thing every pointer into the slice depends on.
+func (r *AgentReconciler) applyWorkspace(statefulSet *appsv1.StatefulSet, descriptor agentTypeDescriptor) {
+	containers := &statefulSet.Spec.Template.Spec.Containers
+	if r.WorkspaceImage == "" {
+		*containers = slices.DeleteFunc(*containers, func(container corev1.Container) bool {
+			return container.Name == workspaceContainerName
+		})
+
+		return
+	}
+
+	workspace := containerNamed(containers, workspaceContainerName)
+	workspace.Image = r.WorkspaceImage
+	// Pulled at every start on the ground the agent's image is.
+	workspace.ImagePullPolicy = corev1.PullAlways
+	workspace.SecurityContext = containerSecurityContext()
+	// The image's own entrypoint already serves the workspace, so every setting
+	// reaches it through the environment and this operator writes no command.
+	workspace.Env = []corev1.EnvVar{
+		{Name: descriptor.listenAddressVariable, Value: descriptor.workspaceAddress},
+		{Name: descriptor.workspaceDirVariable, Value: descriptor.stateMountPath + "/" + workspaceDirName},
+		// The Pod names this uid, so this operator is the only party that can
+		// tell the workspace what it is.
+		{Name: descriptor.execUserVariable, Value: strconv.Itoa(agentRunAsUser)},
+	}
+	// The workspace's own claim, at the path the agent holds its state claim at,
+	// so the directory it serves keeps its path, and the agent's memory path does
+	// not exist in this container (ADR 0044). The state claim is not mounted
+	// here: what the workspace runs is the agent's untrusted code. Nor is the
+	// credential's copy — the workspace reads no credential, and every container
+	// mounting it is one more that can.
+	workspace.VolumeMounts = []corev1.VolumeMount{{Name: workspaceVolumeName, MountPath: descriptor.stateMountPath}}
+}
+
+// adapterBuilt reports whether an Agent's Pod carries garam's adapter. It needs
+// an image to run, the listener to claim from, the control service it
+// activates through, and the GRN it carries messages for, which garam refuses
+// to start without; an Agent a user wrote carries no GRN, and garam does not
+// know it (ADR 0049, ADR 0077).
+func (r *AgentReconciler) adapterBuilt(agent *agentv1alpha1.Agent) bool {
+	return r.AdapterImage != "" && r.GaramAddress != "" && r.ControlAddress != "" && agent.Spec.Identity != nil
+}
+
+// applyAdapter builds garam's adapter as a native sidecar of the agent's Pod,
+// and removes it again where adapterBuilt says the Pod carries none — so that an
+// operator that stops naming an adapter image builds the workload it built
+// before one could be named. This operator places the adapter and configures
+// it; what it does with messages is garam's.
+//
+// Every setting is one garam reads at garam@fdfb76d:internal/cli/cli.go:64-81,
+// 172-178. The adapter is the agent to garam and dials the agent's gateway over
+// loopback, so both identifiers are the agent's GRN: the gateway serves the
+// agent under the ID it was started with, which is that GRN (ADR 0037).
+func (r *AgentReconciler) applyAdapter(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
+	descriptor agentTypeDescriptor) {
+	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
+	if !r.adapterBuilt(agent) {
+		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
+			return initContainer.Name == adapterContainerName
+		})
+
+		return
+	}
+
+	grn := agent.Spec.Identity.GRN
+	adapter := containerNamed(initContainers, adapterContainerName)
+	adapter.Image = r.AdapterImage
+	// Pulled at every start on the ground the agent's image is.
+	adapter.ImagePullPolicy = corev1.PullAlways
+	adapter.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+	// garam's image runs garam (garam@fdfb76d:deploy/local/Dockerfile:58), and
+	// the adapter is its subcommand. No probe: the adapter listens on nothing
+	// (garam@fdfb76d:docs/architecture/deployment-contract.md:473-477).
+	adapter.Args = []string{"adapter"}
+	adapter.SecurityContext = containerSecurityContext()
+	// The token mode: the token file in place of a certificate and key, which
+	// garam refuses beside it (garam@afde8b8:docs/architecture/adapter.md
+	// §Token mode).
+	adapter.Env = []corev1.EnvVar{
+		{Name: adapterAgentSetting, Value: grn},
+		{Name: adapterMachineURLSetting, Value: "https://" + r.GaramAddress},
+		{Name: adapterGatewayURLSetting, Value: "http://" + descriptor.gatewayAddress},
+		{Name: adapterTokenFileSetting, Value: adapterCredentialsMountPath + "/" + garam.TokenKey},
+		{Name: adapterServerRootSetting, Value: adapterCredentialsMountPath + "/" + garam.ServerRootKey},
+	}
+	adapter.VolumeMounts = adapterVolumeMounts()
+	// The outbox and nothing else of the state claim: the adapter forwards the
+	// entries and clears the ones garam acknowledged
+	// (garam@e81a1e0:internal/delivery/outbox.go:142-157), so it writes, and it
+	// never sees the memory store.
+	outbox := corev1.VolumeMount{Name: stateVolumeName, MountPath: outboxMountPath, SubPath: descriptor.outboxDir()}
+	// Fenced (garam@e81a1e0, ADR-0084): the three control settings together, and
+	// the outbox beside them, which that adapter requires
+	// (garam@e81a1e0:internal/cli/cli.go:79-91,188-191;
+	// internal/cli/delivery.go:94-109). In the token mode the control token
+	// goes beside them and nowhere else (garam@afde8b8, ADR-0100).
+	adapter.Env = append(adapter.Env,
+		corev1.EnvVar{Name: adapterControlURLSetting, Value: "https://" + r.ControlAddress},
+		corev1.EnvVar{Name: adapterControlRootSetting, Value: controlRootMountPath + "/" + controlRootFile},
+		corev1.EnvVar{Name: adapterControlTokenSetting, Value: adapterCredentialsMountPath + "/" + garam.ControlTokenKey},
+		corev1.EnvVar{Name: adapterPlacementTokenSetting, Value: placementMountPath + "/" + placementTokenKey},
+		corev1.EnvVar{Name: adapterOutboxDirSetting, Value: outboxMountPath})
+	adapter.VolumeMounts = append(adapter.VolumeMounts,
+		corev1.VolumeMount{Name: controlRootVolumeName, MountPath: controlRootMountPath, ReadOnly: true}, outbox)
+}
+
+// issuerFor is garam's issuer, for an agent whose Pod carries the adapter that
+// signs its messages, and nil where the manager names no issuer or the adapter
+// is not placed (ADR 0071). The issuer is the flag's value byte for byte:
+// sherlock compares a signature's iss with it exactly, so nothing here trims
+// or normalises it. The keys are fetched from the machine listener the
+// adapter is given, not from the issuer: in-cluster that address is a Service
+// name the issuer origin need not be. The fetch is verified against the garam
+// server root, which the agent mounts out of its credential Secret alone.
+func (r *AgentReconciler) issuerFor(agent *agentv1alpha1.Agent, descriptor agentTypeDescriptor) *messageIssuer {
+	if r.GaramIssuer == "" || !r.adapterBuilt(agent) {
+		return nil
+	}
+
+	return &messageIssuer{
+		issuer:     r.GaramIssuer,
+		keysURL:    "https://" + r.GaramAddress + messageSigningKeysPath,
+		keysCAFile: descriptor.credentialsMountPath + "/" + garam.ServerRootKey,
+	}
+}
+
+// controlRootFor is the control root to give the agent's adapter, nil where it
+// is given none. It is read at each reconcile, so a rotated root reaches the
+// next Pod.
+func (r *AgentReconciler) controlRootFor(agent *agentv1alpha1.Agent) ([]byte, error) {
+	if !r.adapterBuilt(agent) {
+		return nil, nil
+	}
+	root, err := os.ReadFile(r.ControlRootFile)
+	if err != nil {
+		return nil, fmt.Errorf("read the control root: %w", err)
+	}
+
+	return root, nil
+}
+
+// applyOutbox builds, wherever the adapter is placed, the init
+// container that makes the agent's outbox directory on the state claim as the
+// Pod's user, before the adapter mounts it, and removes it elsewhere (ADR 0060).
+// It makes the directory only where it is absent and touches nothing else.
+func (r *AgentReconciler) applyOutbox(agent *agentv1alpha1.Agent, statefulSet *appsv1.StatefulSet,
+	descriptor agentTypeDescriptor) {
+	initContainers := &statefulSet.Spec.Template.Spec.InitContainers
+	if !r.adapterBuilt(agent) {
+		*initContainers = slices.DeleteFunc(*initContainers, func(initContainer corev1.Container) bool {
+			return initContainer.Name == outboxContainerName
+		})
+
+		return
+	}
+
+	outbox := containerNamed(initContainers, outboxContainerName)
+	outbox.Image = r.CopyImage
+	// Always, on the ground the credential's init container carries.
+	outbox.ImagePullPolicy = corev1.PullAlways
+	outbox.Command = makeOutboxCommand(outboxStateMountPath + "/" + descriptor.outboxDir())
+	outbox.SecurityContext = containerSecurityContext()
+	outbox.VolumeMounts = []corev1.VolumeMount{{Name: stateVolumeName, MountPath: outboxStateMountPath}}
+}
+
+// makeOutboxCommand makes dir, and its parent, where dir is absent, the
+// directory itself at outboxDirMode.
+func makeOutboxCommand(dir string) []string {
+	return shellCommand(fmt.Sprintf("if [ ! -d %[1]s ]; then mkdir -p %[2]s && mkdir -m %[3]s %[1]s; fi",
+		dir, path.Dir(dir), outboxDirMode))
+}
+
+// adapterVolumeMounts is what the adapter reads, and nothing the agent alone
+// does: the agent's credential Secret, read-only, holding its tokens and the
+// garam server root, which the adapter alone mounts (ADR 0073).
+//
+// It also mounts the placement token, which the adapter alone reads, and which
+// it is told of only where it activates through the control service (ADR
+// 0049); there it mounts the control root too. Every adapter mounts the outbox
+// (ADR 0060).
+func adapterVolumeMounts() []corev1.VolumeMount {
+	return []corev1.VolumeMount{
+		{Name: credentialsVolumeName, MountPath: adapterCredentialsMountPath, ReadOnly: true},
+		// The placement token, which only the adapter reads (ADR 0042).
+		{Name: placementVolumeName, MountPath: placementMountPath, ReadOnly: true},
+	}
+}
+
+// secretVolume is the volume called name projecting the Secret secretName,
+// readable by the Pod's group (credentialsFileMode).
+func secretVolume(name, secretName string) corev1.Volume {
+	return corev1.Volume{
+		Name: name,
+		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName:  secretName,
+			DefaultMode: ptr.To[int32](credentialsFileMode),
+		}},
+	}
+}
+
+// containerNamed returns the container called name out of containers, appending
+// an empty one when it does not carry it yet. Writing through the returned
+// pointer leaves the fields the API server defaulted on an existing container
+// alone.
+func containerNamed(containers *[]corev1.Container, name string) *corev1.Container {
+	for i := range *containers {
+		if (*containers)[i].Name == name {
+			return &(*containers)[i]
+		}
+	}
+
+	*containers = append(*containers, corev1.Container{Name: name})
+
+	return &(*containers)[len(*containers)-1]
+}
+
+// claim is the claim template called name, provisioned at size from the
+// storage class the Agent names.
+func claim(name string, size resource.Quantity, agent *agentv1alpha1.Agent) corev1.PersistentVolumeClaim {
+	return corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: size},
+			},
+			// nil, never "": an empty string asks for no class at all, where an
+			// Agent naming none asks for the cluster's default.
+			StorageClassName: agent.Spec.StorageClassName,
+		},
+	}
+}
+
+// workloadLabels select the Pods of one Agent's workload. They sit in the
+// StatefulSet's selector, which cannot change once it exists.
+func workloadLabels(agent *agentv1alpha1.Agent) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":     agentContainerName,
+		"app.kubernetes.io/instance": agent.Name,
+	}
+}
