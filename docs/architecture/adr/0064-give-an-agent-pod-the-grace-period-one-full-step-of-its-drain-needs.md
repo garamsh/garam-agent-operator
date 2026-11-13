@@ -1,6 +1,6 @@
 # ADR 0064: Give an agent Pod the grace period one full step of its drain needs
 
-> Status: accepted
+> Status: superseded by ADR-0083
 > Date: 2026-10-07
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

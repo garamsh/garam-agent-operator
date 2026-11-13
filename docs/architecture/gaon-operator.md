@@ -17,7 +17,7 @@ command, environment and placement token (garam#1848), and the
 placement's registration and the agent's configuration and model key
 (garam#1853, garam ADR-0154).** `cmd/gaon-operator` exchanges its
 assertion with a key garam issued, reads the control service's feed as
-its registered manager and reconciles into gaon. `make operator-image`
+its registered controller identity and reconciles into gaon. `make operator-image`
 and `make guest-image` build the operator's image and the guest's
 without pushing either. Nothing here publishes them, and the deployment
 is not built (§What is not built).
@@ -161,7 +161,7 @@ Addresses and paths, in the environment; none holds a credential.
 | `GARAM_MACHINE_URL`, `GARAM_ROOT_FILE` | garam's machine listener and its root |
 | `GARAM_TOKEN_URL` | the token URL the key issuance answered, the assertion's `aud` |
 | `CONTROL_URL`, `CONTROL_ROOT_FILE`, `CONTROL_GRN` | the control service, its root, and its operator GRN |
-| `OPERATOR_KEY_FILE`, `OPERATOR_CLIENT_ID` | the operator's key, and the manager's operator GRN, which is also the `Controller-Grn` |
+| `OPERATOR_KEY_FILE`, `OPERATOR_CLIENT_ID` | the operator's key, and the controller's operator GRN, which is also the `Controller-Grn` |
 | `AGENT_IMAGE` | the composed guest image, as `<repository>@sha256:<64 hex digits>`, the only form gaon's Node Agent starts; the operator refuses to start on any other |
 | `AGENT_CPU`, `AGENT_MEMORY` | the MicroVM's requests and limits, each in gaon's quantity form (`1`, `500m`, `1Gi`); gaon's Node Agent refuses a MicroVM that names no cpu or no memory, so the operator refuses to start without either and publishes no figure |
 | `GUEST_MACHINE_URL`, `GUEST_CONTROL_URL` | optional: the addresses the adapter in the guest reaches garam and the control service at; each defaults to `GARAM_MACHINE_URL` and `CONTROL_URL` |
@@ -400,7 +400,7 @@ agent, an Exec under the guest kernel, or gaon's MicroVM start.
 ## Rationale
 
 The operator lives here, in the repository that owns the control service
-and the manager it registers with, so one commit changes the feed and its
+and the controller identity it registers under, so one commit changes the feed and its
 reader together; ADR 0082 records the move and what was kept of garam's
 decisions. The reconciler declares its two outside dependencies; the wire clients
 fill those interfaces. It deletes nothing because nothing in the feed

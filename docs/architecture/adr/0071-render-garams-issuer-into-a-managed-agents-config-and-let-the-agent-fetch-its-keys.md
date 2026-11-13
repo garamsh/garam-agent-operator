@@ -1,6 +1,6 @@
 # ADR 0071: Render garam's issuer into a managed agent's config, and let the agent fetch its keys
 
-> Status: accepted
+> Status: superseded by ADR-0083
 > Date: 2026-10-09
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

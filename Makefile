@@ -1,8 +1,3 @@
-# Image URL to use all building/pushing image targets
-IMG ?= controller:latest
-# YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
-YEAR ?= $(shell date +%Y)
-
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -11,9 +6,9 @@ GOBIN=$(shell go env GOBIN)
 endif
 
 # CONTAINER_TOOL defines the container tool to be used for building images.
-# Be aware that the target commands are only tested with Docker which is
-# scaffolded by default. However, you might want to replace it to use other
-# tools. (i.e. podman)
+# Be aware that the target commands are only tested with Docker, which is
+# the default. However, you might want to replace it to use other
+# tools (i.e. podman).
 CONTAINER_TOOL ?= docker
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
@@ -51,14 +46,6 @@ help: ## Display this help.
 
 ##@ Development
 
-.PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
-
-.PHONY: generate
-generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
-	"$(CONTROLLER_GEN)" object paths="./..."
-
 .PHONY: fmt
 fmt: ## Run go fmt against code.
 	go fmt ./...
@@ -68,38 +55,8 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
-
-# TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
-# The default setup installs Kind into $(LOCALBIN) and builds/loads the Manager Docker image locally.
-# kubectl kuberc is disabled by default for test isolation; enable with:
-# - KUBECTL_KUBERC=true
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
-KIND_CLUSTER ?= garam-agent-operator-test-e2e
-
-# The kubeconfig this run owns, and the destination of every command the suite
-# makes: `go test` below carries it, and kubectl, kustomize and the sub-makes
-# `make deploy` and `make undeploy` all inherit it from there. Given no
-# --kubeconfig, kind writes $KUBECONFIG or ~/.kube/config and rewrites its
-# current-context on every create and delete, so a run reading that file takes
-# its destination from whatever another process last left in it — which is how a
-# run aimed at Kind reached a production cluster (#111). Under dist/ because a
-# target writes it and nothing tracks it.
-KUBECONFIG_E2E := $(abspath dist/kubeconfig-$(KIND_CLUSTER))
-
-.PHONY: setup-test-e2e
-setup-test-e2e: kind ## Set up a Kind cluster for e2e tests if it does not exist
-	@mkdir -p dist
-	@case "$$("$(KIND)" get clusters)" in \
-		*"$(KIND_CLUSTER)"*) \
-			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Writing its kubeconfig to $(KUBECONFIG_E2E)."; \
-			"$(KIND)" export kubeconfig --name $(KIND_CLUSTER) --kubeconfig "$(KUBECONFIG_E2E)" ;; \
-		*) \
-			echo "Creating Kind cluster '$(KIND_CLUSTER)' with kubeconfig $(KUBECONFIG_E2E)..."; \
-			"$(KIND)" create cluster --name $(KIND_CLUSTER) --kubeconfig "$(KUBECONFIG_E2E)" ;; \
-	esac
+test: fmt vet ## Run tests.
+	go test ./... -coverprofile cover.out
 
 # Builds cmd/control and runs it against a PostgreSQL container testcontainers-go
 # starts on the Docker daemon DOCKER_HOST names; it needs no cluster. It ends by
@@ -115,31 +72,6 @@ test-e2e-control: garam-e2e ## Run the control service's e2e tests: the built bi
 		"$$(grep -c '^--- PASS' "$$log") passed, $$(grep -c '^--- FAIL' "$$log") failed," \
 		"$$(grep -c '^--- SKIP' "$$log") skipped"; \
 	rm -f "$$log"; exit $$status
-
-# How long `go test` may run the Kind suite, every phase included. Without it
-# go test's default of 10 minutes applies, and AfterSuite was killed past it
-# with all nine specs passed (#276). Sized from the slowest phases measured on
-# the dev host, each a Ginkgo-reported duration:
-#   BeforeSuite  458.6 s  (#275; 342.4 s on #276's run)
-#   9 specs       70.0 s  (#276's run; the slowest single spec 26.0 s)
-#   AfterSuite  >=71.4 s  (#275: 600 - 458.6 - 70.0, still uninstalling
-#                          cert-manager when the default fired; 44.5 s on
-#                          #276's run)
-# The slowest run therefore needed more than 600 s. 30 minutes is three times
-# that, so every phase may take three times its slowest measure before the
-# timeout, rather than a slow host, ends the run.
-E2E_TIMEOUT ?= 30m
-
-.PHONY: test-e2e
-test-e2e: test-e2e-control setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KUBECONFIG="$(KUBECONFIG_E2E)" KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e -timeout $(E2E_TIMEOUT) ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
-
-.PHONY: cleanup-test-e2e
-cleanup-test-e2e: kind ## Tear down the Kind cluster used for e2e tests
-	@"$(KIND)" delete cluster --name $(KIND_CLUSTER) --kubeconfig "$(KUBECONFIG_E2E)"
-	@rm -f "$(KUBECONFIG_E2E)"
-
 # Every golangci-lint invocation below analyses against a cache scoped to this
 # checkout. The default location is per-user, and each entry carries the
 # absolute path the file was first seen at, so a second checkout holding
@@ -178,7 +110,7 @@ lint-coverage: golangci-lint ## Report the linters make lint runs and the tracke
 	printf '%s\n' "$$rules" | grep -qx misspell || { echo "lint coverage: misspell is not among the $$enabled linters golangci-lint reports enabled, so the plant below says nothing about what \`make lint\` runs" >&2; exit 1; }; \
 	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
 	total=$$(git ls-files '*.go' | wc -l); \
-	expected=$$(git ls-files '*.go' | xargs -r grep -L '^// Code generated .* DO NOT EDIT\.$$'); \
+	expected=$$(git ls-files '*.go' | xargs -r grep -L '^// Code generated .* DO NOT EDIT\.$$' || true); \
 	[ -n "$$expected" ] || { echo "lint coverage: no tracked Go file to probe" >&2; exit 1; }; \
 	git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$$tmp"; \
 	for f in $$expected; do printf '\n// lint coverage probe: recieve\n' >>"$$tmp/$$f"; done; \
@@ -268,7 +200,7 @@ verify-tidy: ## Fail when go.mod or go.sum is not what `go mod tidy` writes, nam
 	printf '%s\n' "$$diff" >&2; \
 	echo "tidy check: go.mod or go.sum is not tidy. Run \`go mod tidy\` and commit what it changes." >&2; exit 1
 
-# Both images build from the repository root through the one .dockerignore, which
+# The images build from the repository root through the one .dockerignore, which
 # ignores everything and re-includes what the build needs. A file Go source embeds
 # and the ignore file leaves out stops `go build` inside the image build only:
 # make ci and the e2e suites build outside Docker, which is how #301 reached dev.
@@ -291,45 +223,24 @@ ci: verify-tidy lint-config lint fmt test build verify-build-context verify-pins
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build the manager, control, gaon operator, guest supervisor and render binaries.
-	go build -o bin/manager cmd/main.go
+build: fmt vet ## Build the control, gaon operator, guest supervisor and render binaries.
 	go build -o bin/control ./cmd/control
 	go build -o bin/gaon-operator ./cmd/gaon-operator
 	go build -o bin/gaon-guest ./cmd/gaon-guest
 	go build -o bin/gaon-render ./cmd/gaon-render
 
-# Departs from the scaffold, and a regeneration restores the scaffold's form: the
-# manager refuses to start without an image for its init containers, so run takes
-# one rather than leaving the refusal to the program.
-AGENT_COPY_IMAGE ?=
-
-.PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host. Needs AGENT_COPY_IMAGE=<image>.
-	@test -n "$(AGENT_COPY_IMAGE)" || { echo "run: AGENT_COPY_IMAGE is empty; pass one: make run AGENT_COPY_IMAGE=<image>"; exit 1; }
-	go run ./cmd/main.go --agent-copy-image="$(AGENT_COPY_IMAGE)"
-
-# If you wish to build the manager image targeting other platforms you can use the --platform flag.
-# (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
-# More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-# Departs from the scaffold, and a regeneration restores the scaffold's form: it
-# passes the checked-out commit as REVISION, which Dockerfile writes into the
-# image's revision label.
-.PHONY: docker-build
-docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build --build-arg REVISION=$$(git rev-parse HEAD) -t ${IMG} .
-
 # The control service's image, from build/control.Dockerfile with the repository root
-# as context; REVISION is passed as docker-build passes it to the manager's.
+# as context; REVISION is the checked-out commit, which the Dockerfile writes into the
+# image's revision label.
 CONTROL_IMG ?= control:latest
 
 .PHONY: docker-build-control
 docker-build-control: ## Build docker image with the control service.
 	$(CONTAINER_TOOL) build --build-arg REVISION=$$(git rev-parse HEAD) -f build/control.Dockerfile -t ${CONTROL_IMG} .
 
-# The two images this project publishes, built for publishing and pushed by nothing
-# here (delivery.md, ADR 0051): the manager's from Dockerfile and the control
-# service's from build/control.Dockerfile, each one linux/amd64 manifest, tagged
-# locally garam-agent-operator/manager:<REVISION> and garam-agent-operator/control:<REVISION>
+# The image this project publishes, built for publishing and pushed by nothing
+# here (delivery.md, ADR 0051): the control service's from build/control.Dockerfile,
+# one linux/amd64 manifest, tagged locally garam-agent-operator/control:<REVISION>
 # and labelled with REVISION. The release workflow and the manual procedure for a
 # development image both build through this target, then tag and push what it built.
 #
@@ -344,9 +255,8 @@ REVISION ?= $(shell git rev-parse HEAD 2>/dev/null)
 IMAGE_PLATFORM = linux/amd64
 
 .PHONY: build-images
-build-images: ## Build the manager's and the control service's images to publish, one linux/amd64 manifest each, and push nothing.
+build-images: ## Build the control service's image to publish, one linux/amd64 manifest, and push nothing.
 	@test -n "$(REVISION)" || { echo "build-images: REVISION is empty; pass one: make build-images REVISION=<commit>"; exit 1; }
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -t garam-agent-operator/manager:$(REVISION) .
 	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/control.Dockerfile -t garam-agent-operator/control:$(REVISION) .
 
 # The gaon operator's image and the composed guest image of a gaon MicroVM
@@ -409,92 +319,6 @@ pair-run-gaon: garam-e2e ## Run the same pair run against gaon's own built servi
 .PHONY: verify-image-ref
 verify-image-ref: ## Refuse an IMAGE_REF under garam-agent-operator/ unless it is the 12-hex commit hash, or a release version (0.1.0-dev.N, 0.1.0-rc.N, 0.1.0) in its release run.
 	go run ./hack/imageref "$(IMAGE_REF)"
-
-# Departs from the scaffold, and a regeneration restores the scaffold's form: it
-# runs verify-image-ref on IMG before pushing.
-.PHONY: docker-push
-docker-push: ## Push docker image with the manager.
-	$(MAKE) verify-image-ref IMAGE_REF='$(IMG)'
-	$(CONTAINER_TOOL) push ${IMG}
-
-# PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
-# architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
-# - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
-# - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-# - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
-# To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
-
-# Departs from the scaffold, and a regeneration restores the scaffold's form: the
-# push line has no `-` prefix, so a failed push fails the target, and it removes
-# Dockerfile.cross on that path; Dockerfile.cross is written after `buildx use`, so
-# a missing builder leaves none behind. `buildx create` keeps its prefix because it
-# fails when the builder exists, and `buildx use` fails when it does not. The build
-# passes the checked-out commit as REVISION, which Dockerfile writes into the
-# image's revision label. It runs verify-image-ref on IMG before building anything.
-.PHONY: docker-buildx
-docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	$(MAKE) verify-image-ref IMAGE_REF='$(IMG)'
-	- $(CONTAINER_TOOL) buildx create --name garam-agent-operator-builder
-	$(CONTAINER_TOOL) buildx use garam-agent-operator-builder
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg REVISION=$$(git rev-parse HEAD) --tag ${IMG} -f Dockerfile.cross . || { rm Dockerfile.cross; exit 1; }
-	- $(CONTAINER_TOOL) buildx rm garam-agent-operator-builder
-	rm Dockerfile.cross
-
-# `kustomize edit set image` writes to the kustomization it runs in, and
-# config/manager/kustomization.yaml is a tracked manifest: a target that edited it
-# would hand the next one a dirty tree. This overlay carries the override instead,
-# and it is build output — rebuilt from scratch on every run, so nothing stale
-# survives a change to IMG.
-IMAGE_OVERLAY := dist/image-overlay
-
-.PHONY: image-overlay
-image-overlay: kustomize ## Write the kustomize overlay that points the manager image at IMG.
-	rm -rf $(IMAGE_OVERLAY)
-	mkdir -p $(IMAGE_OVERLAY)
-	cd $(IMAGE_OVERLAY) && "$(KUSTOMIZE)" create --resources ../../config/default
-	cd $(IMAGE_OVERLAY) && "$(KUSTOMIZE)" edit set image controller=${IMG}
-
-.PHONY: build-installer
-build-installer: manifests generate kustomize image-overlay ## Generate a consolidated YAML with CRDs and deployment.
-	mkdir -p dist
-	"$(KUSTOMIZE)" build $(IMAGE_OVERLAY) > dist/install.yaml
-
-##@ Deployment
-
-ifndef ignore-not-found
-  ignore-not-found = false
-endif
-
-.PHONY: install
-install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" apply -f -; else echo "No CRDs to install; skipping."; fi
-
-# A second `make uninstall` meets the CRDs the first one deleted, so absence is
-# not a failure here. Only NotFound is ignored, and ignore-not-found on the
-# command line still overrides this default.
-.PHONY: uninstall
-uninstall: ignore-not-found = true
-uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=false to fail when a CRD is already absent.
-	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
-	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
-
-.PHONY: deploy
-deploy: manifests kustomize image-overlay ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	"$(KUSTOMIZE)" build $(IMAGE_OVERLAY) | "$(KUBECTL)" apply -f -
-
-# A second `make undeploy` meets the objects the first one deleted, so absence is
-# not a failure here. Only NotFound is ignored, so a delete the cluster refuses
-# still fails the target; a run that finds part of the set already gone also exits
-# 0, and its output names what it deleted rather than what was missing.
-.PHONY: undeploy
-undeploy: ignore-not-found = true
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=false to fail when an object is already absent.
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
-
 ##@ Dependencies
 
 ## Location to install dependencies to
@@ -511,8 +335,7 @@ $(LOCALBIN):
 # never run from it (#271). The image carries the commit it was built from as
 # its org.opencontainers.image.revision label, and garam-e2e refuses an image
 # whose label is not GARAM_REVISION. Reading it needs an ECR login that can pull
-# from that repository: CI's, through the role test-e2e.yml assumes, or a local
-# `aws ecr get-login-password | docker login`.
+# from that repository, such as `aws ecr get-login-password | docker login`.
 #
 # The image is bound by digest alone. Its tags, the commit's 12 hex digits
 # (43d700d30910) and pinned-garam-agent-operator, are informational; garam's
@@ -574,71 +397,13 @@ garam-e2e-from-source: ## Build garam, its test-principal fixture and its migrat
 	echo "source $(GARAM_REPOSITORY)@$(GARAM_REVISION)" > "$(GARAM_DIR).partial/provenance"
 	mv "$(GARAM_DIR).partial" "$(GARAM_DIR)"
 
-## Tool Binaries
-# kubectl is not pinned the way the tools below are: k8s.io/kubernetes carries
-# replace directives, which `go install <pkg>@<version>` refuses. A pin here
-# would not reach the suite either — `test/e2e` and `test/utils` run `kubectl`
-# directly, past this variable — so the version a run gets is whatever is on
-# PATH, which Kubernetes supports only within one minor of the cluster kind
-# creates.
-KUBECTL ?= kubectl
-KIND ?= $(LOCALBIN)/kind
-KUSTOMIZE ?= $(LOCALBIN)/kustomize
-CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
-ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 
-## Tool Versions
-# The PM moves the three pins below and reviews them when the Kubernetes
-# libraries move. No bot proposes a bump: `.github/dependabot.yml` configures
-# github-actions, docker and gomod, none of them reads a Makefile variable, and
-# none of these tools is a dependency of this module.
-KIND_VERSION ?= v0.33.0
-KUSTOMIZE_VERSION ?= v5.8.1
-CONTROLLER_TOOLS_VERSION ?= v0.21.0
-
-#ENVTEST_VERSION is the controller-runtime version to use for setup-envtest, derived from go.mod
-ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
-  [ -n "$$v" ] || { echo "Set ENVTEST_VERSION manually (controller-runtime replace has no tag)" >&2; exit 1; }; \
-  printf '%s\n' "$$v")
-
-#ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
-ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
-  [ -n "$$v" ] || { echo "Set ENVTEST_K8S_VERSION manually (k8s.io/api replace has no tag)" >&2; exit 1; }; \
-  printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
-
-# The PM moves this pin too, for the reason above. Nothing schedules the
-# review: no Kubernetes release bears on it, so it moves when a Go release or a
-# lint failure requires it.
+# The PM moves this pin. No bot proposes a bump: `.github/dependabot.yml`
+# configures github-actions, docker and gomod, none of them reads a Makefile
+# variable, and the linter is not a dependency of this module. It moves when a
+# Go release or a lint failure requires it.
 GOLANGCI_LINT_VERSION ?= v2.15.0
-
-.PHONY: kind
-kind: $(KIND) ## Download kind locally if necessary.
-$(KIND): $(LOCALBIN)
-	$(call go-install-tool,$(KIND),sigs.k8s.io/kind,$(KIND_VERSION))
-
-.PHONY: kustomize
-kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
-$(KUSTOMIZE): $(LOCALBIN)
-	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
-
-.PHONY: controller-gen
-controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
-$(CONTROLLER_GEN): $(LOCALBIN)
-	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
-
-.PHONY: setup-envtest
-setup-envtest: envtest ## Download the binaries required for ENVTEST in the local bin directory.
-	@echo "Setting up envtest binaries for Kubernetes version $(ENVTEST_K8S_VERSION)..."
-	@"$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path || { \
-		echo "Error: Failed to set up envtest binaries for version $(ENVTEST_K8S_VERSION)."; \
-		exit 1; \
-	}
-
-.PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
-	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
@@ -664,8 +429,4 @@ GOBIN="$(LOCALBIN)" go install $${package} ;\
 mv "$(LOCALBIN)/$$(basename "$(1)")" "$(1)-$(3)" ;\
 } ;\
 ln -sf "$$(realpath "$(1)-$(3)")" "$(1)"
-endef
-
-define gomodver
-$(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef

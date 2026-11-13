@@ -11,21 +11,7 @@ updates:
     commit-message:
       prefix: chore
   - package-ecosystem: docker
-    directory: /
-    target-branch: dev
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: chore
-  - package-ecosystem: docker
     directory: /build
-    target-branch: dev
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: chore
-  - package-ecosystem: docker
-    directory: /test/e2e/agent-image
     target-branch: dev
     schedule:
       interval: weekly
@@ -41,14 +27,11 @@ updates:
     # A module in no group moves on its own: each is released on its own, so a
     # break stays with the one module that brought it.
     groups:
-      # They share generated types and a client contract, and move in one change
-      # (docs/convention/stack-kubebuilder.md §11).
+      # They share types and move in one change.
       kubernetes:
         patterns:
           - k8s.io/api
           - k8s.io/apimachinery
-          - k8s.io/client-go
-          - sigs.k8s.io/controller-runtime
       # The postgres module is released from the same repository at the same
       # version as the core module.
       testcontainers:

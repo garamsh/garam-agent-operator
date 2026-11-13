@@ -1,6 +1,6 @@
 # ADR 0001: Build the operator on the kubebuilder go/v4 scaffold
 
-> Status: accepted
+> Status: superseded by ADR-0083
 > Date: 2026-08-16
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
