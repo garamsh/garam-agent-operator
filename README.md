@@ -63,7 +63,7 @@ The Makefile downloads golangci-lint into `bin/` on first use; it is not install
 
 End-to-end tests need Docker and are not part of that set. `make test-e2e-control` runs the control service's suite against a PostgreSQL container and a real garam at `GARAM_REVISION`, and `make pair-run` runs the gaon operator against that garam and the control service, with a stand-in for gaon's API. garam's files are copied out of its private test image in ECR, pinned by digest, which needs an ECR login that can pull it. Where that login is not available, `make garam-e2e-from-source test-e2e-control` builds them from `garamsh/garam` instead, with git credentials that can read it.
 
-CI runs `make ci` on the promotion of `dev` to `main` and nothing else: a pull request into `dev` gets no automated check, and no workflow runs either end-to-end target. So run `make ci`, `make test-e2e-control` and `make pair-run` before pushing, and report what ran in the pull request — that report is what a reviewer reads. `docs/architecture/integration.md` states which checks run where.
+CI runs `make ci`, `make test-e2e-control` and `make pair-run` on the promotion of `dev` to `main` and nothing else: a pull request into `dev` gets no automated check. So run all three before pushing, and report what ran in the pull request — that report is what a reviewer reads. `docs/architecture/integration.md` states which checks run where.
 
 ## Running the services
 
