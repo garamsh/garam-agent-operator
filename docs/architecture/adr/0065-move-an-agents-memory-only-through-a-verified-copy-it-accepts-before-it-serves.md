@@ -1,6 +1,6 @@
 # ADR 0065: Move an agent's memory only through a verified copy it accepts before it serves
 
-> Status: accepted
+> Status: superseded by ADR-0083
 > Date: 2026-10-07
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

@@ -1,6 +1,6 @@
 # ADR 0029: Route every agent-specific name in the Pod through its type's descriptor, and keep the operator's images out of it
 
-> Status: accepted
+> Status: superseded by ADR-0083
 > Date: 2026-09-27
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

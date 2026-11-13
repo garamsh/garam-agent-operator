@@ -1,6 +1,6 @@
 # ADR 0046: Suspend an agent from a field a person owns, and release its Pod only on the writer fence's evidence
 
-> Status: accepted
+> Status: superseded by ADR-0083
 > Date: 2026-10-05
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

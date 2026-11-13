@@ -1,6 +1,6 @@
 # ADR 0061: Release a deleted Pod whose writers were never created only on the kubelet's terminal phase, never on an empty container ID alone
 
-> Status: accepted
+> Status: superseded by ADR-0083
 > Date: 2026-10-07
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

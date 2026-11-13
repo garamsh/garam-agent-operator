@@ -43,11 +43,6 @@ These apply only when the project uses that stack.
 |---|---|---|
 | `stack-container.md` | — | What an OCI image the project builds is made of — bases, build secrets, what an image may carry |
 | `stack-go.md` | — | Go modules and services |
-| `stack-kubebuilder.md` | `stack-go.md` | What the kubebuilder scaffold decides differently: CLI-owned paths, generated code, API types and markers, reconcile behaviour, and the runner and logger it ships |
-
-`Dockerfile` is named by both `stack-container.md` and `stack-kubebuilder.md`, and the split is here: `stack-kubebuilder.md` decides where it sits and that the scaffold owns that path, `stack-container.md` decides what goes inside it.
-
-A Go binary is governed by `stack-kubebuilder.md` or by `stack-go.md` alone, and the split is here: `stack-kubebuilder.md` applies to the manager — `cmd/main.go` and the code it runs, its API types, reconcilers, runner and logger — and a binary that is not the manager, with the code only it reaches, follows `stack-go.md` alone.
 
 A stack file states the concrete form of what any stack-neutral file governs — the test client and file placement behind `testing.md`, the comment syntax behind `code-comments.md` and the commands behind an entry-point name in `ci.md` among them. It states the same of a structural rule (`docs/architecture/README.md` §Rules, "Structural rules live in `structure.md`"): the package and file names the unit takes in its language. It also states a structural case its framework decides (§Rules, "Structural rules yield only to what a framework imposes"). It never restates the rule itself. These two tables and those rules are where the split is recorded — the files do not point at each other.
 
