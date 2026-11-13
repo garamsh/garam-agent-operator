@@ -238,11 +238,19 @@ CONTROL_IMG ?= control:latest
 docker-build-control: ## Build docker image with the control service.
 	$(CONTAINER_TOOL) build --build-arg REVISION=$$(git rev-parse HEAD) -f build/control.Dockerfile -t ${CONTROL_IMG} .
 
-# The image this project publishes, built for publishing and pushed by nothing
-# here (delivery.md, ADR 0051): the control service's from build/control.Dockerfile,
-# one linux/amd64 manifest, tagged locally garam-agent-operator/control:<REVISION>
-# and labelled with REVISION. The release workflow and the manual procedure for a
-# development image both build through this target, then tag and push what it built.
+# The images this project publishes, built for publishing and pushed by nothing
+# here (delivery.md, ADR 0051, ADR 0084): the gaon operator's from
+# build/operator.Dockerfile, the composed guest's from build/guest.Dockerfile and
+# the control service's from build/control.Dockerfile, each one linux/amd64
+# manifest, tagged locally garam-agent-operator/<image>:<REVISION> and labelled
+# with REVISION. The release workflow and the manual procedure for a development
+# image both build through this target, then tag and push what it built.
+#
+# The guest's three source images are pinned by digest in build/guest.Dockerfile
+# and live in a private registry, so building it needs a login that can pull them,
+# as `make garam-e2e` needs one for garam's test image. release.yml logs in before
+# it builds; a person without that login builds the other two with `make
+# operator-image` and `make control-image`.
 #
 # The default driver writes each image into the local image store, where `docker
 # push` finds it. BUILDX_NO_DEFAULT_ATTESTATIONS turns off the provenance and SBOM
@@ -255,37 +263,32 @@ REVISION ?= $(shell git rev-parse HEAD 2>/dev/null)
 IMAGE_PLATFORM = linux/amd64
 
 .PHONY: build-images
-build-images: ## Build the control service's image to publish, one linux/amd64 manifest, and push nothing.
-	@test -n "$(REVISION)" || { echo "build-images: REVISION is empty; pass one: make build-images REVISION=<commit>"; exit 1; }
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/control.Dockerfile -t garam-agent-operator/control:$(REVISION) .
+build-images: operator-image guest-image control-image ## Build the three images to publish, each one linux/amd64 manifest, and push nothing. The guest needs a login that pulls its three pinned source images.
 
-# The gaon operator's image and the composed guest image of a gaon MicroVM
-# (ADR 0082), built as build-images builds the two above: one linux/amd64
-# manifest each, tagged locally garam-agent-operator/gaon-operator:<REVISION> and
-# garam-agent-operator/gaon-guest:<REVISION>, and pushed by nothing here. They are
-# not in build-images because the guest image's three source images are pinned by
-# digest in build/guest.Dockerfile and live in a private registry: building it
-# needs a login that can pull them, as `make garam-e2e` needs one for garam's
-# test image.
 .PHONY: operator-image
 operator-image: ## Build the gaon operator's image, one linux/amd64 manifest, and push nothing.
 	@test -n "$(REVISION)" || { echo "operator-image: REVISION is empty; pass one: make operator-image REVISION=<commit>"; exit 1; }
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg IMAGE_REVISION="$(REVISION)" --build-arg IMAGE_VERSION="$(REVISION)" -f build/operator.Dockerfile -t garam-agent-operator/gaon-operator:$(REVISION) .
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg IMAGE_REVISION="$(REVISION)" --build-arg IMAGE_VERSION="$(REVISION)" -f build/operator.Dockerfile -t garam-agent-operator/operator:$(REVISION) .
 
 .PHONY: guest-image
 guest-image: ## Build the composed guest image, one linux/amd64 manifest, and push nothing. Needs a login that pulls its three pinned source images.
 	@test -n "$(REVISION)" || { echo "guest-image: REVISION is empty; pass one: make guest-image REVISION=<commit>"; exit 1; }
-	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/guest.Dockerfile -t garam-agent-operator/gaon-guest:$(REVISION) .
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/guest.Dockerfile -t garam-agent-operator/guest:$(REVISION) .
+
+.PHONY: control-image
+control-image: ## Build the control service's image, one linux/amd64 manifest, and push nothing.
+	@test -n "$(REVISION)" || { echo "control-image: REVISION is empty; pass one: make control-image REVISION=<commit>"; exit 1; }
+	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/control.Dockerfile -t garam-agent-operator/control:$(REVISION) .
 
 # What only the built images can break; neither is part of ci, because each
 # needs a Docker daemon, and guest-run a login for the pinned source images.
 .PHONY: operator-image-check
 operator-image-check: operator-image ## Check the gaon operator's image runs as a numeric non-root account, ships no shell and names its missing settings.
-	GAON_OPERATOR_IMAGE=garam-agent-operator/gaon-operator:$(REVISION) sh tests/gaon/operator-image.sh
+	GAON_OPERATOR_IMAGE=garam-agent-operator/operator:$(REVISION) sh tests/gaon/operator-image.sh
 
 .PHONY: guest-run
 guest-run: guest-image ## Run the composed guest image as one container and check the supervisor's start order, readiness port and drain.
-	sh tests/gaon/guest-image.sh garam-agent-operator/gaon-guest:$(REVISION)
+	sh tests/gaon/guest-image.sh garam-agent-operator/guest:$(REVISION)
 
 # The gaon operator against a real garam, at GARAM_REVISION and run from garam-e2e's
 # files, and a real control service built from this tree, with tests/gaon/gaonstandin

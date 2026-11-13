@@ -19,8 +19,9 @@ placement's registration and the agent's configuration and model key
 assertion with a key garam issued, reads the control service's feed as
 its registered controller identity and reconciles into gaon. `make operator-image`
 and `make guest-image` build the operator's image and the guest's
-without pushing either. Nothing here publishes them, and the deployment
-is not built (§What is not built).
+without pushing either. `release.yml` publishes them as
+`garam-agent-operator/operator` and `garam-agent-operator/guest`
+(ADR 0084), and the deployment is not built (§What is not built).
 
 ## What is built
 
@@ -218,11 +219,15 @@ each is written once.
   digests are pinned nowhere else in this repository.
 - **Building it.** `make guest-image` builds `build/guest.Dockerfile`
   with the repository root as context, as
-  `garam-agent-operator/gaon-guest:<REVISION>`, and pushes nothing. The
-  three sources are in a private registry, so the build needs a login
-  that can pull them and `make ci` does not run it. No workflow of this
-  repository builds or publishes the guest image or the operator's
-  image yet (§What is not built).
+  `garam-agent-operator/guest:<REVISION>`, and pushes nothing; the
+  operator's image is `garam-agent-operator/operator:<REVISION>` from
+  `make operator-image`. The three sources are in a private registry, so
+  the build needs a login that can pull them and `make ci` does not run
+  it. `release.yml` logs in to that registry with the role that pushes,
+  which reads the three, builds both images through `make build-images`
+  and pushes them under the release version beside the control
+  service's (`delivery.md`, ADR 0084). The operator's `AGENT_IMAGE` takes the guest image as
+  `<repository>@sha256:<digest>`, and the release prints that digest.
 - **Running it.** `make guest-run` builds the image
   with `make guest-image` and starts it
   as one container with user `0:0` and `SYS_ADMIN` added.
@@ -357,9 +362,6 @@ is not gaon's.
 ## What is not built
 
 - The deployment of the operator, and the `NetworkPolicy`.
-- A workflow that publishes `garam-agent-operator/gaon-operator` or
-  `garam-agent-operator/gaon-guest`, and the repository names and tags they
-  would take (ADR 0078 governs the names of the images already published).
 - Renewing an agent's token by restarting its MicroVM.
 - Replacing a MicroVM of another revision.
 - The agent's instructions file and message issuers.
@@ -405,6 +407,10 @@ reader together; ADR 0082 records the move and what was kept of garam's
 decisions. The reconciler declares its two outside dependencies; the wire clients
 fill those interfaces. It deletes nothing because nothing in the feed
 says an agent is gone for good.
+
+That the operator's image and the guest image are published, as
+`operator` and `guest` beside `control` and by the same workflow, is
+ADR 0084.
 
 ## Open questions
 

@@ -1,8 +1,9 @@
 name: release
 
-# Publishes a release: the control service's image to garam-agent-operator/control,
-# tagged with the version its git tag names without the v, from a v0.1.0-dev.N,
-# v0.1.0-rc.N or v0.1.0 tag on main (ADR 0051, ADR 0081, delivery.md). Modelled on sherlock's release
+# Publishes a release: the gaon operator, the composed guest and the control service
+# to garam-agent-operator/operator, /guest and /control, each tagged with the version
+# its git tag names without the v, from a v0.1.0-dev.N, v0.1.0-rc.N or v0.1.0 tag on
+# main (ADR 0051, ADR 0081, ADR 0084, delivery.md). Modelled on sherlock's release
 # workflow (garamsh/sherlock@b3c05c2:.github/workflows/release.yml), which garam's
 # shares (garamsh/garam@9a3f8a6:.github/workflows/release.yml, its ADR-0039).
 #
@@ -81,14 +82,14 @@ jobs:
             exit 1
           fi
 
-      # The image is built before it is pushed, through the one entry point a
-      # person also uses (ci.md §One entry point per task); the Makefile owns the
-      # command and pushes nothing. It is one linux/amd64 manifest, labelled with
-      # the commit the tag names.
-      - run: make build-images REVISION="$GITHUB_SHA"
-
-      # Every step above is reversible, so the credential is obtained after them: a
-      # build that fails fails before anything can be pushed.
+      # The credential is obtained before the build, because the guest image's three
+      # source images (sherlock/agent, sherlock/workspace and garam/server) are in this
+      # registry and the build pulls them. The push role reads them (garamsh/aurora#790),
+      # so no other credential and no secret value is involved: the login below writes
+      # the short-lived token the role yields into the runner's Docker configuration,
+      # and the build reads it from there. Every step up to here is reversible, and the
+      # push below stays the one that is not, so a build that fails still fails before
+      # anything is pushed.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: arn:aws:iam::486152169996:role/github-actions-garam-agent-operator-push
@@ -97,19 +98,38 @@ jobs:
       - id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
-      # The only irreversible step. The reference passes the rule every push here
-      # passes (#325) and the image is renamed first, so a reference that cannot
-      # be formed or is refused fails before the upload begins. The local name is
-      # the one build-images writes; a rename there leaves `docker tag` with no
-      # such image, which fails here rather than pushing something else.
+      # The three images are built before any is pushed, through the one entry point a
+      # person also uses (ci.md §One entry point per task); the Makefile owns the
+      # commands and pushes nothing. Each is one linux/amd64 manifest, labelled with
+      # the commit the tag names.
+      - run: make build-images REVISION="$GITHUB_SHA"
+
+      # Each reference passes the rule every push here passes (#325) and each image is
+      # renamed before the first upload begins, so a reference that cannot be formed or
+      # is refused, or a local name that build-images no longer writes, fails with
+      # nothing pushed.
       - env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          make verify-image-ref IMAGE_REF="$REGISTRY/garam-agent-operator/control:$VERSION"
-          docker tag "garam-agent-operator/control:$GITHUB_SHA" "$REGISTRY/garam-agent-operator/control:$VERSION"
-          docker push "$REGISTRY/garam-agent-operator/control:$VERSION"
+          for image in operator guest control; do
+            make verify-image-ref IMAGE_REF="$REGISTRY/garam-agent-operator/$image:$VERSION"
+            docker tag "garam-agent-operator/$image:$GITHUB_SHA" "$REGISTRY/garam-agent-operator/$image:$VERSION"
+          done
+
+      # The only irreversible step. Each repository is immutable, so no name is pushed
+      # twice: the loop pushes each reference once and a failure stops it. A run that
+      # fails after the first push leaves the version half-published, which only the
+      # next version repairs (ADR 0051, ADR 0084).
+      - env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for image in operator guest control; do
+            docker push "$REGISTRY/garam-agent-operator/$image:$VERSION"
+          done
 
       # What the registry holds, read back from the registry: the digest each
       # reference resolves to, which is what a deployment pins (delivery.md), and
@@ -128,23 +148,25 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          ref="$REGISTRY/garam-agent-operator/control:$VERSION"
-          fields=$(aws ecr batch-get-image \
-            --repository-name "garam-agent-operator/control" \
-            --image-ids imageTag="$VERSION" \
-            --query 'images[0].[imageManifestMediaType, imageId.imageDigest]' \
-            --output text)
-          read -r media digest <<<"$fields"
-          if ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-            echo "$ref: the registry returned no image for that tag" >&2
-            exit 1
-          fi
-          case "$media" in
-            application/vnd.docker.distribution.manifest.v2+json | application/vnd.oci.image.manifest.v1+json) ;;
-            *)
-              echo "$ref: the registry holds $media, so that digest names an index and not the image" >&2
+          for image in operator guest control; do
+            ref="$REGISTRY/garam-agent-operator/$image:$VERSION"
+            fields=$(aws ecr batch-get-image \
+              --repository-name "garam-agent-operator/$image" \
+              --image-ids imageTag="$VERSION" \
+              --query 'images[0].[imageManifestMediaType, imageId.imageDigest]' \
+              --output text)
+            read -r media digest <<<"$fields"
+            if ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "$ref: the registry returned no image for that tag" >&2
               exit 1
-              ;;
-          esac
-          printf '%s@%s\n' "$ref" "$digest"
-          printf -- '- `%s@%s`\n' "$ref" "$digest" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            case "$media" in
+              application/vnd.docker.distribution.manifest.v2+json | application/vnd.oci.image.manifest.v1+json) ;;
+              *)
+                echo "$ref: the registry holds $media, so that digest names an index and not the image" >&2
+                exit 1
+                ;;
+            esac
+            printf '%s@%s\n' "$ref" "$digest"
+            printf -- '- `%s@%s`\n' "$ref" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          done
