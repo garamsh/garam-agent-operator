@@ -4,10 +4,12 @@
 # Secret and no ConfigMap: every `secret` and `configMap` below names one
 # the deployment creates, and no value of either is in this file.
 #
-# Every value below is required and empty. A missing one fails the render
-# with a message that opens with the value's name. None has a default
-# because each one is the deployer's: this repository holds no registry,
-# digest, address, account or figure of any deployment.
+# Every value below is required and empty, except control.consoleOrigins,
+# operator.guest.* and a resource's limits, which are optional. A missing
+# required one fails the render with a message that opens with the value's
+# name. None has a default because each one is the deployer's: this
+# repository holds no registry, digest, address, account or figure of any
+# deployment.
 
 # Every object is named `<namePrefix>-<word>`. gaon has no namespaces, so
 # this prefix is what keeps two deployments' objects apart. A lowercase
