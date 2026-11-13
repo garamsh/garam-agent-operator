@@ -1,0 +1,4 @@
+resources:
+  operator:
+    limits:
+      memory: 2GB

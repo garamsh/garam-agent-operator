@@ -1,0 +1,67 @@
+# The least a render accepts: every required value and no optional one. Every
+# name, address and digest below is an invented placeholder for the chart
+# check, and none belongs to a deployment.
+namePrefix: example
+dnsZone: cluster.example
+image:
+  control: registry.example/control@sha256:0000000000000000000000000000000000000000000000000000000000000001
+  operator: registry.example/operator@sha256:0000000000000000000000000000000000000000000000000000000000000002
+  guest: registry.example:5000/team/guest@sha256:0000000000000000000000000000000000000000000000000000000000000003
+resources:
+  control:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  operator:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+garam:
+  machineUrl: https://machine.garam.example
+  tokenUrl: https://garam.example/token
+  root:
+    secret: garam-root
+    key: root.pem
+database:
+  url:
+    secret: control-database
+    key: url
+control:
+  certificate:
+    secret: control-tls
+    key: tls.crt
+  key:
+    secret: control-tls
+    key: tls.key
+  operatorKey:
+    secret: control-operator
+    key: private-key.pem
+  operatorClientId:
+    secret: control-operator
+    key: client-id
+  operatorTokenUrl:
+    secret: control-operator
+    key: token-url
+operator:
+  grn: grn:example:operator
+  controlGrn: grn:example:control
+  key:
+    secret: operator-key
+    key: private-key.pem
+  controlRoot:
+    secret: control-root
+    key: root.pem
+  gaon:
+    url: https://gaon.example:8443
+    ca:
+      secret: operator-gaon
+      key: ca.crt
+    certificate:
+      secret: operator-gaon
+      key: tls.crt
+    key:
+      secret: operator-gaon
+      key: tls.key
+  agent:
+    cpu: "1"
+    memory: 1Gi

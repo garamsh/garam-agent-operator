@@ -1,0 +1,66 @@
+{{- $ctx := dict "root" $ "word" "operator" }}
+{{- $garam := .Values.garam }}
+{{- $op := .Values.operator }}
+{{- $gaon := $op.gaon }}
+---
+# The gaon operator: one reconciler of the control service's feed, so one
+# replica and a Recreate rollout. It serves health on 8081 and no Service.
+apiVersion: workloads.gaon.garam.sh/v1alpha1
+kind: Deployment
+metadata:
+  name: {{ include "garam-agent-operator-gaon.name" $ctx }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "garam-agent-operator-gaon.selector" $ctx | nindent 6 }}
+  template:
+    image: {{ include "garam-agent-operator-gaon.image" (dict "root" $ "key" "operator") | quote }}
+    # build/operator.Dockerfile's USER.
+    user: "10001:10001"
+    {{- include "garam-agent-operator-gaon.resources" (dict "root" $ "key" "operator") | nindent 4 }}
+    command:
+      - /usr/local/bin/gaon-operator
+    env:
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "GAON_API_URL" "value" (include "garam-agent-operator-gaon.url" (dict "path" "operator.gaon.url" "what" "gaon's resource API" "value" $gaon.url))) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "GAON_CA_FILE" "value" "/etc/gaon-operator/gaon/ca.crt") | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "GAON_CLIENT_CERT_FILE" "value" "/etc/gaon-operator/gaon/tls.crt") | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "GAON_CLIENT_KEY_FILE" "value" "/etc/gaon-operator/gaon/tls.key") | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "GARAM_MACHINE_URL" "value" (include "garam-agent-operator-gaon.url" (dict "path" "garam.machineUrl" "what" "the base URL of garam's machine listener" "value" $garam.machineUrl))) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "GARAM_ROOT_FILE" "value" "/etc/gaon-operator/garam/root.pem") | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "GARAM_TOKEN_URL" "value" (include "garam-agent-operator-gaon.url" (dict "path" "garam.tokenUrl" "what" "the token URL garam's key issuance answered, the audience of the operator's assertion" "value" $garam.tokenUrl))) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "CONTROL_URL" "value" (printf "https://%s:8080" (include "garam-agent-operator-gaon.host" (dict "root" $ "word" "control")))) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "CONTROL_ROOT_FILE" "value" "/etc/gaon-operator/control/root.pem") | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "CONTROL_GRN" "value" (include "garam-agent-operator-gaon.text" (dict "path" "operator.controlGrn" "what" "the control service's operator GRN, the audience of the tokens the operator presents to it" "value" $op.controlGrn))) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "OPERATOR_KEY_FILE" "value" "/etc/gaon-operator/operator/private-key.pem") | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "OPERATOR_CLIENT_ID" "value" (include "garam-agent-operator-gaon.text" (dict "path" "operator.grn" "what" "the controller's operator GRN, the operator's client id" "value" $op.grn))) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "AGENT_IMAGE" "value" (include "garam-agent-operator-gaon.image" (dict "root" $ "key" "guest"))) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "AGENT_CPU" "value" (include "garam-agent-operator-gaon.quantity" (dict "path" "operator.agent.cpu" "value" $op.agent.cpu))) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "AGENT_MEMORY" "value" (include "garam-agent-operator-gaon.quantity" (dict "path" "operator.agent.memory" "value" $op.agent.memory))) | nindent 6 }}
+      {{- with $op.guest.machineUrl }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "GUEST_MACHINE_URL" "value" (include "garam-agent-operator-gaon.url" (dict "path" "operator.guest.machineUrl" "what" "the address the adapter reaches garam at" "value" .))) | nindent 6 }}
+      {{- end }}
+      {{- with $op.guest.controlUrl }}
+      {{- include "garam-agent-operator-gaon.env" (dict "name" "GUEST_CONTROL_URL" "value" (include "garam-agent-operator-gaon.url" (dict "path" "operator.guest.controlUrl" "what" "the address the adapter reaches the control service at" "value" .))) | nindent 6 }}
+      {{- end }}
+    files:
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/gaon-operator/gaon/ca.crt" "path" "operator.gaon.ca" "ref" $gaon.ca "secretOnly" false) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/gaon-operator/gaon/tls.crt" "path" "operator.gaon.certificate" "ref" $gaon.certificate "secretOnly" false) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/gaon-operator/gaon/tls.key" "path" "operator.gaon.key" "ref" $gaon.key "secretOnly" true) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/gaon-operator/garam/root.pem" "path" "garam.root" "ref" $garam.root "secretOnly" false) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/gaon-operator/control/root.pem" "path" "operator.controlRoot" "ref" $op.controlRoot "secretOnly" false) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/gaon-operator/operator/private-key.pem" "path" "operator.key" "ref" $op.key "secretOnly" true) | nindent 6 }}
+    ports:
+      - name: health
+        port: 8081
+        protocol: TCP
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: health
+    readinessProbe:
+      httpGet:
+        path: /readyz
+        port: health

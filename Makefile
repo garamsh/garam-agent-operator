@@ -210,6 +210,14 @@ verify-tidy: ## Fail when go.mod or go.sum is not what `go mod tidy` writes, nam
 verify-build-context: ## Fail when .dockerignore leaves out a file Go source embeds, which an image build would then miss.
 	go run ./hack/buildcontext
 
+# Renders every chart under deploy/charts with the pinned helm and validates
+# each rendered object against gaon's API types at the commit go.mod pins
+# (ADR 0085). The program prints what it covered, since `go run` of a passing
+# check says nothing else; a count of zero fails it.
+.PHONY: chart-check
+chart-check: helm ## Render deploy/charts, validate every object against gaon's API types, and check the refused values still fail.
+	go run ./hack/chartcheck -helm "$(HELM)"
+
 # The single name for the whole check set. CI invokes this target, not the
 # commands inside it. `lint` runs before `fmt` so unformatted code fails the
 # check instead of being rewritten and passing. `verify-tidy` runs first: it is
@@ -218,7 +226,7 @@ verify-build-context: ## Fail when .dockerignore leaves out a file Go source emb
 # it is the one step that needs the network, and a contributor who cannot reach
 # github.com cannot push what the rest of the set just cleared either.
 .PHONY: ci
-ci: verify-tidy lint-config lint fmt test build verify-build-context verify-pins ## Run the whole check set — module tidiness, lint, format, test, build, the image build context.
+ci: verify-tidy lint-config lint fmt test build verify-build-context chart-check verify-pins ## Run the whole check set — module tidiness, lint, format, test, build, the image build context, the charts.
 
 ##@ Build
 
@@ -412,6 +420,20 @@ GOLANGCI_LINT_VERSION ?= v2.15.0
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+HELM = $(LOCALBIN)/helm
+
+# The PM moves this pin. Helm is only the template engine of deploy/charts
+# (ADR 0085): the chart's output is gaon objects, so the version matters only
+# for the template language, not for any cluster. It is not a Go dependency of
+# this module, and no bot proposes a bump, so it moves when a Helm release or
+# a chart-check failure requires it.
+HELM_VERSION ?= v4.3.1
+
+.PHONY: helm
+helm: $(HELM) ## Download helm locally if necessary.
+$(HELM): $(LOCALBIN)
+	$(call go-install-tool,$(HELM),helm.sh/helm/v4/cmd/helm,$(HELM_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

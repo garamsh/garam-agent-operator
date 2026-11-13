@@ -1,0 +1,74 @@
+{{- $ctx := dict "root" $ "word" "control" }}
+{{- $control := .Values.control }}
+{{- $garam := .Values.garam }}
+# The control service: `/control`, TLS on 8080 and plain health on 8081.
+apiVersion: workloads.gaon.garam.sh/v1alpha1
+kind: Deployment
+metadata:
+  name: {{ include "garam-agent-operator-gaon.name" $ctx }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "garam-agent-operator-gaon.selector" $ctx | nindent 6 }}
+  template:
+    image: {{ include "garam-agent-operator-gaon.image" (dict "root" $ "key" "control") | quote }}
+    # build/control.Dockerfile's USER.
+    user: "65532:65532"
+    {{- include "garam-agent-operator-gaon.resources" (dict "root" $ "key" "control") | nindent 4 }}
+    command:
+      - /control
+    args:
+      - --api-certificate-file=/etc/control/tls/tls.crt
+      - --api-key-file=/etc/control/tls/tls.key
+      - --garam-machine-url={{ include "garam-agent-operator-gaon.url" (dict "path" "garam.machineUrl" "what" "the base URL of garam's machine listener" "value" $garam.machineUrl) }}
+      - --garam-server-root-file=/etc/control/garam/root.pem
+      - --operator-private-key-file=/etc/control/operator/private-key.pem
+      - --operator-client-id-file=/etc/control/operator/client-id
+      - --operator-token-url-file=/etc/control/operator/token-url
+      {{- range $i, $origin := $control.consoleOrigins }}
+      {{- if not (regexMatch "^https?://[^/?#@]+$" (toString $origin)) }}
+      {{- fail (printf "control.consoleOrigins[%d] must be <scheme>://<host> and any port, with no path, query or fragment" $i) }}
+      {{- end }}
+      - {{ printf "--console-origin=%s" $origin | quote }}
+      {{- end }}
+    env:
+      {{- include "garam-agent-operator-gaon.envFrom" (dict "name" "CONTROL_DATABASE_URL" "path" "database.url" "ref" .Values.database.url "secretOnly" true) | nindent 6 }}
+    files:
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/control/tls/tls.crt" "path" "control.certificate" "ref" $control.certificate "secretOnly" false) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/control/tls/tls.key" "path" "control.key" "ref" $control.key "secretOnly" true) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/control/garam/root.pem" "path" "garam.root" "ref" $garam.root "secretOnly" false) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/control/operator/private-key.pem" "path" "control.operatorKey" "ref" $control.operatorKey "secretOnly" true) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/control/operator/client-id" "path" "control.operatorClientId" "ref" $control.operatorClientId "secretOnly" false) | nindent 6 }}
+      {{- include "garam-agent-operator-gaon.file" (dict "file" "/etc/control/operator/token-url" "path" "control.operatorTokenUrl" "ref" $control.operatorTokenUrl "secretOnly" false) | nindent 6 }}
+    ports:
+      - name: https
+        port: 8080
+        protocol: TCP
+      - name: health
+        port: 8081
+        protocol: TCP
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: health
+    readinessProbe:
+      httpGet:
+        path: /readyz
+        port: health
+---
+apiVersion: compute.gaon.garam.sh/v1alpha1
+kind: Service
+metadata:
+  name: {{ include "garam-agent-operator-gaon.name" $ctx }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "garam-agent-operator-gaon.selector" $ctx | nindent 4 }}
+  ports:
+    - name: https
+      protocol: TCP
+      port: 8080
+      targetPort: https

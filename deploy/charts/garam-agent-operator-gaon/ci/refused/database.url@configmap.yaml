@@ -1,0 +1,6 @@
+# A null deletes the minimal values' key, so the case names a ConfigMap alone.
+database:
+  url:
+    secret: null
+    configMap: control-database
+    key: url

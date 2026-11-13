@@ -1,0 +1,2 @@
+image:
+  guest: registry.example/guest@sha256:abc123

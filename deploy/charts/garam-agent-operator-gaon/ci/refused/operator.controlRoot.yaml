@@ -1,0 +1,5 @@
+operator:
+  controlRoot:
+    secret: ""
+    configMap: ""
+    key: root.pem

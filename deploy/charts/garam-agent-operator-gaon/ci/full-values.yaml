@@ -1,0 +1,79 @@
+# Every value the chart reads, optional ones included, with the files read
+# from ConfigMaps where a file is not a private key. Every name, address and
+# digest below is an invented placeholder for the chart check.
+namePrefix: full-example
+dnsZone: zone.cluster.example
+image:
+  control: registry.example/control@sha256:00000000000000000000000000000000000000000000000000000000000000a1
+  operator: registry.example/operator@sha256:00000000000000000000000000000000000000000000000000000000000000a2
+  guest: registry.example/guest@sha256:00000000000000000000000000000000000000000000000000000000000000a3
+resources:
+  control:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  operator:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+garam:
+  machineUrl: https://machine.garam.example:8443
+  tokenUrl: https://garam.example/oauth/token
+  root:
+    configMap: garam-root
+    key: root.pem
+database:
+  url:
+    secret: control-database
+    key: url
+control:
+  certificate:
+    configMap: control-tls
+    key: tls.crt
+  key:
+    secret: control-tls
+    key: tls.key
+  operatorKey:
+    secret: control-operator
+    key: private-key.pem
+  operatorClientId:
+    configMap: control-operator
+    key: client-id
+  operatorTokenUrl:
+    configMap: control-operator
+    key: token-url
+  consoleOrigins:
+    - https://console.example
+    - http://localhost:5173
+operator:
+  grn: grn:example:operator
+  controlGrn: grn:example:control
+  key:
+    secret: operator-key
+    key: private-key.pem
+  controlRoot:
+    configMap: control-root
+    key: root.pem
+  gaon:
+    url: https://gaon.example:8443
+    ca:
+      configMap: operator-gaon
+      key: ca.crt
+    certificate:
+      secret: operator-gaon
+      key: tls.crt
+    key:
+      secret: operator-gaon
+      key: tls.key
+  agent:
+    cpu: 1500m
+    memory: 2Gi
+  guest:
+    machineUrl: https://machine.guest.example
+    controlUrl: https://control.guest.example:8080

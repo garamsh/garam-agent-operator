@@ -131,6 +131,7 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0082-import-garams-gaon-operator-and-keep-it-in-this-repository.md` | Import garam's gaon operator and keep it in this repository | accepted; the root `Dockerfile` it raised the builder of superseded by ADR-0083 |
 | `adr/0083-remove-the-kubernetes-manager.md` | Remove the Kubernetes manager and everything only it uses | accepted |
 | `adr/0084-publish-the-gaon-operator-and-the-guest-image-from-the-release-workflow.md` | Publish the gaon operator and the guest image from the release workflow | accepted |
+| `adr/0085-ship-a-helm-chart-of-gaon-kinds-for-the-control-service-and-the-gaon-operator.md` | Ship a Helm chart of gaon kinds for the control service and the gaon operator | accepted |
 
 ### Templates
 

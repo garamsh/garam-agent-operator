@@ -1,0 +1,7 @@
+# A null deletes the minimal values' key, so the case names a ConfigMap alone.
+operator:
+  gaon:
+    key:
+      secret: null
+      configMap: operator-gaon
+      key: tls.key

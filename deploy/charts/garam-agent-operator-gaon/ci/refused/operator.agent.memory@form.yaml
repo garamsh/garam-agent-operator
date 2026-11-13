@@ -1,0 +1,3 @@
+operator:
+  agent:
+    memory: 1GB
