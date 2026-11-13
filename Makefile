@@ -347,12 +347,13 @@ build-images: ## Build the manager's and the control service's images to publish
 	BUILDX_NO_DEFAULT_ATTESTATIONS=1 $(CONTAINER_TOOL) build --platform=$(IMAGE_PLATFORM) --build-arg REVISION="$(REVISION)" -f build/control.Dockerfile -t garam-agent-operator/control:$(REVISION) .
 
 # Refuses IMAGE_REF where ADR 0078's tag rule forbids its push: under
-# garam-agent-operator/, an X.Y.Z tag outside release.yml's run for that version, and
-# any tag but X.Y.Z or the 12-hex commit hash (#401). Every target that pushes runs it
+# garam-agent-operator/, a release version tag (0.1.0-dev.N, 0.1.0-rc.N or 0.1.0, ADR 0081)
+# outside release.yml's run for that version, and any tag but those or the 12-hex commit
+# hash (#401). Every target that pushes runs it
 # first, and so does release.yml. It stops mistakes, not a determined pusher, since a
 # local shell can export GITHUB_WORKFLOW_REF; IAM stops the rest.
 .PHONY: verify-image-ref
-verify-image-ref: ## Refuse an IMAGE_REF under garam-agent-operator/ unless it is the 12-hex commit hash, or X.Y.Z in its release run.
+verify-image-ref: ## Refuse an IMAGE_REF under garam-agent-operator/ unless it is the 12-hex commit hash, or a release version (0.1.0-dev.N, 0.1.0-rc.N, 0.1.0) in its release run.
 	go run ./hack/imageref "$(IMAGE_REF)"
 
 # Departs from the scaffold, and a regeneration restores the scaffold's form: it

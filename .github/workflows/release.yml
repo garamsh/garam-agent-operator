@@ -1,8 +1,9 @@
 name: release
 
 # Publishes a release: the manager's image to garam-agent-operator/manager and the
-# control service's to garam-agent-operator/control, each as X.Y.Z, from a
-# vX.Y.Z git tag on main (ADR 0051, delivery.md). Modelled on sherlock's release
+# control service's to garam-agent-operator/control, each tagged with the version
+# its git tag names without the v, from a v0.1.0-dev.N, v0.1.0-rc.N or v0.1.0 tag on
+# main (ADR 0051, ADR 0081, delivery.md). Modelled on sherlock's release
 # workflow (garamsh/sherlock@b3c05c2:.github/workflows/release.yml), which garam's
 # shares (garamsh/garam@9a3f8a6:.github/workflows/release.yml, its ADR-0039).
 #
@@ -12,12 +13,12 @@ name: release
 # checks the pair agrees.
 #
 # The trigger is the release tag and nothing else. A tag filter is a glob and
-# cannot spell vX.Y.Z, so `v*` is as narrow as the trigger goes. It is also exactly
+# cannot spell those three forms, so `v*` is as narrow as the trigger goes. It is also exactly
 # the ref the push role admits: arn:aws:iam::486152169996:role/github-actions-garam-agent-operator-push
 # trusts the subject
 # `repo:garamsh@307152666/garam-agent-operator@1335647420:ref:refs/tags/v*`
 # (garamsh/infra#292, #293), so a run on any other ref gets no credential. What
-# `v*` admits and the scheme does not is refused by the first step, before any
+# `v*` admits and the scheme does not is refused by the version step, before any
 # AWS call: both repositories are IMMUTABLE and a wrong name is permanent.
 #
 # Nothing here creates a tag. A person tags main's tip after a promotion and pushes
@@ -30,7 +31,7 @@ permissions: read-all
 
 # No concurrency group, and the absence is the guard rather than an omission. A
 # group cancels a queued run when a newer one arrives, whichever way
-# `cancel-in-progress` is set, so a vX.Y.Z tag could publish nothing; and a run
+# `cancel-in-progress` is set, so a release tag could publish nothing; and a run
 # cancelled between the two pushes leaves the version half-published, which only
 # the next version repairs (ADR 0051).
 
@@ -57,19 +58,19 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # A release is vX.Y.Z and the image tag is that without the `v`. This step
-      # stands before any credential, so a tag the scheme does not name costs
-      # nothing. The tag name reaches the shell through the environment, never
-      # the command text (ci.md §Security baseline).
+      # A release is v0.1.0-dev.N, v0.1.0-rc.N or v0.1.0 (ADR 0081), and the image
+      # tag is that without the `v`. hack/releasetag holds the rule, so a test runs
+      # the same check over accepted and refused names. This step stands before any
+      # credential, so a tag the scheme does not name costs nothing. The tag name
+      # reaches the command through the environment, never the command text
+      # (ci.md §Security baseline).
       - id: version
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |
-          if ! printf '%s' "$REF_NAME" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
-            echo "tag $REF_NAME is not vX.Y.Z: nothing published" >&2
-            exit 1
-          fi
-          echo "version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          version=$(go run ./hack/releasetag "$REF_NAME")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # A release is a tag on main, placed after the promotion that put the commit
       # there (ADR 0051, integration.md). A tag on a commit main does not hold —

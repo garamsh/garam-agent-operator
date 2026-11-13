@@ -97,7 +97,7 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0048-serve-the-agent-execution-routes-from-an-execution-domain-under-garams-contract.md` | Serve the agent's activation and runtime status from an execution domain, under the contract garam owns | accepted |
 | `adr/0049-give-a-managed-agents-adapter-the-control-services-settings-behind-a-switch.md` | Give a managed agent's adapter the control service's settings and its outbox, behind a switch until activation is served | accepted; "Which agents" amended for the outbox by ADR-0060; the switch and `GATEWAY_AGENT` superseded by ADR-0068 |
 | `adr/0050-cut-a-legacy-agent-over-through-console-stages-garam-records-and-release-it-only-on-the-switch.md` | Cut a legacy agent over through console stages garam records, and release it only on the switch | superseded by ADR-0077 |
-| `adr/0051-publish-a-release-from-a-version-tag-on-main-through-a-release-workflow.md` | Publish a release from a version tag on `main` through a release workflow, and every image as one linux/amd64 manifest | accepted; the development image's `dev-` tag superseded by ADR-0067; the repository names superseded by ADR-0078 |
+| `adr/0051-publish-a-release-from-a-version-tag-on-main-through-a-release-workflow.md` | Publish a release from a version tag on `main` through a release workflow, and every image as one linux/amd64 manifest | accepted; the development image's `dev-` tag superseded by ADR-0067; the repository names superseded by ADR-0078; the version form superseded by ADR-0081 |
 | `adr/0052-carry-an-agents-embeddings-endpoint-beside-its-model-and-refuse-changing-it-once-set.md` | Carry an agent's embeddings endpoint beside its model, and refuse changing it once set | accepted |
 | `adr/0053-add-the-embedding-and-the-workspace-size-to-the-c2-wire-and-refuse-a-model-its-agent-could-not-start-with.md` | Add the embedding and the workspace size to the C2 wire, and refuse at the control service a model its agent could not start with | accepted |
 | `adr/0054-carry-a-managed-agents-definition-revision-in-its-spec-and-render-it-into-its-config-file.md` | Carry a managed agent's definition revision in its spec, and render it into its config file | accepted |
@@ -124,9 +124,10 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0075-hold-the-manager-and-the-control-service-not-ready-while-their-garam-authentication-has-failed-for-an-hour.md` | Hold the manager and the control service not ready while their garam authentication has failed for an hour | accepted |
 | `adr/0076-create-a-managed-agent-through-garams-agent-enrollment-v1-prepared-then-admitted.md` | Create a managed agent through garam's agent-enrollment.v1, prepared then admitted | accepted; its operation names superseded by ADR-0080 |
 | `adr/0077-build-agents-only-from-the-control-services-feed-and-remove-the-legacy-path-and-the-cut-over.md` | Build agents only from the control service's feed, and remove the legacy path and the cut-over | accepted |
-| `adr/0078-publish-each-image-to-one-repository-and-tell-release-from-development-by-tag.md` | Publish each image to one repository, and tell release from development by tag | accepted |
+| `adr/0078-publish-each-image-to-one-repository-and-tell-release-from-development-by-tag.md` | Publish each image to one repository, and tell release from development by tag | accepted; the release version form superseded by ADR-0081 |
 | `adr/0079-run-only-on-our-own-system-and-keep-the-seams-that-allow-a-bring-your-own-operator.md` | Run only on our own system, and keep the seams that allow a bring-your-own operator | accepted |
 | `adr/0080-name-garams-resources-and-operations-as-garam-v0-7-0-does.md` | Name garam's resources and operations as garam `v0.7.0` does | accepted |
+| `adr/0081-release-as-0-1-0-dev-n-and-0-1-0-rc-n-until-launch-and-0-1-0-at-launch.md` | Release as `0.1.0-dev.N` and `0.1.0-rc.N` until launch, and `0.1.0` at launch | accepted |
 
 ### Templates
 
