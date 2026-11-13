@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -59,7 +60,7 @@ func (b *syncBuffer) foreignContractLogs(t *testing.T) []map[string]any {
 func TestActivate_GaramsAnswerUnderAnotherContractOrNoneIsUndecidedAndLoggedOncePerContract(t *testing.T) {
 	logs := &syncBuffer{}
 	e := newEnvLogging(t, slog.New(slog.NewJSONHandler(logs, nil)))
-	const call = "/agents/" + agent + "/execution/introspection"
+	call := "/agents/" + url.PathEscape(agent) + "/execution/introspection"
 
 	for _, contract := range []string{foreignContract, foreignContract, ""} {
 		e.garam.set(func(g *garam) { g.introspect = &execution.GaramContractError{Call: call, Contract: contract} })

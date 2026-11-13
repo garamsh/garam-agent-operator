@@ -220,9 +220,9 @@ func sha256Hex(text string) string {
 
 var _ = Describe("Placement registrar", func() {
 	It("registers a managed agent's first placement with no previous, and no agent that does not register", func() {
-		managed := "grn:acme:default:agent:1111111111111111"
+		managed := "grn:acme/iam/agent/1111111111111111"
 		pod := placed(managed, true, "token-one", nil)
-		placed("grn:acme:default:agent:3333333333333333", false, "token-three", nil)
+		placed("grn:acme/iam/agent/3333333333333333", false, "token-three", nil)
 		route := serveRoute()
 		run(route)
 
@@ -234,7 +234,7 @@ var _ = Describe("Placement registrar", func() {
 	})
 
 	It("names the placement a replacement replaces, with the digest of its evidence", func() {
-		managed := "grn:acme:default:agent:4444444444444444"
+		managed := "grn:acme/iam/agent/4444444444444444"
 		digest := sha256Hex("evidence")
 		pod := placed(managed, true, "token-next", map[string]string{
 			agentname.PreviousPodUIDAnnotation:        podBefore,
@@ -253,7 +253,7 @@ var _ = Describe("Placement registrar", func() {
 	It("registers a replacement once, with the evidence the fence recorded, across a restart after the fence", func() {
 		// The window #212 names: the writer fence has recorded the evidence on the
 		// placement Secret and removed its finalizer, and the replacing Pod runs.
-		managed := "grn:acme:default:agent:4545454545454545"
+		managed := "grn:acme/iam/agent/4545454545454545"
 		digest := sha256Hex("evidence")
 		pod := placed(managed, true, "token-next", map[string]string{
 			agentname.PreviousPodUIDAnnotation:        podBefore,
@@ -292,7 +292,7 @@ var _ = Describe("Placement registrar", func() {
 	})
 
 	It("presents a superseded placement once and surfaces it, and presents the Pod that replaced it", func() {
-		managed := "grn:acme:default:agent:6666666666666666"
+		managed := "grn:acme/iam/agent/6666666666666666"
 		superseded := placed(managed, true, "token-one", nil)
 		route := serveRoute()
 		route.mu.Lock()

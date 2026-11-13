@@ -262,7 +262,7 @@ func TestActivate_TheControllerIsProvedByGaramsAnswerAboutTheToken(t *testing.T)
 
 func TestActivate_AnActivationOfAnotherBindingIsNotPassedOn(t *testing.T) {
 	e := newEnv(t)
-	e.garam.set(func(g *garam) { g.wrongGRN = "grn:acme:default:agent:other" })
+	e.garam.set(func(g *garam) { g.wrongGRN = "grn:acme/iam/agent/other" })
 	refused := e.activate(t, e.adapter, requestID, generation, "1")
 	assert.Equal(t, http.StatusInternalServerError, refused.status, refused.raw)
 	assert.NotContains(t, refused.raw, "token-", "a token of another binding was handed out")

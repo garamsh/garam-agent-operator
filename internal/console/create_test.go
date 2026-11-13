@@ -29,7 +29,7 @@ type ref struct {
 }
 
 // otherController is a controller no test creates its agent on.
-const otherController = "grn:acme:default:operator:other"
+const otherController = "grn:acme/iam/operator/other"
 
 // createBody is a create request's body, for the env's template and profile unless changed.
 func (e *env) createBody(requestID string, change func(*createRequest)) []byte {
@@ -95,7 +95,7 @@ func TestCreate_CreatesTheAgentWithRevisionOneRecordedForItsAssignment(t *testin
 
 	got := e.create(t, e.authorizeCreate("n1", body, nil), body)
 	require.Equal(t, http.StatusCreated, got.status, got.message)
-	assert.Equal(t, "grn:acme:default:agent:n1", got.agent)
+	assert.Equal(t, "grn:acme/iam/agent/n1", got.agent)
 	assert.Equal(t, "1", got.revision)
 	assert.Equal(t, "1", got.epoch)
 
@@ -142,11 +142,11 @@ func TestCreate_BoundFieldMismatchRefused(t *testing.T) {
 		field  string
 		change func(*console.Binding)
 	}{
-		{"an agent:configure authority", "operation", func(b *console.Binding) { b.Operation = console.OperationConfigure }},
+		{"an iam:agent.configure authority", "operation", func(b *console.Binding) { b.Operation = console.OperationConfigure }},
 		{"another controller", "target", func(b *console.Binding) { b.Target = otherController }},
 		{"another request id", "request id", func(b *console.Binding) { b.RequestID = "other" }},
-		{"another organization", "organization", func(b *console.Binding) { b.Org = "grn:root:default:org:other" }},
-		{"another audience", "audience", func(b *console.Binding) { b.Audience = "grn:root:default:operator:other" }},
+		{"another organization", "organization", func(b *console.Binding) { b.Org = "grn:root/iam/org/other" }},
+		{"another audience", "audience", func(b *console.Binding) { b.Audience = "grn:root/iam/operator/other" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

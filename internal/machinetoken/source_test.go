@@ -32,7 +32,7 @@ const (
 	// unavailable is garam's answer to an exchange it cannot decide.
 	unavailable = `{"error":"temporarily_unavailable"}`
 
-	clientID = "grn:acme:default:operator:controller"
+	clientID = "grn:acme/iam/operator/controller"
 	// tokenURL is garam's configured value, deliberately not the address the stub listens on.
 	tokenURL = "https://machine.garam.example/oauth/token"
 )
@@ -214,11 +214,11 @@ func TestSource_NamesTheAudienceItIsAskedFor(t *testing.T) {
 	s := newStub(t, public)
 	c := &clock{now: time.Unix(1_800_000_000, 0)}
 
-	_, err := newSource(s, files, c, "grn:acme:default:operator:control").Token(context.Background())
+	_, err := newSource(s, files, c, "grn:acme/iam/operator/control").Token(context.Background())
 	require.NoError(t, err)
 
 	require.Len(t, s.sent(), 1)
-	assert.Equal(t, []string{"grn:acme:default:operator:control"}, s.sent()[0].form["audience"])
+	assert.Equal(t, []string{"grn:acme/iam/operator/control"}, s.sent()[0].form["audience"])
 }
 
 func TestSource_SendsAFreshJTIOnEveryAttempt(t *testing.T) {

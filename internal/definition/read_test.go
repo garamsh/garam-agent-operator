@@ -22,7 +22,7 @@ const (
 
 // publishBinding is what an authority for a publication binds, for body.
 func publishBinding(body string) definition.Binding {
-	return definition.Binding{Actor: actor, Operation: "agent-template:publish", Target: "grn:root:default:org:" + org,
+	return definition.Binding{Actor: actor, Operation: "iam:agent-template.publish", Target: "grn:root/iam/org/" + org,
 		BodySHA256: body, OperationRef: "ref-" + body}
 }
 
@@ -124,30 +124,30 @@ func TestListProfiles_AnswersEveryVersionOfTheOrganizationsOwn(t *testing.T) {
 
 func TestExecution_AnswersOnlyInTheAgentsOrganization(t *testing.T) {
 	ctx := context.Background()
-	f := newFixture(t, registration{agent: "grn:acme:default:agent:1"})
+	f := newFixture(t, registration{agent: "grn:acme/iam/agent/1"})
 	_, _, err := f.service.CreateAgent(ctx, f.create("create", f.template))
 	require.NoError(t, err)
 
 	// Control: the agent's own organization reads it, with nothing rendered or reported yet.
-	e, err := f.service.Execution(ctx, org, "grn:acme:default:agent:1")
+	e, err := f.service.Execution(ctx, org, "grn:acme/iam/agent/1")
 	require.NoError(t, err)
 	assert.Equal(t, definition.Execution{Desired: 1}, e)
 
-	_, err = f.service.Execution(ctx, otherOrg, "grn:acme:default:agent:1")
+	_, err = f.service.Execution(ctx, otherOrg, "grn:acme/iam/agent/1")
 	assert.ErrorIs(t, err, definition.ErrNotFound)
-	_, err = f.service.Execution(ctx, org, "grn:acme:default:agent:nobody")
+	_, err = f.service.Execution(ctx, org, "grn:acme/iam/agent/nobody")
 	assert.ErrorIs(t, err, definition.ErrNotFound)
 
-	_, err = f.service.RecordStatus(ctx, "grn:acme:default:agent:1", 1, 1)
+	_, err = f.service.RecordStatus(ctx, "grn:acme/iam/agent/1", 1, 1)
 	require.NoError(t, err)
-	e, err = f.service.Execution(ctx, org, "grn:acme:default:agent:1")
+	e, err = f.service.Execution(ctx, org, "grn:acme/iam/agent/1")
 	require.NoError(t, err)
 	assert.Equal(t, definition.Execution{Desired: 1, Rendered: 1}, e)
 }
 
 func TestExecution_EffectiveIsTheLatestActivationsAcceptedReport(t *testing.T) {
 	ctx := context.Background()
-	agent := definition.GRN("grn:acme:default:agent:1")
+	agent := definition.GRN("grn:acme/iam/agent/1")
 	f := newFixture(t, registration{agent: agent})
 	_, _, err := f.service.CreateAgent(ctx, f.create("create", f.template))
 	require.NoError(t, err)

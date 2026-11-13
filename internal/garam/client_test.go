@@ -13,7 +13,7 @@ import (
 )
 
 // sampleAgent is an agent GRN in the shape garam mints them.
-const sampleAgent = garam.GRN("grn:acme:default:agent:9f2ac1b40d8e7a35")
+const sampleAgent = garam.GRN("grn:acme/iam/agent/9f2ac1b40d8e7a35")
 
 // answerJSON writes status and body the way the machine listener does.
 func answerJSON(w http.ResponseWriter, status int, body string) {
@@ -69,7 +69,7 @@ func TestClientMintAgentTokenReadsEveryPartOfTheAnswer(t *testing.T) {
 
 func TestClientMintAgentTokenAsksForTheAudienceAndRefusesATokenOfAnother(t *testing.T) {
 	g := NewWithT(t)
-	const control = "grn:acme:default:operator:control"
+	const control = "grn:acme/iam/operator/control"
 	audience := control
 	stub := newStubListener(t, func(w http.ResponseWriter, _ *http.Request) {
 		answerMint(w, http.StatusCreated, strings.Replace(agentTokenAnswer, `"epoch"`, `"audience": "`+audience+`", "epoch"`, 1))
@@ -81,7 +81,7 @@ func TestClientMintAgentTokenAsksForTheAudienceAndRefusesATokenOfAnother(t *test
 	g.Expect(stub.requests()[0].body).To(MatchJSON(`{"audience": "` + control + `"}`))
 
 	// A token minted for another audience is not the one asked for.
-	audience = "grn:acme:default:operator:other"
+	audience = "grn:acme/iam/operator/other"
 	_, err = client.MintAgentToken(context.Background(), sampleAgent, control)
 	g.Expect(err).To(MatchError(ContainSubstring("not " + string(sampleAgent))))
 }
@@ -121,7 +121,7 @@ func TestClientMintAgentTokenRefusesAnAnswerTheAdapterCouldNotRead(t *testing.T)
 
 	for name, broken := range map[string]string{
 		"a token not in garam's form": strings.Replace(agentTokenAnswer, sampleToken, sampleToken+" ", 1),
-		"another agent's token":       strings.Replace(agentTokenAnswer, string(sampleAgent), "grn:acme:default:agent:other", 1),
+		"another agent's token":       strings.Replace(agentTokenAnswer, string(sampleAgent), "grn:acme/iam/agent/other", 1),
 		"no epoch":                    strings.Replace(agentTokenAnswer, `"epoch"`, `"notEpoch"`, 1),
 		"no expiry":                   strings.Replace(agentTokenAnswer, `"expiresAt"`, `"notExpiresAt"`, 1),
 		"no server root":              strings.Replace(agentTokenAnswer, `"serverRootPem"`, `"notServerRootPem"`, 1),

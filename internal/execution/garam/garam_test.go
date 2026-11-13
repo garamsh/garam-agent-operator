@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 )
 
 const (
-	agent = "grn:acme:default:agent:a"
+	agent = "grn:acme/iam/agent/a"
 	// gen and token are the generation and the agent's token every call here names.
 	gen   = "gen"
 	token = "garam_at_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -58,7 +59,7 @@ func TestGaram_IntrospectsUnderTheExecutionFence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, execution.Introspection{GRN: agent, Org: "o", Assignee: "c", Epoch: "7", Mode: "fenced",
 		Credential: "current", Generation: "current", ActivationID: "a1"}, i)
-	assert.Equal(t, "/agents/"+agent+"/execution/introspection", got.path)
+	assert.Equal(t, "/agents/"+url.PathEscape(agent)+"/execution/introspection", got.path)
 	assert.Equal(t, garammachine.ExecutionFence, got.contract)
 	assert.Equal(t, map[string]any{keyToken: token, keyGeneration: gen}, got.body)
 
@@ -79,7 +80,7 @@ func TestGaram_ActivatesUnderTheExecutionFence(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, created, wasCreated)
 		assert.Equal(t, execution.Activation{ActivationID: "a1", Token: "t", TokenVersion: 2, GRN: agent, Epoch: "7", Generation: gen}, a)
-		assert.Equal(t, "/agents/"+agent+"/activations", got.path)
+		assert.Equal(t, "/agents/"+url.PathEscape(agent)+"/activations", got.path)
 		// An empty anchor and reference are sent as null, which garam reads as none.
 		assert.Equal(t, map[string]any{"requestId": "r", "epoch": "7", keyGeneration: gen,
 			"replacesActivationId": nil, "operationRef": nil, keyToken: token}, got.body)
@@ -140,7 +141,7 @@ func TestGaram_AnAnswerUnderAnotherContractOrNoneDecidesNothing(t *testing.T) {
 			if header != nil {
 				want = *header
 			}
-			assert.Equal(t, execution.GaramContractError{Call: "/agents/" + agent + "/execution/introspection", Contract: want}, *foreign)
+			assert.Equal(t, execution.GaramContractError{Call: "/agents/" + url.PathEscape(agent) + "/execution/introspection", Contract: want}, *foreign)
 			assert.NotErrorIs(t, err, execution.ErrUndecided)
 		})
 	}

@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	operatorOrg = "grn:root:default:org:acme"
-	operatorGRN = "grn:root:default:operator:k8s"
+	operatorOrg = "grn:root/iam/org/acme"
+	operatorGRN = "grn:root/iam/operator/k8s"
 )
 
 const (
@@ -89,7 +89,7 @@ func TestOperators_KeepTheLatestContactAndReportApart(t *testing.T) {
 	assert.Equal(t, []definition.OperatorImage{{Name: copyImage, Ref: busybox2}}, operators[0].Images)
 
 	// Another organization holds none of them.
-	others, err := service.ListOperators(ctx, "grn:root:default:org:globex")
+	others, err := service.ListOperators(ctx, "grn:root/iam/org/globex")
 	require.NoError(t, err)
 	assert.Empty(t, others)
 }

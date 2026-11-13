@@ -1,6 +1,6 @@
 # ADR 0074: Report each operator's images and last contact to a console read of the control service
 
-> Status: accepted
+> Status: accepted; its operation names superseded by ADR-0080
 > Date: 2026-10-14
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

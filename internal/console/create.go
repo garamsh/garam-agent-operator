@@ -31,7 +31,7 @@ type createResponse struct {
 }
 
 // create creates an agent assigned to the request's controller, from a template version under a
-// profile version. The authority binds agent:create on that controller, which is read from the
+// profile version. The authority binds iam:agent.create on that controller, which is read from the
 // body, so it is compared once the body's digest has proved the body is the one bound.
 func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	org := r.PathValue("org")

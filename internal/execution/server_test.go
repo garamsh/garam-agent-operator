@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -49,15 +50,15 @@ const (
 )
 
 const (
-	agent      = "grn:acme:default:agent:a"
-	controller = "grn:acme:default:operator:k8s"
+	agent      = "grn:acme/iam/agent/a"
+	controller = "grn:acme/iam/operator/k8s"
 	epoch      = "7"
 	token      = "placement-token-1"
 	createRef  = "create-ref"
 	generation = "0123456789abcdef0123456789abcdef"
 
 	// otherController is an operator the agent is not placed on.
-	otherController = "grn:acme:default:operator:other"
+	otherController = "grn:acme/iam/operator/other"
 )
 
 // registrar registers the creation of agent at epoch.
@@ -241,7 +242,7 @@ func newEnvLogging(t *testing.T, logger *slog.Logger) *env {
 	require.NoError(t, err)
 	_, _, err = definitions.CreateAgent(ctx, definition.CreateInput{
 		Request:    definition.RequestKey{Organization: "acme", RequestID: "create"},
-		Binding:    definition.Binding{Actor: "actor", Operation: "agent:create", Target: controller, OperationRef: createRef},
+		Binding:    definition.Binding{Actor: "actor", Operation: "iam:agent.create", Target: controller, OperationRef: createRef},
 		Controller: controller,
 		Template:   definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
 		Profile:    profile,
@@ -269,7 +270,7 @@ func (e *env) configure(t *testing.T, expected definition.Revision, ref string) 
 	t.Helper()
 	_, err := e.definitions.Configure(context.Background(), definition.ConfigureInput{
 		Request: definition.RequestKey{Organization: "acme", RequestID: fmt.Sprintf("configure-%d", expected)},
-		Binding: definition.Binding{Actor: "actor", Operation: "agent:configure", Target: agent, OperationRef: ref,
+		Binding: definition.Binding{Actor: "actor", Operation: "iam:agent.configure", Target: agent, OperationRef: ref,
 			Assignment: definition.Assignment{Operator: controller, Epoch: epoch}},
 		Agent: agent, ExpectedRevision: expected, Profile: e.profile,
 	})
@@ -293,7 +294,7 @@ func (a answer) kind() string {
 // empty, the placement token.
 func (e *env) post(t *testing.T, c caller, route, body, placement string, header map[string]string) answer {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, e.server.URL+"/v1/agents/"+agent+"/"+route, strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, e.server.URL+"/v1/agents/"+url.PathEscape(agent)+"/"+route, strings.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Garam-Contract-Version", execution.Contract)
 	if c.token != "" {

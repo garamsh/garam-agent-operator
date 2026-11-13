@@ -37,7 +37,7 @@ func TestDesired_OffersTheLatestRevisionRecordedForTheController(t *testing.T) {
 	assert.Equal(t, page, again)
 
 	// Control: another controller is offered nothing of it.
-	other, err := f.service.Desired(ctx, "grn:acme:default:operator:other", 10)
+	other, err := f.service.Desired(ctx, "grn:acme/iam/operator/other", 10)
 	require.NoError(t, err)
 	assert.Empty(t, other.Revisions)
 }

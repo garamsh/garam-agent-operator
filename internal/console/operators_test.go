@@ -35,11 +35,11 @@ func TestOperators_AnswerEachControllerOfTheOrganizationAsReported(t *testing.T)
 	e := newEnv(t)
 	ctx := context.Background()
 	const (
-		reported  = "grn:root:default:operator:reported"
-		silent    = "grn:root:default:operator:silent"
-		foreign   = "grn:root:default:operator:foreign"
+		reported  = "grn:root/iam/operator/reported"
+		silent    = "grn:root/iam/operator/silent"
+		foreign   = "grn:root/iam/operator/foreign"
 		digest    = "sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-		otherGRN  = "grn:root:default:org:" + otherOrg
+		otherGRN  = "grn:root/iam/org/" + otherOrg
 		agentRef  = "registry.example/sherlock:1.2.0@" + digest
 		copyImage = "busybox:stable-musl"
 	)

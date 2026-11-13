@@ -45,7 +45,7 @@ func sendTargetedTo(t *testing.T, base, method, path, operation, target, request
 }
 
 // TestTemplates_PublishThenReadThroughGaram publishes a template version through the binary under
-// a real agent-template:publish authority, reads it back under real agent-template:read
+// a real iam:agent-template.publish authority, reads it back under real iam:agent-template.read
 // authorities, and finds another organization's template of the same store not found.
 func TestTemplates_PublishThenReadThroughGaram(t *testing.T) {
 	org := real.orgID
@@ -65,13 +65,13 @@ func TestTemplates_PublishThenReadThroughGaram(t *testing.T) {
 	require.NoError(t, err)
 
 	publish := base + "/templates/" + template + "/versions"
-	status, published := sendTargeted(t, http.MethodPost, publish, "agent-template:publish", real.orgGRN,
+	status, published := sendTargeted(t, http.MethodPost, publish, "iam:agent-template.publish", real.orgGRN,
 		in.RequestID, body, publish)
 	require.Equal(t, http.StatusCreated, status, published)
 	assert.Equal(t, firstVersion(template), published)
 
 	list := base + "/templates"
-	status, listed := sendTargeted(t, http.MethodGet, list, "agent-template:read", real.orgGRN,
+	status, listed := sendTargeted(t, http.MethodGet, list, "iam:agent-template.read", real.orgGRN,
 		name(t, "list"), nil, list)
 	require.Equal(t, http.StatusOK, status, listed)
 	listedTemplate := firstVersion(template)
@@ -79,7 +79,7 @@ func TestTemplates_PublishThenReadThroughGaram(t *testing.T) {
 	assert.Contains(t, listed["templates"], listedTemplate)
 
 	version := base + "/templates/" + template + "/versions/1"
-	status, read := sendTargeted(t, http.MethodGet, version, "agent-template:read", real.orgGRN,
+	status, read := sendTargeted(t, http.MethodGet, version, "iam:agent-template.read", real.orgGRN,
 		name(t, "read"), nil, version)
 	require.Equal(t, http.StatusOK, status, read)
 	configuration := read["configuration"].(map[string]any)
@@ -87,7 +87,7 @@ func TestTemplates_PublishThenReadThroughGaram(t *testing.T) {
 	assert.Equal(t, "Answers web questions.", configuration["ego"])
 
 	// A read authority garam bound to another request target is refused before anything is read.
-	status, _ = sendTargeted(t, http.MethodGet, version, "agent-template:read", real.orgGRN,
+	status, _ = sendTargeted(t, http.MethodGet, version, "iam:agent-template.read", real.orgGRN,
 		name(t, "other"), nil, list)
 	assert.Equal(t, http.StatusForbidden, status)
 
@@ -97,7 +97,7 @@ func TestTemplates_PublishThenReadThroughGaram(t *testing.T) {
 	foreign := name(t, "template")
 	require.NoError(t, insertTemplate(t, other, foreign, publishProfile(t, other)))
 	missing := base + "/templates/" + foreign + "/versions/1"
-	status, _ = sendTargeted(t, http.MethodGet, missing, "agent-template:read", real.orgGRN,
+	status, _ = sendTargeted(t, http.MethodGet, missing, "iam:agent-template.read", real.orgGRN,
 		name(t, "foreign"), nil, missing)
 	assert.Equal(t, http.StatusNotFound, status)
 }

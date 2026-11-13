@@ -375,7 +375,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 		)
 		apply := exec.Command("kubectl", "apply", "-f", "-")
 		apply.Stdin = strings.NewReader(agentManifestFor(revised, agentImage) + `  identity:
-    grn: grn:acme:default:agent:e2e0revised00001
+    grn: grn:acme/iam/agent/e2e0revised00001
     assignmentEpoch: "1"
   revision: "1"
   tools:
@@ -459,7 +459,7 @@ var _ = Describe("Agent workload", Ordered, func() {
 		)
 		apply := exec.Command("kubectl", "apply", "-f", "-")
 		apply.Stdin = strings.NewReader(agentManifestFor(stopped, agentImage) + `  identity:
-    grn: grn:acme:default:agent:e2e0stopped00001
+    grn: grn:acme/iam/agent/e2e0stopped00001
     assignmentEpoch: "1"
   revision: "1"
 `)

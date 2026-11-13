@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	firstAgent  = definition.GRN("grn:acme:default:agent:0a1b2c3d4e5f6071")
-	secondAgent = definition.GRN("grn:acme:default:agent:9f2ac1b40d8e7a35")
+	firstAgent  = definition.GRN("grn:acme/iam/agent/0a1b2c3d4e5f6071")
+	secondAgent = definition.GRN("grn:acme/iam/agent/9f2ac1b40d8e7a35")
 
 	analyst = "analyst"
 )
@@ -159,11 +159,11 @@ func TestCreateAgent_RequestIDReusedForAnotherRequestRefused(t *testing.T) {
 		name   string
 		change func(f fixture, in *definition.CreateInput)
 	}{
-		{"another actor", func(_ fixture, in *definition.CreateInput) { in.Binding.Actor = "grn:acme:default:user:other" }},
+		{"another actor", func(_ fixture, in *definition.CreateInput) { in.Binding.Actor = "grn:acme/iam/user/other" }},
 		{"another body", func(_ fixture, in *definition.CreateInput) { in.Binding.BodySHA256 = other }},
 		{"another reference", func(_ fixture, in *definition.CreateInput) { in.Binding.OperationRef = other }},
 		{"another controller", func(_ fixture, in *definition.CreateInput) {
-			in.Controller, in.Binding.Target = "grn:acme:default:operator:other", "grn:acme:default:operator:other"
+			in.Controller, in.Binding.Target = "grn:acme/iam/operator/other", "grn:acme/iam/operator/other"
 		}},
 		{"another template", func(f fixture, in *definition.CreateInput) {
 			in.Template = definition.TemplateRef{Name: f.template.Name, Version: f.template.Version + 1}

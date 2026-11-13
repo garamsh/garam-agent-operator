@@ -85,7 +85,7 @@ func tokensOf(token string) garam.Tokens {
 
 var _ = Describe("Token store", func() {
 	It("lists every agent with an identity, and no agent a user wrote", func() {
-		managed, unknown, written := "grn:acme:default:agent:managed", "grn:acme:default:agent:unknown", "written"
+		managed, unknown, written := "grn:acme/iam/agent/managed", "grn:acme/iam/agent/unknown", "written"
 		agentWith(managed, &agentv1alpha1.AgentIdentity{GRN: managed, AssignmentEpoch: "7"})
 		agentWith(unknown, &agentv1alpha1.AgentIdentity{GRN: unknown})
 		agentWith(written, nil)
@@ -99,7 +99,7 @@ var _ = Describe("Token store", func() {
 	})
 
 	It("lists an agent whose epoch does not parse beside the others, so the others are still refreshed", func() {
-		malformed, sound := "grn:acme:default:agent:malformed", "grn:acme:default:agent:sound"
+		malformed, sound := "grn:acme/iam/agent/malformed", "grn:acme/iam/agent/sound"
 		agentWith(malformed, &agentv1alpha1.AgentIdentity{GRN: malformed, AssignmentEpoch: "x"})
 		agentWith(sound, &agentv1alpha1.AgentIdentity{GRN: sound, AssignmentEpoch: "7"})
 
@@ -120,7 +120,7 @@ var _ = Describe("Token store", func() {
 	})
 
 	It("creates the credential owned by the agent's Agent, then replaces its tokens and refresh time in one write", func() {
-		grn := "grn:acme:default:agent:stored"
+		grn := "grn:acme/iam/agent/stored"
 		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7"})
 		store := constructor.NewTokens(k8sClient, scheme.Scheme, tokensNamespace)
 		due := time.Date(2026, 10, 14, 15, 40, 0, 0, time.UTC)
@@ -149,7 +149,7 @@ var _ = Describe("Token store", func() {
 	})
 
 	It("refuses to write over a credential a recovery changed since it was read", func() {
-		grn := "grn:acme:default:agent:recovered"
+		grn := "grn:acme/iam/agent/recovered"
 		agentWith(grn, &agentv1alpha1.AgentIdentity{GRN: grn, AssignmentEpoch: "7"})
 		store := constructor.NewTokens(k8sClient, scheme.Scheme, tokensNamespace)
 		due := time.Date(2026, 10, 14, 15, 40, 0, 0, time.UTC)

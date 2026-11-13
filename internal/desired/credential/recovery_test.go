@@ -82,7 +82,7 @@ func newStore() *credential.Secrets {
 
 var _ = Describe("Managed credential recovery store", func() {
 	It("keeps the request it persisted, and records the new lineage so the tokens are minted again before it removes it", func() {
-		grn := "grn:acme:default:agent:9999999999999999"
+		grn := "grn:acme/iam/agent/9999999999999999"
 		managedAgent(grn)
 		placeTokens(grn)
 		store := newStore()
@@ -113,7 +113,7 @@ var _ = Describe("Managed credential recovery store", func() {
 	})
 
 	It("records nothing on an agent with no credential placed, and removes its request", func() {
-		grn := "grn:acme:default:agent:6666666666666666"
+		grn := "grn:acme/iam/agent/6666666666666666"
 		managedAgent(grn)
 		store := newStore()
 		Expect(store.SaveRecovery(ctx, grn, desired.RecoveryRequest{Epoch: "7", ID: "rec-1"})).To(Succeed())

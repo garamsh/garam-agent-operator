@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,8 +19,9 @@ import (
 func configureKind(t *testing.T, g garam, in configureRequest) (int, string) {
 	t.Helper()
 	body := in.body()
-	url := fmt.Sprintf("%s/v1/orgs/%s/agents/%s/revisions", attachedURL, g.org(), g.agent())
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	target := fmt.Sprintf("%s/v1/orgs/%s/agents/%s/revisions", attachedURL, g.org(),
+		url.PathEscape(g.agent()))
+	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Garam-Operation "+g.mint(t, in.RequestID, body))
 	resp, err := apiClient.Do(req)

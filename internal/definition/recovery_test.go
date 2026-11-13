@@ -10,10 +10,10 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/definition"
 )
 
-// recoverBinding is what an agent:recover authority for a console request to firstAgent binds.
+// recoverBinding is what an iam:agent.recover authority for a console request to firstAgent binds.
 func recoverBinding(digest string) definition.Binding {
 	b := binding(digest)
-	b.Operation = "agent:recover"
+	b.Operation = "iam:agent.recover"
 	return b
 }
 

@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -24,14 +25,14 @@ import (
 )
 
 const (
-	controller = "grn:root:default:operator:k8s"
-	elsewhere  = "grn:root:default:operator:other"
-	org        = "grn:root:default:org:acme"
+	controller = "grn:root/iam/operator/k8s"
+	elsewhere  = "grn:root/iam/operator/other"
+	org        = "grn:root/iam/org/acme"
 	// orgID is org's identifier, the organization every test's definitions belong to.
 	orgID  = "acme"
-	agentA = "grn:acme:default:agent:a"
-	agentB = "grn:acme:default:agent:b"
-	agentC = "grn:acme:default:agent:c"
+	agentA = "grn:acme/iam/agent/a"
+	agentB = "grn:acme/iam/agent/b"
+	agentC = "grn:acme/iam/agent/c"
 	epoch  = "7"
 )
 
@@ -100,7 +101,7 @@ func (registrar) Register(_ context.Context, r definition.Registration) (definit
 
 // creator is the controller the fixture's agents are created on, so revision 1 is no controller's
 // under test and each test's revisions come from configure.
-const creator = "grn:root:default:operator:creator"
+const creator = "grn:root/iam/operator/creator"
 
 // env is the controller routes over an in-memory store holding agentA and agentB recorded for
 // controller under epoch, and agentC recorded for another controller.
@@ -150,7 +151,7 @@ func newEnvCarrying(t *testing.T, maxAgents int) *env {
 	for _, a := range []string{agentA, agentB, agentC} {
 		_, _, err := definitions.CreateAgent(ctx, definition.CreateInput{
 			Request:    definition.RequestKey{Organization: orgID, RequestID: a},
-			Binding:    definition.Binding{Actor: "actor", Operation: "agent:create", Target: creator, OperationRef: "create-ref-" + a},
+			Binding:    definition.Binding{Actor: "actor", Operation: "iam:agent.create", Target: creator, OperationRef: "create-ref-" + a},
 			Controller: creator,
 			Template:   definition.TemplateRef{Name: tmpl.Name, Version: tmpl.Version},
 			Profile:    profile,
@@ -183,7 +184,7 @@ func (e *env) configure(t *testing.T, agent, operator string, expected definitio
 	_, err := e.definitions.Configure(context.Background(), definition.ConfigureInput{
 		Request: definition.RequestKey{Organization: orgID, RequestID: fmt.Sprintf("configure-%d", e.configures)},
 		Binding: definition.Binding{
-			Actor: "actor", Operation: "agent:configure", Target: agent,
+			Actor: "actor", Operation: "iam:agent.configure", Target: agent,
 			Assignment: definition.Assignment{Operator: operator, Epoch: epoch},
 		},
 		Agent:            definition.GRN(agent),
@@ -254,7 +255,7 @@ func (e *env) desired(t *testing.T, client *http.Client, query string) feed {
 // report sends a status report for agent and returns the status and the answer's raw fields.
 func (e *env) report(t *testing.T, client *http.Client, agent, body string) (int, map[string]any) {
 	t.Helper()
-	resp, err := client.Post(e.server.URL+"/v1/operators/self/agents/"+agent+"/status", "application/json",
+	resp, err := client.Post(e.server.URL+"/v1/operators/self/agents/"+url.PathEscape(agent)+"/status", "application/json",
 		strings.NewReader(body))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()

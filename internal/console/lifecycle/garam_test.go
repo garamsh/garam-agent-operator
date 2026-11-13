@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
-const agent = "grn:acme:default:agent:1e9ac1"
+const agent = "grn:acme/iam/agent/1e9ac1"
 
 // seen is what the stand-in garam last received.
 type seen struct {
@@ -52,7 +53,7 @@ func TestGaram_RecoverSendsTheBodyExactlyUnderTheHandoff(t *testing.T) {
 	recovered, err := g.Recover(context.Background(), agent, "recover-handoff", body)
 	require.NoError(t, err)
 	assert.Equal(t, definition.RecoveredCredential{Lineage: "lineage-2"}, recovered)
-	assert.Equal(t, seen{http.MethodPost, "/agents/" + agent + "/credential-recovery", garammachine.ExecutionFence,
+	assert.Equal(t, seen{http.MethodPost, "/agents/" + url.PathEscape(agent) + "/credential-recovery", garammachine.ExecutionFence,
 		"recover-handoff", string(body)}, *got)
 }
 
@@ -72,7 +73,7 @@ func TestGaram_RecoverAnswersGaramsRefusalUndecidedAndForeignContract(t *testing
 	_, err = g.Recover(context.Background(), agent, "ref", []byte(`{}`))
 	require.ErrorIs(t, err, console.ErrGaramContractUnsupported)
 
-	g, _, _ = stand(t, garammachine.ExecutionFence, http.StatusCreated, `{"grn":"grn:acme:default:agent:other","lineage":"l"}`)
+	g, _, _ = stand(t, garammachine.ExecutionFence, http.StatusCreated, `{"grn":"grn:acme/iam/agent/other","lineage":"l"}`)
 	_, err = g.Recover(context.Background(), agent, "ref", []byte(`{}`))
 	require.Error(t, err, "a recovery of another agent was taken")
 	assert.False(t, errors.As(err, &refused))
@@ -81,7 +82,7 @@ func TestGaram_RecoverAnswersGaramsRefusalUndecidedAndForeignContract(t *testing
 func TestGaram_DeactivateEndsTheActivation(t *testing.T) {
 	g, got, _ := stand(t, garammachine.ExecutionFence, http.StatusOK, `{}`)
 	require.NoError(t, g.Deactivate(context.Background(), agent, "activation-1"))
-	assert.Equal(t, seen{http.MethodPost, "/agents/" + agent + "/activations/activation-1/deactivation",
+	assert.Equal(t, seen{http.MethodPost, "/agents/" + url.PathEscape(agent) + "/activations/activation-1/deactivation",
 		garammachine.ExecutionFence, "", ""}, *got)
 
 	g, _, _ = stand(t, garammachine.ExecutionFence, http.StatusForbidden, `{"kind":"permission_denied","message":"no"}`)

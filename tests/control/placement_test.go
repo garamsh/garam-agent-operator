@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -45,7 +46,7 @@ func registerPlacement(agent, body string) (int, []byte, error) {
 
 // registerPlacementAt is registerPlacement on the binary whose routes are at base.
 func registerPlacementAt(base, agent, body string) (int, []byte, error) {
-	resp, err := real.feedClient().Post(base+"/v1/operators/self/agents/"+agent+"/placements",
+	resp, err := real.feedClient().Post(base+"/v1/operators/self/agents/"+url.PathEscape(agent)+"/placements",
 		"application/json", strings.NewReader(body))
 	if err != nil {
 		return 0, nil, err

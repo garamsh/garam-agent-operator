@@ -17,7 +17,7 @@ import (
 
 // TestOperators_TheManagersReportIsReadThroughGaram reports the controller's images through the
 // manager's own client, proved by garam, and reads them back with the controller's last contact
-// under a real operator:read authority. Another organization's operator in the same store is not
+// under a real iam:operator.read authority. Another organization's operator in the same store is not
 // listed.
 func TestOperators_TheManagersReportIsReadThroughGaram(t *testing.T) {
 	before := time.Now().Add(-time.Second)
@@ -28,12 +28,13 @@ func TestOperators_TheManagersReportIsReadThroughGaram(t *testing.T) {
 
 	foreign := name(t, "foreign-operator")
 	_, err := pool.Exec(context.Background(),
-		`INSERT INTO operators (grn, org_grn, last_contact_at) VALUES ($1, 'grn:root:default:org:elsewhere', now())`,
+		`INSERT INTO operators (grn, org_grn, last_contact_at) VALUES ($1, 'grn:root/iam/org/elsewhere', now())`,
 		foreign)
 	require.NoError(t, err)
 
 	path := "/v1/orgs/" + real.orgID + "/operators"
-	status, answer := sendTargeted(t, http.MethodGet, path, "operator:read", real.orgGRN, name(t, "operators"), nil, path)
+	status, answer := sendTargeted(t, http.MethodGet, path, "iam:operator.read", real.orgGRN,
+		name(t, "operators"), nil, path)
 	require.Equal(t, http.StatusOK, status, answer)
 
 	operators, ok := answer["operators"].([]any)

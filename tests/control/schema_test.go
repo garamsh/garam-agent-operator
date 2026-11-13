@@ -69,11 +69,11 @@ func TestSchema_SecondCreationUnderOneKeyRefused(t *testing.T) {
 	}
 
 	// Control: a first creation under a key, and one under another key, are accepted.
-	require.NoError(t, insert("r1", "grn:acme:default:user:7c1d"))
-	require.NoError(t, insert("r2", "grn:acme:default:user:7c1d"))
+	require.NoError(t, insert("r1", "grn:acme/iam/user/7c1d"))
+	require.NoError(t, insert("r2", "grn:acme/iam/user/7c1d"))
 
 	// The key is the organization and request id alone: another actor does not make another key.
-	assertUniqueViolation(t, insert("r1", "grn:acme:default:user:other"))
+	assertUniqueViolation(t, insert("r1", "grn:acme/iam/user/other"))
 }
 
 func TestSchema_SecondConfigureRequestUnderOneKeyRefused(t *testing.T) {
@@ -81,15 +81,15 @@ func TestSchema_SecondConfigureRequestUnderOneKeyRefused(t *testing.T) {
 	insert := func(requestID, actor string) error {
 		return execute(t, `INSERT INTO requests (organization, request_id, actor, operation, target, body_sha256,
     operation_ref, assignment_operator, assignment_epoch, agent, outcome)
-VALUES ($1, $2, $3, 'agent:configure', 'agent', 'digest', 'ref', 'operator', '7', 'agent', 'stale')`,
+VALUES ($1, $2, $3, 'iam:agent.configure', 'agent', 'digest', 'ref', 'operator', '7', 'agent', 'stale')`,
 			organization, requestID, actor)
 	}
 
 	// Control: a first request under a key, and one under another key, are accepted.
-	require.NoError(t, insert("r1", "grn:acme:default:user:7c1d"))
-	require.NoError(t, insert("r2", "grn:acme:default:user:7c1d"))
+	require.NoError(t, insert("r1", "grn:acme/iam/user/7c1d"))
+	require.NoError(t, insert("r2", "grn:acme/iam/user/7c1d"))
 
-	assertUniqueViolation(t, insert("r1", "grn:acme:default:user:other"))
+	assertUniqueViolation(t, insert("r1", "grn:acme/iam/user/other"))
 }
 
 func TestSchema_TwoOrganizationsHoldOneNameAndVersion(t *testing.T) {
@@ -176,14 +176,14 @@ func insertCreation(t *testing.T, organization, requestID, actor, template, prof
 	t.Helper()
 	return execute(t, `INSERT INTO creations (actor, organization, request_id, operation, target, body_sha256,
     operation_ref, controller, template_name, template_version, profile_name, profile_version, state)
-VALUES ($1, $2, $3, 'agent:create', 'k8s', 'digest', 'ref', 'k8s', $4, 1, $5, 1, 'pending')`,
+VALUES ($1, $2, $3, 'iam:agent.create', 'k8s', 'digest', 'ref', 'k8s', $4, 1, $5, 1, 'pending')`,
 		actor, organization, requestID, template, profile)
 }
 
 // insertCreationNaming stores a creation of organization naming version 1 of profile and of template.
 func insertCreationNaming(t *testing.T, organization, profile, template string) error {
 	t.Helper()
-	return insertCreation(t, organization, name(t, "request"), "grn:acme:default:user:7c1d", template, profile)
+	return insertCreation(t, organization, name(t, "request"), "grn:acme/iam/user/7c1d", template, profile)
 }
 
 func name(t *testing.T, kind string) string {

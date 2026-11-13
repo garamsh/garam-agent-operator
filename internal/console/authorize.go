@@ -12,7 +12,7 @@ import (
 const authorizationScheme = "Garam-Operation "
 
 // orgGRNPrefix is the prefix of an organization's GRN, whose last segment the route names.
-const orgGRNPrefix = "grn:root:default:org:"
+const orgGRNPrefix = "grn:root/iam/org/"
 
 // target is what a request is: the operation it performs on which target, in which organization.
 type target struct {

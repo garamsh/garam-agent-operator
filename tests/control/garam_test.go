@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,11 +34,11 @@ type garam struct {
 func (g garam) org() string   { return g.stack.orgID }
 func (g garam) agent() string { return g.agentGRN }
 
-// mint has garam mint an agent:configure authority for requestID and the exact body.
+// mint has garam mint an iam:agent.configure authority for requestID and the exact body.
 func (g garam) mint(t *testing.T, requestID string, body []byte) string {
 	t.Helper()
 	digest := sha256.Sum256(body)
-	authority, _, err := g.stack.mintAuthority("agent:configure", g.agentGRN, requestID, hex.EncodeToString(digest[:]))
+	authority, _, err := g.stack.mintAuthority("iam:agent.configure", g.agentGRN, requestID, hex.EncodeToString(digest[:]))
 	require.NoError(t, err)
 	return authority
 }
@@ -146,8 +147,9 @@ func (in configureRequest) body() []byte {
 
 // sendConfigure posts body under authority to the binary's configure route for g's agent.
 func sendConfigure(g garam, authority string, body []byte) (int, error) {
-	url := fmt.Sprintf("%s/v1/orgs/%s/agents/%s/revisions", attachedURL, g.org(), g.agent())
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	target := fmt.Sprintf("%s/v1/orgs/%s/agents/%s/revisions", attachedURL, g.org(),
+		url.PathEscape(g.agent()))
+	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
 	}
@@ -247,8 +249,9 @@ func TestConfigure_RefusesAMalformedKeyReferenceThroughGaram(t *testing.T) {
 	body := configureBodyWithKey(requestID, profile, "malformed", 1, "model-api-key")
 
 	// garam authorizes the request; the binary refuses its configuration before storing it.
-	url := fmt.Sprintf("%s/v1/orgs/%s/agents/%s/revisions", attachedURL, g.org(), g.agent())
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	target := fmt.Sprintf("%s/v1/orgs/%s/agents/%s/revisions", attachedURL, g.org(),
+		url.PathEscape(g.agent()))
+	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Garam-Operation "+g.mint(t, requestID, body))
 	resp, err := apiClient.Do(req)
@@ -434,10 +437,11 @@ func managedAgent(t *testing.T) (agent, epoch string) {
 	return created["agent"], created["epoch"]
 }
 
-// mintCreate has garam mint an agent:create authority on the controller for the exact body.
+// mintCreate has garam mint an iam:agent.create authority on the controller for the exact body.
 func mintCreate(requestID string, body []byte) (string, error) {
 	digest := sha256.Sum256(body)
-	authority, _, err := real.mintAuthority("agent:create", real.controllerGRN, requestID, hex.EncodeToString(digest[:]))
+	authority, _, err := real.mintAuthority("iam:agent.create", real.controllerGRN, requestID,
+		hex.EncodeToString(digest[:]))
 	return authority, err
 }
 
@@ -452,6 +456,10 @@ func TestCreate_ThroughTheConsoleRouteAgainstGaram(t *testing.T) {
 	status, first := createThroughConsole(t, authority, body)
 	require.Equal(t, http.StatusCreated, status, first)
 	require.NotEmpty(t, first["agent"])
+	// garam's GRN grammar (ADR 0080): the organization is grn:root/iam/org/<id>, the agent
+	// grn:<id>/iam/agent/<id>.
+	assert.Equal(t, "grn:root/iam/org/"+real.orgID, real.orgGRN)
+	assert.True(t, strings.HasPrefix(first["agent"], "grn:"+real.orgID+"/iam/agent/"), first["agent"])
 	assert.Equal(t, "1", first["revision"])
 	assert.NotEmpty(t, first["epoch"])
 

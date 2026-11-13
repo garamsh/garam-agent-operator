@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -15,15 +16,15 @@ import (
 )
 
 // stopOperation is the operation a console stop is bound to.
-const stopOperation = "agent:configure"
+const stopOperation = "iam:agent.configure"
 
-// openRecovery opens recovery rec-1 of agent from the console, as an agent:recover authority binds it.
+// openRecovery opens recovery rec-1 of agent from the console, as an iam:agent.recover authority binds it.
 func (e *env) openRecovery(t *testing.T, agent string) {
 	t.Helper()
 	_, _, err := e.definitions.OpenRecovery(context.Background(), definition.OpenRecoveryInput{
 		Key: definition.RequestKey{Organization: orgID, RequestID: "open-" + agent},
 		Binding: definition.Binding{
-			Actor: "admin", Operation: "agent:recover", Target: agent,
+			Actor: "admin", Operation: "iam:agent.recover", Target: agent,
 			Assignment: definition.Assignment{Operator: controller, Epoch: epoch},
 		},
 		Agent: definition.GRN(agent), RequestID: "rec-1",
@@ -39,7 +40,7 @@ func recoveryBody(recoveryID, epoch string) string {
 // prepareRecovery posts body for agent's recovery with client, and returns the status and the answer.
 func (e *env) prepareRecovery(t *testing.T, agent, body string) (int, map[string]any) {
 	t.Helper()
-	resp, err := e.withToken.Post(e.server.URL+"/v1/operators/self/agents/"+agent+"/recovery-requests",
+	resp, err := e.withToken.Post(e.server.URL+"/v1/operators/self/agents/"+url.PathEscape(agent)+"/recovery-requests",
 		"application/json", strings.NewReader(body))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()

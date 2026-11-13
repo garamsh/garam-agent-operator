@@ -14,11 +14,11 @@ import (
 func binding(digest string) definition.Binding {
 	return definition.Binding{
 		Actor:        actor,
-		Operation:    "agent:configure",
+		Operation:    "iam:agent.configure",
 		Target:       string(firstAgent),
 		BodySHA256:   digest,
 		OperationRef: "ref-" + digest,
-		Assignment:   definition.Assignment{Operator: "grn:acme:default:operator:k8s", Epoch: "7"},
+		Assignment:   definition.Assignment{Operator: "grn:acme/iam/operator/k8s", Epoch: "7"},
 	}
 }
 
@@ -91,8 +91,8 @@ func TestConfigure_RequestIDReusedForAnotherBindingRefused(t *testing.T) {
 		name   string
 		change func(*definition.ConfigureInput)
 	}{
-		{"another actor", func(in *definition.ConfigureInput) { in.Binding.Actor = "grn:acme:default:user:other" }},
-		{"another operation", func(in *definition.ConfigureInput) { in.Binding.Operation = "agent:create" }},
+		{"another actor", func(in *definition.ConfigureInput) { in.Binding.Actor = "grn:acme/iam/user/other" }},
+		{"another operation", func(in *definition.ConfigureInput) { in.Binding.Operation = "iam:agent.create" }},
 		{"another target", func(in *definition.ConfigureInput) { in.Binding.Target = string(secondAgent) }},
 		{"another body", func(in *definition.ConfigureInput) { in.Binding.BodySHA256 = other }},
 		{"another operation reference", func(in *definition.ConfigureInput) { in.Binding.OperationRef = other }},

@@ -62,14 +62,14 @@ type fixture struct {
 }
 
 // k8s is the controller every test's agents are created on, and the one binding() records.
-const k8s = "grn:acme:default:operator:k8s"
+const k8s = "grn:acme/iam/operator/k8s"
 
 // create is a request to create an agent on k8s from template under the fixture's profile.
 func (f fixture) create(requestID string, template definition.TemplateRef) definition.CreateInput {
 	return definition.CreateInput{
 		Request: key(requestID),
 		Binding: definition.Binding{
-			Actor: actor, Operation: "agent:create", Target: k8s,
+			Actor: actor, Operation: "iam:agent.create", Target: k8s,
 			BodySHA256: "digest-" + requestID, OperationRef: "ref-" + requestID,
 		},
 		Controller: k8s,
@@ -140,7 +140,7 @@ const (
 	modelKeyRef = "model-api-key/api-key"
 
 	// actor is the user every test's requests are made for.
-	actor = "grn:acme:default:user:7c1d"
+	actor = "grn:acme/iam/user/7c1d"
 	// org is the organization every test's requests are made in, unless the test names another.
 	org = "acme"
 )
