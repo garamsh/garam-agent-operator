@@ -44,18 +44,18 @@ type server struct {
 //
 //	POST /v1/orgs/{org}/agents                    create an agent on a controller
 //	POST /v1/orgs/{org}/agents/{agent}/revisions  configure an agent's definition
-//	GET  /v1/orgs/{org}/templates                     agent-template:read     the latest version of each template
-//	GET  /v1/orgs/{org}/templates/{name}/versions/{v} agent-template:read     one template version
-//	POST /v1/orgs/{org}/templates/{name}/versions     agent-template:publish  publish a template's next version
-//	GET  /v1/orgs/{org}/profiles                      execution-profile:read  every published profile version
-//	GET  /v1/orgs/{org}/profiles/{name}/versions/{v}  execution-profile:read  one profile version
-//	GET  /v1/orgs/{org}/agents/{agent}/execution      agent:execution-read    an agent's execution
-//	GET  /v1/orgs/{org}/operators                     operator:read           the images and last contact of each controller
-//	POST /v1/orgs/{org}/agents/{agent}/recovery          agent:recover         open a credential recovery
-//	GET  /v1/orgs/{org}/agents/{agent}/recovery          agent:execution-read  the recovery and its prepared request
-//	POST /v1/orgs/{org}/agents/{agent}/recovery/finalize agent:recover         send garam the prepared request
-//	POST /v1/orgs/{org}/agents/{agent}/stop              agent:configure       stop the agent without a replacement
-//	POST /v1/orgs/{org}/agents/{agent}/start             agent:configure       end the agent's stop
+//	GET  /v1/orgs/{org}/templates                     iam:agent-template.read     the latest version of each template
+//	GET  /v1/orgs/{org}/templates/{name}/versions/{v} iam:agent-template.read     one template version
+//	POST /v1/orgs/{org}/templates/{name}/versions     iam:agent-template.publish  publish a template's next version
+//	GET  /v1/orgs/{org}/profiles                      iam:execution-profile.read  every published profile version
+//	GET  /v1/orgs/{org}/profiles/{name}/versions/{v}  iam:execution-profile.read  one profile version
+//	GET  /v1/orgs/{org}/agents/{agent}/execution      iam:agent.execution-read    an agent's execution
+//	GET  /v1/orgs/{org}/operators                     iam:operator.read           the images and last contact of each controller
+//	POST /v1/orgs/{org}/agents/{agent}/recovery          iam:agent.recover         open a credential recovery
+//	GET  /v1/orgs/{org}/agents/{agent}/recovery          iam:agent.execution-read  the recovery and its prepared request
+//	POST /v1/orgs/{org}/agents/{agent}/recovery/finalize iam:agent.recover         send garam the prepared request
+//	POST /v1/orgs/{org}/agents/{agent}/stop              iam:agent.configure       stop the agent without a replacement
+//	POST /v1/orgs/{org}/agents/{agent}/start             iam:agent.configure       end the agent's stop
 func NewHandler(c Config) http.Handler {
 	s := &server{
 		definitions:  c.Definitions,

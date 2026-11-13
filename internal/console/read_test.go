@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -28,12 +29,12 @@ const otherOrg = "globex"
 const (
 	templateName    = "web"
 	keyRef          = "model-keys/web"
-	operationCreate = "agent:create"
+	operationCreate = "iam:agent.create"
 	originHeader    = "Origin"
 )
 
 // orgTarget is the GRN the organization's reads and publication target.
-const orgTarget = "grn:root:default:org:" + org
+const orgTarget = "grn:root/iam/org/" + org
 
 // request is one request to the console: its method, its exact request target, and its body.
 type request struct {
@@ -70,7 +71,7 @@ func (e *env) bound(c request, operation, target string, change func(*console.Bi
 		ExpiresAt:     now.Add(5 * time.Minute),
 	}
 	if operation == console.OperationExecutionRead || operation == console.OperationConfigure {
-		b.Assignment = &console.Assignment{Operator: "grn:acme:default:operator:k8s", Epoch: "7"}
+		b.Assignment = &console.Assignment{Operator: "grn:acme/iam/operator/k8s", Epoch: "7"}
 	}
 	if change != nil {
 		change(&b)
@@ -150,7 +151,7 @@ func (e *env) reads() []struct {
 		{"profiles", request{http.MethodGet, "/v1/orgs/" + org + "/profiles", nil}, console.OperationProfileRead, orgTarget},
 		{"profile version", request{http.MethodGet, "/v1/orgs/" + org + "/profiles/small/versions/1", nil},
 			console.OperationProfileRead, orgTarget},
-		{"execution", request{http.MethodGet, "/v1/orgs/" + org + "/agents/" + agent + "/execution", nil},
+		{"execution", request{http.MethodGet, "/v1/orgs/" + org + "/agents/" + url.PathEscape(agent) + "/execution", nil},
 			console.OperationExecutionRead, agent},
 		{"operators", request{http.MethodGet, "/v1/orgs/" + org + "/operators", nil}, console.OperationOperatorRead, orgTarget},
 	}
@@ -257,8 +258,8 @@ func TestReads_ResolveOnlyInTheRequestsOrganization(t *testing.T) {
 	assert.Equal(t, []any{answered(e.profile.Name, 1)}, profiles.body["profiles"])
 
 	// An agent another organization's creation made is not found either.
-	c := request{http.MethodGet, "/v1/orgs/" + otherOrg + "/agents/" + agent + "/execution", nil}
-	a := e.bound(c, console.OperationExecutionRead, agent, func(b *console.Binding) { b.Org = "grn:root:default:org:" + otherOrg })
+	c := request{http.MethodGet, "/v1/orgs/" + otherOrg + "/agents/" + url.PathEscape(agent) + "/execution", nil}
+	a := e.bound(c, console.OperationExecutionRead, agent, func(b *console.Binding) { b.Org = "grn:root/iam/org/" + otherOrg })
 	assert.Equal(t, http.StatusNotFound, e.send(t, c, a, nil).status)
 }
 
@@ -395,7 +396,7 @@ func TestProfiles_ListEveryPublishedVersion(t *testing.T) {
 
 func TestExecution_ShowsNoEffectiveExecutionUntilARuntimeReportIsAccepted(t *testing.T) {
 	e := newEnv(t)
-	c := request{http.MethodGet, "/v1/orgs/" + org + "/agents/" + agent + "/execution", nil}
+	c := request{http.MethodGet, "/v1/orgs/" + org + "/agents/" + url.PathEscape(agent) + "/execution", nil}
 	read := func() map[string]any {
 		got := e.send(t, c, e.bound(c, console.OperationExecutionRead, agent, nil), nil)
 		require.Equal(t, http.StatusOK, got.status, got.message)
@@ -444,7 +445,7 @@ func TestCORS_AnswersOnlyARegisteredOrigin(t *testing.T) {
 	assert.Equal(t, "Authorization, Content-Type, Garam-Contract-Version", allowed.header.Get("Access-Control-Allow-Headers"))
 	assert.Equal(t, "600", allowed.header.Get("Access-Control-Max-Age"))
 	assert.Empty(t, allowed.header.Values("Access-Control-Allow-Credentials"))
-	read := e.send(t, c, e.bound(c, "agent-template:read", orgTarget, nil), map[string]string{originHeader: registered})
+	read := e.send(t, c, e.bound(c, "iam:agent-template.read", orgTarget, nil), map[string]string{originHeader: registered})
 	assert.Equal(t, http.StatusOK, read.status)
 	assert.Equal(t, registered, read.header.Get("Access-Control-Allow-Origin"))
 
@@ -454,7 +455,7 @@ func TestCORS_AnswersOnlyARegisteredOrigin(t *testing.T) {
 		refused := e.send(t, preflight, "", asks)
 		assert.Equal(t, http.StatusForbidden, refused.status, other)
 		assert.Empty(t, corsHeaders(refused.header), other)
-		served := e.send(t, c, e.bound(c, "agent-template:read", orgTarget, nil), map[string]string{originHeader: other})
+		served := e.send(t, c, e.bound(c, "iam:agent-template.read", orgTarget, nil), map[string]string{originHeader: other})
 		assert.Empty(t, corsHeaders(served.header), other)
 	}
 }

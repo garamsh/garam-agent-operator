@@ -17,10 +17,10 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
-const bindingAnswer = `{"operationRef":"ref-1","grantId":"grant-1","orgGrn":"grn:root:default:org:acme",
-"actorGrn":"grn:acme:default:user:7c1d","audienceGrn":"grn:root:default:operator:control",
-"operation":"agent:configure","targetGrn":"grn:acme:default:agent:0a1b",
-"assignment":{"operatorGrn":"grn:acme:default:operator:k8s","epoch":"7"},
+const bindingAnswer = `{"operationRef":"ref-1","grantId":"grant-1","orgGrn":"grn:root/iam/org/acme",
+"actorGrn":"grn:acme/iam/user/7c1d","audienceGrn":"grn:root/iam/operator/control",
+"operation":"iam:agent.configure","targetGrn":"grn:acme/iam/agent/0a1b",
+"assignment":{"operatorGrn":"grn:acme/iam/operator/k8s","epoch":"7"},
 "requestId":"c1","bodySha256":"ab","expiresAt":"2026-10-05T12:05:00Z"}`
 
 // garam is a stand-in machine listener answering each introspection with the next status.
@@ -64,10 +64,10 @@ func TestGaram_ReadsTheBinding(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "operation-authority.v2", g.contract)
 	assert.Equal(t, console.Binding{
-		OperationRef: "ref-1", GrantID: "grant-1", Org: "grn:root:default:org:acme",
-		Actor: "grn:acme:default:user:7c1d", Audience: "grn:root:default:operator:control",
-		Operation: "agent:configure", Target: "grn:acme:default:agent:0a1b",
-		Assignment: &console.Assignment{Operator: "grn:acme:default:operator:k8s", Epoch: "7"},
+		OperationRef: "ref-1", GrantID: "grant-1", Org: "grn:root/iam/org/acme",
+		Actor: "grn:acme/iam/user/7c1d", Audience: "grn:root/iam/operator/control",
+		Operation: "iam:agent.configure", Target: "grn:acme/iam/agent/0a1b",
+		Assignment: &console.Assignment{Operator: "grn:acme/iam/operator/k8s", Epoch: "7"},
 		RequestID:  "c1", BodySHA256: "ab", ExpiresAt: time.Date(2026, 10, 5, 12, 5, 0, 0, time.UTC),
 	}, b)
 }
@@ -122,13 +122,13 @@ func TestIntrospect_ReadsTheBoundRequestTarget(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, configure.RequestTarget)
 
-	read := `{"operationRef":"ref-2","grantId":"grant-1","orgGrn":"grn:root:default:org:acme",
-"actorGrn":"grn:acme:default:user:7c1d","audienceGrn":"grn:root:default:operator:control",
-"operation":"agent-template:read","targetGrn":"grn:root:default:org:acme",
+	read := `{"operationRef":"ref-2","grantId":"grant-1","orgGrn":"grn:root/iam/org/acme",
+"actorGrn":"grn:acme/iam/user/7c1d","audienceGrn":"grn:root/iam/operator/control",
+"operation":"iam:agent-template.read","targetGrn":"grn:root/iam/org/acme",
 "requestId":"r1","bodySha256":"e3","requestTarget":"/garam/v1/orgs/acme/templates/web%20agent/versions/1",
 "expiresAt":"2026-10-05T12:05:00Z"}`
 	b, err := introspect(t, answerWith(read))
 	require.NoError(t, err)
 	assert.Equal(t, "/garam/v1/orgs/acme/templates/web%20agent/versions/1", b.RequestTarget)
-	assert.Equal(t, "agent-template:read", b.Operation)
+	assert.Equal(t, "iam:agent-template.read", b.Operation)
 }

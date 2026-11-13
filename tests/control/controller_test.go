@@ -24,7 +24,7 @@ func controllerRequest(t *testing.T, client *http.Client, method, path, body str
 func TestBinary_ControllerRoutesRequireAToken(t *testing.T) {
 	routes := []struct{ method, path, body string }{
 		{http.MethodGet, "/v1/operators/self/desired", ""},
-		{http.MethodPost, "/v1/operators/self/agents/grn:acme:default:agent:a/status",
+		{http.MethodPost, "/v1/operators/self/agents/grn:acme%2Fiam%2Fagent%2Fa/status",
 			`{"observedRevision":"1","renderedRevision":"1"}`},
 	}
 	for _, route := range routes {

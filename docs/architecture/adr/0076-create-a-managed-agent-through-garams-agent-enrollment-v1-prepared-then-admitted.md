@@ -1,6 +1,6 @@
 # ADR 0076: Create a managed agent through garam's agent-enrollment.v1, prepared then admitted
 
-> Status: accepted
+> Status: accepted; its operation names superseded by ADR-0080
 > Date: 2026-10-19
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

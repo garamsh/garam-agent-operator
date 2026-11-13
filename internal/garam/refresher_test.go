@@ -23,7 +23,7 @@ var mintedAt = time.Date(2026, 10, 14, 15, 0, 0, 0, time.UTC)
 const (
 	// controlGRN is the control service's operator, which every agent's
 	// control token is minted for.
-	controlGRN = "grn:acme:default:operator:control"
+	controlGRN = "grn:acme/iam/operator/control"
 
 	// controlToken is the token the stub mints for the control service.
 	controlToken = "garam_at_fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
@@ -264,7 +264,7 @@ func TestRefresherReportsAMintRefusedForAStaleEpochAndDoesNotRetryItAsARefresh(t
 			g := NewWithT(t)
 			clock := mintedAt
 			stub := newMintStub(t, clock)
-			other := garam.GRN("grn:acme:default:agent:other")
+			other := garam.GRN("grn:acme/iam/agent/other")
 			store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{
 				{Agent: sampleAgent, Epoch: 4}, {Agent: other, Epoch: 4},
 			}}
@@ -370,7 +370,7 @@ func TestRefresherRefreshesEveryOtherAgentPastOneItCannotRead(t *testing.T) {
 	g := NewWithT(t)
 	clock := mintedAt
 	stub := newMintStub(t, clock)
-	unreadable := garam.GRN("grn:acme:default:agent:unreadable")
+	unreadable := garam.GRN("grn:acme/iam/agent/unreadable")
 	store := &memoryTokens{stored: map[garam.GRN]storedTokens{}, holders: []garam.TokenHolder{
 		{Agent: unreadable, Err: fmt.Errorf("read the epoch of %s: %w", unreadable, garam.ErrEpochUnreadable)},
 		{Agent: sampleAgent, Epoch: 4},

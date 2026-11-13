@@ -37,7 +37,7 @@ func credentialsSecretName(agent string) string {
 }
 
 // testGRN is the GRN garam minted for an agent this operator constructed.
-const testGRN = "grn:acme:default:agent:9f2ac1b40d8e7a35"
+const testGRN = "grn:acme/iam/agent/9f2ac1b40d8e7a35"
 
 // modelKeySecretName is the Secret the model of a baseline Agent of that name
 // takes its key from.
@@ -373,7 +373,7 @@ var _ = Describe("Agent", func() {
 
 		By("changing the GRN")
 		changed := readAgent(agent.Name)
-		changed.Spec.Identity.GRN = "grn:acme:default:agent:0a1b2c3d4e5f6071"
+		changed.Spec.Identity.GRN = "grn:acme/iam/agent/0a1b2c3d4e5f6071"
 		Expect(k8sClient.Update(ctx, changed)).
 			To(MatchError(ContainSubstring("identity.grn cannot be changed or removed once set")))
 

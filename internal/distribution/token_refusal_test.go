@@ -57,7 +57,7 @@ func managerTransport(t *testing.T, garam, control *httptest.Server) http.RoundT
 		require.NoError(t, os.WriteFile(path, content, 0o600))
 	}
 	source := machinetoken.NewSource(machinetoken.Config{
-		Endpoint: garam.URL + "/oauth/token", Files: files, Audience: "grn:root:default:operator:control",
+		Endpoint: garam.URL + "/oauth/token", Files: files, Audience: "grn:root/iam/operator/control",
 		HTTP: garam.Client(),
 	})
 	return &machinetoken.Transport{Source: source, Base: control.Client().Transport, ClientIDHeader: controllerHeader}

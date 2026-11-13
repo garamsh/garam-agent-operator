@@ -10,18 +10,18 @@ type Authority string
 
 const (
 	// OperationConfigure is the operation an authority binds to change an agent's definition.
-	OperationConfigure = "agent:configure"
+	OperationConfigure = "iam:agent.configure"
 	// OperationCreate is the operation an authority binds to create an agent on a controller.
-	OperationCreate = "agent:create"
+	OperationCreate = "iam:agent.create"
 	// The console's reads and template publication, one route each, each binding the exact
 	// request target it is sent to (garam@33b1c41 api/machine.yaml OperationBinding).
-	OperationTemplateRead    = "agent-template:read"
-	OperationTemplatePublish = "agent-template:publish"
-	OperationProfileRead     = "execution-profile:read"
-	OperationExecutionRead   = "agent:execution-read"
+	OperationTemplateRead    = "iam:agent-template.read"
+	OperationTemplatePublish = "iam:agent-template.publish"
+	OperationProfileRead     = "iam:execution-profile.read"
+	OperationExecutionRead   = "iam:agent.execution-read"
 	// OperationOperatorRead reads what the organization's controllers reported of themselves
 	// (garam@58712f7 api/machine.yaml OperationBinding, ADR 0074).
-	OperationOperatorRead = "operator:read"
+	OperationOperatorRead = "iam:operator.read"
 )
 
 // Binding is what an authority binds, as garam's introspection answers it.

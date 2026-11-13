@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -73,7 +74,8 @@ func postAgent(t *testing.T, a placedAgent, control, route, body string) agentAn
 // in Authorization and, on an activation, the placement token in Garam-Placement, over server TLS.
 func postAgentAt(t *testing.T, base string, a placedAgent, control, route, body string) agentAnswer {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, base+"/v1/agents/"+a.grn+"/"+route, strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, base+"/v1/agents/"+url.PathEscape(a.grn)+"/"+route,
+		strings.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Garam-Contract-Version", executionContract)
 	req.Header.Set("Authorization", "Garam-Token "+control)
@@ -147,7 +149,8 @@ func TestActivation_AgainstGaramsExecutionFence(t *testing.T) {
 	assert.Equal(t, float64(2), retry.body["tokenVersion"])
 
 	// The controller reports what it rendered, so the runtime's report updates a status it did not create.
-	controllerStatus, err := real.feedClient().Post(attachedURL+"/v1/operators/self/agents/"+a.grn+"/status",
+	controllerStatus, err := real.feedClient().Post(
+		attachedURL+"/v1/operators/self/agents/"+url.PathEscape(a.grn)+"/status",
 		"application/json", strings.NewReader(`{"observedRevision":"1","renderedRevision":"1"}`))
 	require.NoError(t, err)
 	_ = controllerStatus.Body.Close()
@@ -179,7 +182,8 @@ func TestActivation_AgainstGaramsExecutionFence(t *testing.T) {
 	assert.Equal(t, "credential_fenced", forwarded.body["kind"])
 
 	// An ended activation: garam ends it, and its replay is refused.
-	require.NoError(t, real.machineCall(real.hostedMachine, "/agents/"+a.grn+"/activations/"+activation+"/deactivation",
+	require.NoError(t, real.machineCall(real.hostedMachine,
+		"/agents/"+url.PathEscape(a.grn)+"/activations/"+activation+"/deactivation",
 		fenceContract, nil, http.StatusOK, nil))
 	ended := postAgent(t, a, refreshed, "activations", body)
 	assert.Equal(t, http.StatusConflict, ended.status, ended.raw)
@@ -199,9 +203,9 @@ func recoverCredential(t *testing.T, a placedAgent) string {
 		Epoch     string `json:"epoch"`
 	}{requestID, a.epoch})
 	require.NoError(t, err)
-	authority, _, err := real.mintAuthority("agent:recover", a.grn, requestID, sha(string(body)))
+	authority, _, err := real.mintAuthority("iam:agent.recover", a.grn, requestID, sha(string(body)))
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, real.machineURL+"/agents/"+a.grn+"/credential-recovery",
+	req, err := http.NewRequest(http.MethodPost, real.machineURL+"/agents/"+url.PathEscape(a.grn)+"/credential-recovery",
 		strings.NewReader(string(body)))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")

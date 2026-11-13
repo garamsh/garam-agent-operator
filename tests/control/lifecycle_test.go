@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func requestBody(t *testing.T, v any) []byte {
 
 // lifecycleRoute is the console route of agent under route.
 func lifecycleRoute(agent, route string) string {
-	return "/v1/orgs/" + real.orgID + "/agents/" + agent + route
+	return "/v1/orgs/" + real.orgID + "/agents/" + url.PathEscape(agent) + route
 }
 
 // consoleSend sends body under authority to the attached binary's console path, GET where body is
@@ -100,7 +101,7 @@ func sendMintedAt(t *testing.T, base, agent, route, operation, requestID string,
 	return consoleSendAt(t, base, lifecycleRoute(agent, route), mint(t, operation, agent, requestID, body), body)
 }
 
-// readRecovery reads agent's recovery as an administrator does, under agent:execution-read bound to
+// readRecovery reads agent's recovery as an administrator does, under iam:agent.execution-read bound to
 // the route.
 func readRecovery(t *testing.T, agent string) map[string]any {
 	t.Helper()
@@ -111,7 +112,7 @@ func readRecovery(t *testing.T, agent string) map[string]any {
 func readRecoveryAt(t *testing.T, base, agent string) map[string]any {
 	t.Helper()
 	path := lifecycleRoute(agent, "/recovery")
-	read, _, err := real.mintTargeted("agent:execution-read", agent, name(t, "read"), sha(""), path)
+	read, _, err := real.mintTargeted("iam:agent.execution-read", agent, name(t, "read"), sha(""), path)
 	require.NoError(t, err)
 	status, out := consoleSendAt(t, base, path, read, nil)
 	require.Equal(t, http.StatusOK, status, out)
@@ -141,7 +142,8 @@ func desiredOf(t *testing.T, agent string) map[string]any {
 // prepareAs posts the controller's request for agent's recovery, as its manager does.
 func prepareAs(t *testing.T, agent, body string) (int, map[string]any) {
 	t.Helper()
-	resp, err := real.feedClient().Post(attachedURL+"/v1/operators/self/agents/"+agent+"/recovery-requests",
+	resp, err := real.feedClient().Post(
+		attachedURL+"/v1/operators/self/agents/"+url.PathEscape(agent)+"/recovery-requests",
 		"application/json", strings.NewReader(body))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -161,7 +163,7 @@ func recoveryRequestBody(recoveryID, epoch string) string {
 	return string(b)
 }
 
-// openAndPrepare opens a recovery of a from the console under a fresh agent:recover authority, has
+// openAndPrepare opens a recovery of a from the console under a fresh iam:agent.recover authority, has
 // its controller prepare it, and returns the recovery's identifier and the prepared bytes as the
 // read answers them.
 func openAndPrepare(t *testing.T, a placedAgent) (recoveryID string, prepared []byte) {
@@ -171,7 +173,7 @@ func openAndPrepare(t *testing.T, a placedAgent) (recoveryID string, prepared []
 		RequestID         string `json:"requestId"`
 		RecoveryRequestID string `json:"recoveryRequestId"`
 	}{openID, recoveryID})
-	status, opened := sendMinted(t, a.grn, "/recovery", "agent:recover", openID, open)
+	status, opened := sendMinted(t, a.grn, "/recovery", "iam:agent.recover", openID, open)
 	require.Equal(t, http.StatusCreated, status, opened)
 	assert.Equal(t, "requested", opened["stage"])
 	var released struct {
@@ -205,16 +207,16 @@ func TestRecovery_AgainstGaram(t *testing.T) {
 	require.Equal(t, http.StatusNoContent,
 		postAgent(t, a, a.control, "runtime-status", statusOf(activation, a.grn, a.epoch, generation)).status)
 
-	// An agent:configure authority opens no recovery.
+	// An iam:agent.configure authority opens no recovery.
 	openID := name(t, "open")
 	open := requestBody(t, struct {
 		RequestID         string `json:"requestId"`
 		RecoveryRequestID string `json:"recoveryRequestId"`
 	}{openID, name(t, "recovery")})
-	status, refused := sendMinted(t, a.grn, "/recovery", "agent:configure", openID, open)
+	status, refused := sendMinted(t, a.grn, "/recovery", "iam:agent.configure", openID, open)
 	assert.Equal(t, http.StatusForbidden, status, refused)
 
-	// Control: an agent:recover authority opens it, and the controller prepares it.
+	// Control: an iam:agent.recover authority opens it, and the controller prepares it.
 	recoveryID, prepared := openAndPrepare(t, a)
 
 	// A handoff minted over other bytes than the prepared ones is refused before garam is asked: the
@@ -227,7 +229,7 @@ func TestRecovery_AgainstGaram(t *testing.T) {
 	reencoded, err := json.MarshalIndent(otherFields, "", " ")
 	require.NoError(t, err)
 	status, mismatch := consoleSend(t, lifecycleRoute(b.grn, "/recovery/finalize"),
-		mint(t, "agent:recover", b.grn, otherID, reencoded), reencoded)
+		mint(t, "iam:agent.recover", b.grn, otherID, reencoded), reencoded)
 	assert.Equal(t, http.StatusConflict, status, mismatch)
 	assert.Equal(t, "recovery_mismatch", mismatch["kind"])
 	assert.Equal(t, "prepared", readRecovery(t, b.grn)["stage"])
@@ -235,7 +237,7 @@ func TestRecovery_AgainstGaram(t *testing.T) {
 	// A restart between prepared and finalize: the stored request is finalized after it.
 	restartAttached(t)
 	status, finalized := consoleSend(t, lifecycleRoute(a.grn, "/recovery/finalize"),
-		mint(t, "agent:recover", a.grn, recoveryID, prepared), prepared)
+		mint(t, "iam:agent.recover", a.grn, recoveryID, prepared), prepared)
 	require.Equal(t, http.StatusCreated, status, finalized)
 	assert.Equal(t, "finalized", finalized["stage"])
 	lineage, _ := finalized["lineage"].(string)
@@ -263,7 +265,7 @@ func TestRecovery_AgainstGaram(t *testing.T) {
 		RequestID         string `json:"requestId"`
 		RecoveryRequestID string `json:"recoveryRequestId"`
 	}{reopenID, recoveryID})
-	status, reused := sendMinted(t, a.grn, "/recovery", "agent:recover", reopenID, reopen)
+	status, reused := sendMinted(t, a.grn, "/recovery", "iam:agent.recover", reopenID, reopen)
 	assert.Equal(t, http.StatusConflict, status, reused)
 }
 
@@ -276,12 +278,12 @@ func TestRecovery_ResumesWhereGaramAnsweredAndControlDidNotRecord(t *testing.T) 
 	recoveryID, prepared := openAndPrepare(t, a)
 
 	// garam recovered under the handoff, and the control service stopped before it recorded it.
-	req, err := http.NewRequest(http.MethodPost, real.machineURL+"/agents/"+a.grn+"/credential-recovery",
+	req, err := http.NewRequest(http.MethodPost, real.machineURL+"/agents/"+url.PathEscape(a.grn)+"/credential-recovery",
 		bytes.NewReader(prepared))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Garam-Contract-Version", fenceContract)
-	req.Header.Set("Garam-Operation", mint(t, "agent:recover", a.grn, recoveryID, prepared))
+	req.Header.Set("Garam-Operation", mint(t, "iam:agent.recover", a.grn, recoveryID, prepared))
 	resp, err := real.hostedMachine.Do(req)
 	require.NoError(t, err)
 	raw, err := io.ReadAll(resp.Body)
@@ -295,7 +297,7 @@ func TestRecovery_ResumesWhereGaramAnsweredAndControlDidNotRecord(t *testing.T) 
 	require.Equal(t, "prepared", readRecovery(t, a.grn)["stage"])
 
 	status, finalized := consoleSend(t, lifecycleRoute(a.grn, "/recovery/finalize"),
-		mint(t, "agent:recover", a.grn, recoveryID, prepared), prepared)
+		mint(t, "iam:agent.recover", a.grn, recoveryID, prepared), prepared)
 	require.Equal(t, http.StatusCreated, status, finalized)
 	assert.Equal(t, issued.Lineage, finalized["lineage"],
 		"control recorded another lineage than the one garam started")
@@ -315,7 +317,8 @@ func introspectFence(t *testing.T, a placedAgent, generation string) *string {
 	var out struct {
 		ActivationID *string `json:"activationId"`
 	}
-	require.NoError(t, real.machineCall(real.hostedMachine, "/agents/"+a.grn+"/execution/introspection", fenceContract,
+	require.NoError(t, real.machineCall(real.hostedMachine,
+		"/agents/"+url.PathEscape(a.grn)+"/execution/introspection", fenceContract,
 		map[string]any{"token": a.control, "generation": generation}, http.StatusOK, &out))
 	return out.ActivationID
 }
@@ -339,18 +342,18 @@ func TestStop_AgainstGaram(t *testing.T) {
 	require.NotNil(t, introspectFence(t, a, generation))
 	require.Equal(t, activation, *introspectFence(t, a, generation))
 
-	// An agent:recover authority stops nothing. garam binds a request id to one operation, so the
+	// An iam:agent.recover authority stops nothing. garam binds a request id to one operation, so the
 	// refused request has its own.
 	refusedID := name(t, "stop")
 	refusedBody := stopBody(t, refusedID)
 	status, refused := consoleSend(t, lifecycleRoute(a.grn, "/stop"),
-		mint(t, "agent:recover", a.grn, refusedID, refusedBody), refusedBody)
+		mint(t, "iam:agent.recover", a.grn, refusedID, refusedBody), refusedBody)
 	assert.Equal(t, http.StatusForbidden, status, refused)
 
-	// Control: agent:configure stops it, and garam ends its activation.
+	// Control: iam:agent.configure stops it, and garam ends its activation.
 	stopID := name(t, "stop")
 	body := stopBody(t, stopID)
-	status, stopped := sendMinted(t, a.grn, "/stop", "agent:configure", stopID, body)
+	status, stopped := sendMinted(t, a.grn, "/stop", "iam:agent.configure", stopID, body)
 	require.Equal(t, http.StatusOK, status, stopped)
 	assert.Equal(t, true, stopped["stopped"])
 	assert.Equal(t, true, stopped["deactivated"])
@@ -368,14 +371,14 @@ func TestStop_AgainstGaram(t *testing.T) {
 
 	againID := name(t, "stop")
 	again := stopBody(t, againID)
-	status, twice := sendMinted(t, a.grn, "/stop", "agent:configure", againID, again)
+	status, twice := sendMinted(t, a.grn, "/stop", "iam:agent.configure", againID, again)
 	assert.Equal(t, http.StatusConflict, status, twice)
 	assert.Equal(t, "agent_stopped", twice["kind"])
 
 	// The start ends the stop, and the next generation on the new placement is activated.
 	startID := name(t, "start")
 	start := stopBody(t, startID)
-	status, started := sendMinted(t, a.grn, "/start", "agent:configure", startID, start)
+	status, started := sendMinted(t, a.grn, "/start", "iam:agent.configure", startID, start)
 	require.Equal(t, http.StatusOK, status, started)
 	assert.Equal(t, false, started["stopped"])
 	assert.NotContains(t, desiredOf(t, a.grn), "stopped")
@@ -397,13 +400,13 @@ func TestStop_ARestartAroundTheDeactivationResumesOnGaramsAnswer(t *testing.T) {
 	body := stopBody(t, stopID)
 	// One authority for the request throughout: a token minted again for the same binding ends the
 	// one before it.
-	authority, ref, err := real.mintAuthority("agent:configure", a.grn, stopID, sha(string(body)))
+	authority, ref, err := real.mintAuthority("iam:agent.configure", a.grn, stopID, sha(string(body)))
 	require.NoError(t, err)
 
 	// The stop recorded, and the control service stopped before it asked garam.
 	_, err = pool.Exec(t.Context(), `INSERT INTO stops (organization, request_id, agent, actor, operation, target,
     body_sha256, operation_ref, assignment_operator, assignment_epoch, activation_id)
-SELECT $1, $2, $3, actor, 'agent:configure', $3, $4, $5, $6, $7, $8 FROM creations WHERE agent = $3`,
+SELECT $1, $2, $3, actor, 'iam:agent.configure', $3, $4, $5, $6, $7, $8 FROM creations WHERE agent = $3`,
 		real.orgID, stopID, a.grn, sha(string(body)), ref, real.controllerGRN, a.epoch, activation)
 	require.NoError(t, err)
 	restartAttached(t)

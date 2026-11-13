@@ -514,8 +514,8 @@ garam-e2e-from-source: ## Build garam, its test-principal fixture and its migrat
 	git -C "$(GARAM_DIR).partial/src" init --quiet
 	git -C "$(GARAM_DIR).partial/src" fetch --quiet --depth 1 "$(GARAM_REPOSITORY)" $(GARAM_REVISION)
 	git -C "$(GARAM_DIR).partial/src" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
-	cd "$(GARAM_DIR).partial/src" && go build -o ../testprincipal ./tests/testprincipal && go build -o ../garam ./cmd/garam
-	cp -R "$(GARAM_DIR).partial/src/migrations" "$(GARAM_DIR).partial/_migrations"
+	cd "$(GARAM_DIR).partial/src/platform" && go build -o ../../testprincipal ./tests/testprincipal && go build -o ../../garam ./cmd/garam
+	cp -R "$(GARAM_DIR).partial/src/platform/migrations" "$(GARAM_DIR).partial/_migrations"
 	echo "source $(GARAM_REPOSITORY)@$(GARAM_REVISION)" > "$(GARAM_DIR).partial/provenance"
 	mv "$(GARAM_DIR).partial" "$(GARAM_DIR)"
 

@@ -10,14 +10,14 @@ import (
 
 // OperationRecover is the operation an authority binds to open an agent's credential recovery, and
 // the handoff garam spends to finalize one (garam@59fe68d api/machine.yaml recoverAgentCredential).
-const OperationRecover = "agent:recover"
+const OperationRecover = "iam:agent.recover"
 
 // Lifecycle carries an agent's credential recovery and the deactivation of its activation to
 // garam under execution-fence.v2 (garam@afde8b8 api/machine.yaml recoverAgentCredential,
 // deactivateAgent). It returns *LifecycleRefusal or ErrLifecycleUndecided for the answers that
 // refuse or decide nothing; any other error is the call's own.
 type Lifecycle interface {
-	// Recover sends body, exactly as given, under the agent:recover handoff an administrator
+	// Recover sends body, exactly as given, under the iam:agent.recover handoff an administrator
 	// minted over it, which garam resolves and spends. garam compares the body's digest with the
 	// one the handoff binds.
 	Recover(ctx context.Context, agent string, handoff Authority, body []byte) (definition.RecoveredCredential, error)

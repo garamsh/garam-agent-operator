@@ -35,7 +35,7 @@ func stopAnswerOf(s definition.Stop) stopAnswer {
 	return a
 }
 
-// stop stops an agent without a replacement under agent:configure: the stop is recorded first,
+// stop stops an agent without a replacement under iam:agent.configure: the stop is recorded first,
 // so from its commit nothing of the agent is activated and the feed tells its controller to keep
 // the runtime stopped; then garam is asked to deactivate the activation the stop recorded, so it
 // stops routing to the agent. A repeat of the request finishes a deactivation garam left
@@ -64,7 +64,7 @@ func (s *server) stop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stopAnswerOf(stop))
 }
 
-// start ends the stop holding an agent under agent:configure. The stop is kept; the agent's next
+// start ends the stop holding an agent under iam:agent.configure. The stop is kept; the agent's next
 // activation is admitted, and the feed no longer tells its controller to keep it stopped.
 func (s *server) start(w http.ResponseWriter, r *http.Request) {
 	in, ok := s.stopInput(w, r)
@@ -79,7 +79,7 @@ func (s *server) start(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stopAnswerOf(stop))
 }
 
-// stopInput authorizes a stop or a start under agent:configure, and reads its request.
+// stopInput authorizes a stop or a start under iam:agent.configure, and reads its request.
 func (s *server) stopInput(w http.ResponseWriter, r *http.Request) (definition.StopInput, bool) {
 	org, agent := r.PathValue("org"), r.PathValue("agent")
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))

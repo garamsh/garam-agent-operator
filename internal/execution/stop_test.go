@@ -14,7 +14,7 @@ import (
 // stopOrg and stopOperation are what a console stop and start of the agent are bound to.
 const (
 	stopOrg       = "acme"
-	stopOperation = "agent:configure"
+	stopOperation = "iam:agent.configure"
 )
 
 func TestActivate_NothingIsActivatedWhileAStopHoldsTheAgent(t *testing.T) {

@@ -609,7 +609,7 @@ const (
 	// controller has not prepared.
 	RecoveryRequested RecoveryStage = "requested"
 	// RecoveryPrepared is a recovery whose request to garam is stored, as the exact bytes an
-	// administrator's agent:recover handoff is minted over.
+	// administrator's iam:agent.recover handoff is minted over.
 	RecoveryPrepared RecoveryStage = "prepared"
 	// RecoveryFinalized is a recovery garam answered with the agent's new lineage.
 	RecoveryFinalized RecoveryStage = "finalized"
@@ -623,7 +623,7 @@ type Recovery struct {
 	// RequestID is the recovery's request identifier on garam: the one its request and its
 	// finalize are sent under.
 	RequestID string
-	// Key and Binding are the console request that opened it, under an agent:recover authority
+	// Key and Binding are the console request that opened it, under an iam:agent.recover authority
 	// of its own request identifier.
 	Key     RequestKey
 	Binding Binding

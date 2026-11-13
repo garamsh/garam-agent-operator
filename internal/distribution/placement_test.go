@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -73,7 +74,7 @@ func placementBody(pod, previous, evidence string) string {
 // its decoded fields.
 func (e *env) registerPlacement(t *testing.T, client *http.Client, agent, body string) (int, []byte, map[string]string) {
 	t.Helper()
-	resp, err := client.Post(e.server.URL+"/v1/operators/self/agents/"+agent+"/placements",
+	resp, err := client.Post(e.server.URL+"/v1/operators/self/agents/"+url.PathEscape(agent)+"/placements",
 		"application/json", strings.NewReader(body))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()

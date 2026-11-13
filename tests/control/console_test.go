@@ -13,7 +13,7 @@ import (
 
 // revisionsURL is the configure route for an agent of the organization acme.
 func revisionsURL() string {
-	return apiURL + "/v1/orgs/acme/agents/grn:acme:default:agent:0a1b2c3d/revisions"
+	return apiURL + "/v1/orgs/acme/agents/grn:acme%2Fiam%2Fagent%2F0a1b2c3d/revisions"
 }
 
 func postConfigure(t *testing.T, authorization string) *http.Response {

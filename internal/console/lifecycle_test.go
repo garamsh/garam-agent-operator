@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -79,7 +80,7 @@ func (e *env) lifecycleCall(t *testing.T, route string, authority console.Author
 	if body == nil {
 		method = http.MethodGet
 	}
-	req, err := http.NewRequest(method, e.url+"/v1/orgs/"+org+"/agents/"+agent+route, bytes.NewReader(body))
+	req, err := http.NewRequest(method, e.url+"/v1/orgs/"+org+"/agents/"+url.PathEscape(agent)+route, bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Garam-Operation "+string(authority))
 	resp, err := http.DefaultClient.Do(req)
@@ -90,7 +91,7 @@ func (e *env) lifecycleCall(t *testing.T, route string, authority console.Author
 	return lifecycleAnswer{status: resp.StatusCode, body: out}
 }
 
-// recoverAuthority is an agent:recover authority for body under requestID.
+// recoverAuthority is an iam:agent.recover authority for body under requestID.
 func (e *env) recoverAuthority(requestID string, body []byte) console.Authority {
 	return e.authorize(requestID, body, func(b *console.Binding) { b.Operation = console.OperationRecover })
 }
@@ -113,7 +114,7 @@ func (e *env) prepare(t *testing.T, recoveryID string) []byte {
 // readRecovery reads the agent's recovery as an administrator does, and returns its prepared body.
 func (e *env) readRecovery(t *testing.T) lifecycleAnswer {
 	t.Helper()
-	target := "/v1/orgs/" + org + "/agents/" + agent + "/recovery"
+	target := "/v1/orgs/" + org + "/agents/" + url.PathEscape(agent) + "/recovery"
 	read := e.authorize("read", nil, func(b *console.Binding) {
 		b.Operation, b.RequestTarget = console.OperationExecutionRead, target
 	})
@@ -171,7 +172,7 @@ func TestRecovery_FinalizeRefusesAnythingButThePreparedRequest(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, other.status, "an authority of another request id finalized it")
 
 	configure := e.lifecycleCall(t, "/recovery/finalize", e.authorize("rec-1", prepared, nil), prepared)
-	assert.Equal(t, http.StatusForbidden, configure.status, "an agent:configure authority finalized a recovery")
+	assert.Equal(t, http.StatusForbidden, configure.status, "an iam:agent.configure authority finalized a recovery")
 
 	sent, _ := e.lifecycle.calls()
 	assert.Empty(t, sent, "garam was asked for a refused finalize")
@@ -212,12 +213,12 @@ func TestRecovery_OpenRefusals(t *testing.T) {
 	open := openBody("open-1", "rec-1")
 
 	configure := e.lifecycleCall(t, "/recovery", e.authorize("open-1", open, nil), open)
-	assert.Equal(t, http.StatusForbidden, configure.status, "an agent:configure authority opened a recovery")
+	assert.Equal(t, http.StatusForbidden, configure.status, "an iam:agent.configure authority opened a recovery")
 
 	invalid := openBody("open-1", "rec 1")
 	assert.Equal(t, http.StatusBadRequest, e.lifecycleCall(t, "/recovery", e.recoverAuthority("open-1", invalid), invalid).status)
 
-	// Control: the agent:recover authority bound to the body opens it.
+	// Control: the iam:agent.recover authority bound to the body opens it.
 	require.Equal(t, http.StatusCreated, e.lifecycleCall(t, "/recovery", e.recoverAuthority("open-1", open), open).status)
 
 	second := openBody("open-2", "rec-2")
@@ -276,9 +277,9 @@ func TestStop_Refusals(t *testing.T) {
 
 	stop := []byte(`{"requestId":"stop-1"}`)
 	recover := e.lifecycleCall(t, "/stop", e.recoverAuthority("stop-1", stop), stop)
-	assert.Equal(t, http.StatusForbidden, recover.status, "an agent:recover authority stopped the agent")
+	assert.Equal(t, http.StatusForbidden, recover.status, "an iam:agent.recover authority stopped the agent")
 
-	// Control: agent:configure stops it, and an agent with no activation has nothing to deactivate.
+	// Control: iam:agent.configure stops it, and an agent with no activation has nothing to deactivate.
 	stopped := e.lifecycleCall(t, "/stop", e.authorize("stop-1", stop, nil), stop)
 	require.Equal(t, http.StatusOK, stopped.status, stopped.body)
 	assert.Nil(t, stopped.body["activationId"])

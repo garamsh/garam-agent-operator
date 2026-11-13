@@ -15,7 +15,7 @@ import (
 
 // recoveringGRN is the GRN of the agent the recovery spec recovers: its request Secret is named
 // for it, so no other spec's agent shares it.
-const recoveringGRN = "grn:acme:default:agent:7e7e7e7e7e7e7e7e"
+const recoveringGRN = "grn:acme/iam/agent/7e7e7e7e7e7e7e7e"
 
 // annotateSecret sets one annotation on a Secret, as the recoverer does.
 func annotateSecret(name, key, value string) {

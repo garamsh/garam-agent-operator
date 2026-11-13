@@ -65,7 +65,7 @@ func recoveryAnswerOf(r definition.Recovery) recoveryAnswer {
 	return a
 }
 
-// openRecovery opens an agent's credential recovery under an agent:recover authority bound to this
+// openRecovery opens an agent's credential recovery under an iam:agent.recover authority bound to this
 // body. The authority is checked here and never sent to garam: the handoff garam spends is the
 // one finalize carries, minted over the request the agent's controller prepares.
 func (s *server) openRecovery(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +107,7 @@ func (s *server) openRecovery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, recoveryAnswerOf(opened))
 }
 
-// getRecovery answers the agent's open recovery, else its most recent, under agent:execution-read
+// getRecovery answers the agent's open recovery, else its most recent, under iam:agent.execution-read
 // bound to this route: an administrator reads the prepared request here to mint its handoff.
 func (s *server) getRecovery(w http.ResponseWriter, r *http.Request) {
 	agent := r.PathValue("agent")
@@ -122,7 +122,7 @@ func (s *server) getRecovery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, recoveryAnswerOf(recovery))
 }
 
-// finalizeRecovery sends garam the prepared recovery request under the agent:recover handoff
+// finalizeRecovery sends garam the prepared recovery request under the iam:agent.recover handoff
 // minted over exactly its bytes, and records garam's answer. A recovery already finalized is
 // answered from the store; one garam left undecided stays prepared, and the same body under the
 // same handoff is sent again.

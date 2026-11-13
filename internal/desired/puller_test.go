@@ -183,8 +183,8 @@ func answer(cursor string, agents ...string) feedReply {
 }
 
 const (
-	agentA = "grn:acme:default:agent:aaaaaaaaaaaaaaaa"
-	agentB = "grn:acme:default:agent:bbbbbbbbbbbbbbbb"
+	agentA = "grn:acme/iam/agent/aaaaaaaaaaaaaaaa"
+	agentB = "grn:acme/iam/agent/bbbbbbbbbbbbbbbb"
 )
 
 func TestPullerRendersEveryNewRevisionOnceAndReportsIt(t *testing.T) {

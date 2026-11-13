@@ -31,7 +31,7 @@ const (
 )
 
 // operatorGRN is the operator GRN the binary reads from its client_id file as its audience.
-const operatorGRN = "grn:root:default:operator:control-e2e"
+const operatorGRN = "grn:root/iam/operator/control-e2e"
 
 // identity names the files the binary's flags point at, and the root that signed its serving
 // certificate.
@@ -44,7 +44,7 @@ type identity struct {
 }
 
 // controllerGRN is the operator GRN the detached binary's controller client names.
-const controllerGRN = "grn:root:default:operator:k8s-e2e"
+const controllerGRN = "grn:root/iam/operator/k8s-e2e"
 
 // controllerToken is a token of garam's operator form that no garam issued: the detached binary has
 // nothing to prove it with.

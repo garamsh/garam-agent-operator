@@ -180,7 +180,7 @@ func writeKeyIssuance(t *testing.T, dir string) machinetoken.Files {
 	}
 	return machinetoken.Files{
 		PrivateKey: writeFile(t, dir, "private-key.pem", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})),
-		ClientID:   writeFile(t, dir, "client-id", []byte("grn:acme:default:operator:controller")),
+		ClientID:   writeFile(t, dir, "client-id", []byte("grn:acme/iam/operator/controller")),
 		TokenURL:   writeFile(t, dir, "token-url", []byte("https://machine.garam.example/oauth/token")),
 	}
 }

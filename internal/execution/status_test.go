@@ -123,7 +123,7 @@ func TestReportStatus_RefusesWhatTheContractRefuses(t *testing.T) {
 		}, valid, http.StatusForbidden, kindCredentialFenced},
 		{"garam undecided", func(e *env) { e.garam.set(func(g *garam) { g.introspect = execution.ErrUndecided }) }, valid,
 			http.StatusServiceUnavailable, kindUndecided},
-		{"another agent named in the body", nil, strings.Replace(valid, agent, "grn:acme:default:agent:other", 1),
+		{"another agent named in the body", nil, strings.Replace(valid, agent, "grn:acme/iam/agent/other", 1),
 			http.StatusBadRequest, kindInvalidRequest},
 		{"a state the runtime does not report", nil, statusBody(firstActivation, generation, "1", "stopped"),
 			http.StatusBadRequest, kindInvalidRequest},

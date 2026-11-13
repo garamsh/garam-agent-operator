@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"sync"
 	"testing"
@@ -24,10 +25,10 @@ import (
 )
 
 const (
-	audience = "grn:root:default:operator:control"
+	audience = "grn:root/iam/operator/control"
 	org      = "acme"
-	agent    = "grn:acme:default:agent:0a1b2c3d4e5f6071"
-	actor    = "grn:acme:default:user:7c1d"
+	agent    = "grn:acme/iam/agent/0a1b2c3d4e5f6071"
+	actor    = "grn:acme/iam/user/7c1d"
 )
 
 // now is the clock every test's server reads.
@@ -79,7 +80,7 @@ func (r *registrar) Register(_ context.Context, reg definition.Registration) (de
 	if reg.Request.RequestID == "create" {
 		return definition.Registered{Agent: agent, Epoch: "1"}, nil
 	}
-	return definition.Registered{Agent: definition.GRN("grn:acme:default:agent:" + reg.Request.RequestID), Epoch: "1"}, nil
+	return definition.Registered{Agent: definition.GRN("grn:acme/iam/agent/" + reg.Request.RequestID), Epoch: "1"}, nil
 }
 
 func (r *registrar) answer(err error) {
@@ -133,7 +134,7 @@ func runnableSettings() definition.ExecutionSettings {
 }
 
 // controllerGRN is the controller agents are created on, where the configure tests' assignment is.
-const controllerGRN = "grn:acme:default:operator:k8s"
+const controllerGRN = "grn:acme/iam/operator/k8s"
 
 func newEnv(t *testing.T, consoleOrigins ...string) *env {
 	t.Helper()
@@ -225,12 +226,12 @@ func (e *env) authorize(requestID string, body []byte, change func(*console.Bind
 	b := console.Binding{
 		OperationRef: "ref-" + requestID,
 		GrantID:      "grant-1",
-		Org:          "grn:root:default:org:" + org,
+		Org:          "grn:root/iam/org/" + org,
 		Actor:        actor,
 		Audience:     audience,
 		Operation:    console.OperationConfigure,
 		Target:       agent,
-		Assignment:   &console.Assignment{Operator: "grn:acme:default:operator:k8s", Epoch: "7"},
+		Assignment:   &console.Assignment{Operator: "grn:acme/iam/operator/k8s", Epoch: "7"},
 		RequestID:    requestID,
 		BodySHA256:   hex.EncodeToString(digest[:]),
 		ExpiresAt:    now.Add(5 * time.Minute),
@@ -254,7 +255,7 @@ type response struct {
 // configure sends body under authority to agent's revisions route; an empty authority sends none.
 func (e *env) configure(t *testing.T, authority console.Authority, body []byte) response {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, e.url+"/v1/orgs/"+org+"/agents/"+agent+"/revisions", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, e.url+"/v1/orgs/"+org+"/agents/"+url.PathEscape(agent)+"/revisions", bytes.NewReader(body))
 	require.NoError(t, err)
 	if authority != "" {
 		req.Header.Set("Authorization", "Garam-Operation "+string(authority))

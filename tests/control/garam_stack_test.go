@@ -261,7 +261,7 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 		return step("create the organization", err, s.processes...)
 	}
 	s.orgGRN = org.GRN
-	s.orgID = org.GRN[strings.LastIndex(org.GRN, ":")+1:]
+	s.orgID = org.GRN[strings.LastIndex(org.GRN, "/")+1:]
 
 	hosted, err := s.register("control")
 	if err != nil {
@@ -298,9 +298,9 @@ func (s *garamStack) setUp(dir string, keys garamKeys) error {
 	}{
 		RequestID:   "e2e-delegation",
 		Controllers: []string{s.controllerGRN},
-		Operations: []string{"agent:create", "agent:configure", "agent:activate", "agent:recover",
-			"agent-template:read", "agent-template:publish", "execution-profile:read", "agent:execution-read",
-			"operator:read"},
+		Operations: []string{"iam:agent.create", "iam:agent.configure", "iam:agent.activate", "iam:agent.recover",
+			"iam:agent-template.read", "iam:agent-template.publish", "iam:execution-profile.read", "iam:agent.execution-read",
+			"iam:operator.read"},
 		ExpiresAt: time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 	}
 	return step("write the hosted operator's delegation",
@@ -397,11 +397,11 @@ func (s *garamStack) mintTargeted(operation, target, requestID, bodySHA256, requ
 }
 
 // createAgent has garam admit an agent assigned to the controller, as this service does on the
-// console's create: an agent:create authority, then prepareAgentEnrollment and admitAgentEnrollment
+// console's create: an iam:agent.create authority, then prepareAgentEnrollment and admitAgentEnrollment
 // under this service's token. It answers the agent's GRN and its assignment's epoch.
 func (s *garamStack) createAgent(requestID string) (agent, epoch string, err error) {
 	digest := sha256.Sum256([]byte("{}"))
-	_, ref, err := s.mintAuthority("agent:create", s.controllerGRN, requestID, hex.EncodeToString(digest[:]))
+	_, ref, err := s.mintAuthority("iam:agent.create", s.controllerGRN, requestID, hex.EncodeToString(digest[:]))
 	if err != nil {
 		return "", "", err
 	}

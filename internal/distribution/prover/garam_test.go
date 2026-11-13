@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -39,28 +40,28 @@ func prove(t *testing.T, status int, answer, agent string) (distribution.Proof, 
 	t.Cleanup(server.Close)
 	machine := garammachine.New(server.URL, server.Client())
 	machine.Backoff = time.Millisecond
-	p, err := prover.NewGaram(machine).Prove(context.Background(), "grn:root:default:operator:k8s", token, agent)
+	p, err := prover.NewGaram(machine).Prove(context.Background(), "grn:root/iam/operator/k8s", token, agent)
 	return p, got, err
 }
 
 func TestGaram_ForwardsTheTokenAndReadsTheProof(t *testing.T) {
 	p, got, err := prove(t, 200,
-		`{"operator":"grn:root:default:operator:k8s","org":"grn:root:default:org:acme","agent":{"grn":"grn:acme:default:agent:a","epoch":"7"}}`,
-		"grn:acme:default:agent:a")
+		`{"operator":"grn:root/iam/operator/k8s","org":"grn:root/iam/org/acme","agent":{"grn":"grn:acme/iam/agent/a","epoch":"7"}}`,
+		"grn:acme/iam/agent/a")
 	require.NoError(t, err)
-	assert.Equal(t, "/operators/grn:root:default:operator:k8s/introspection", got.path)
+	assert.Equal(t, "/operators/"+url.PathEscape("grn:root/iam/operator/k8s")+"/introspection", got.path)
 	assert.Equal(t, "operation-authority.v2", got.contract)
 	assert.Equal(t, token, got.body["token"])
 	assert.NotContains(t, got.body, "certificatePem", "operation-authority.v2 refuses a certificate")
-	assert.Equal(t, "grn:acme:default:agent:a", got.body["agent"])
+	assert.Equal(t, "grn:acme/iam/agent/a", got.body["agent"])
 	assert.Equal(t, distribution.Proof{
-		Operator: "grn:root:default:operator:k8s", Org: "grn:root:default:org:acme",
-		Agent: &distribution.ProvenAgent{GRN: "grn:acme:default:agent:a", Epoch: "7"},
+		Operator: "grn:root/iam/operator/k8s", Org: "grn:root/iam/org/acme",
+		Agent: &distribution.ProvenAgent{GRN: "grn:acme/iam/agent/a", Epoch: "7"},
 	}, p)
 }
 
 func TestGaram_ASessionProofNamesNoAgent(t *testing.T) {
-	p, got, err := prove(t, 200, `{"operator":"grn:root:default:operator:k8s","org":"grn:root:default:org:acme","agent":null}`, "")
+	p, got, err := prove(t, 200, `{"operator":"grn:root/iam/operator/k8s","org":"grn:root/iam/org/acme","agent":null}`, "")
 	require.NoError(t, err)
 	agent, present := got.body["agent"]
 	assert.True(t, present)

@@ -102,7 +102,7 @@ func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
 		RequestID         string `json:"requestId"`
 		RecoveryRequestID string `json:"recoveryRequestId"`
 	}{openID, recoveryID})
-	status, opened := sendMinted(t, a.grn, "/recovery", "agent:recover", openID, open)
+	status, opened := sendMinted(t, a.grn, "/recovery", "iam:agent.recover", openID, open)
 	require.Equal(t, http.StatusCreated, status, opened)
 	answer, err := client.Desired(ctx, "", 0)
 	require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestRecovery_TheManagersHalfAgainstGaram(t *testing.T) {
 		"control was sent another request than the one persisted")
 
 	// An administrator finalizes it at garam under a handoff over the prepared bytes.
-	status, finalized := sendMinted(t, a.grn, "/recovery/finalize", "agent:recover", recoveryID, prepared)
+	status, finalized := sendMinted(t, a.grn, "/recovery/finalize", "iam:agent.recover", recoveryID, prepared)
 	require.Equal(t, http.StatusCreated, status, finalized)
 
 	// The recoverer records the lineage garam started.

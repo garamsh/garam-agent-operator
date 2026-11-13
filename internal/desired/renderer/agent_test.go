@@ -81,7 +81,7 @@ func agentFor(grn string) *agentv1alpha1.Agent {
 
 var _ = Describe("Renderer", func() {
 	It("creates the Agent of a new GRN with its identity, and renders every later revision into it", func() {
-		grn := "grn:acme:default:agent:1111111111111111"
+		grn := "grn:acme/iam/agent/1111111111111111"
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
 
 		Expect(rendering.Render(ctx, revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, "first"))).
@@ -119,7 +119,7 @@ var _ = Describe("Renderer", func() {
 	})
 
 	It("renders a revision that changes nothing else into the Agent, so the agent is given the revision it runs", func() {
-		grn := "grn:acme:default:agent:1212121212121212"
+		grn := "grn:acme/iam/agent/1212121212121212"
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
 		Expect(rendering.Render(ctx, revision(grn, "4", "7", map[string]string{requiredTool: firstPin}, "same"))).
 			To(Succeed())
@@ -138,7 +138,7 @@ var _ = Describe("Renderer", func() {
 	})
 
 	It("writes the control service's stop into spec.stopped and clears it when the stop ends, leaving a person's suspension alone", func() {
-		grn := "grn:acme:default:agent:1313131313131313"
+		grn := "grn:acme/iam/agent/1313131313131313"
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
 		running := revision(grn, "3", "7", map[string]string{requiredTool: firstPin}, "stopped")
 		Expect(rendering.Render(ctx, running)).To(Succeed())
@@ -167,7 +167,7 @@ var _ = Describe("Renderer", func() {
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
 
 		By("the control: an Agent the renderer created takes a later revision")
-		controlled := "grn:acme:default:agent:2222222222222222"
+		controlled := "grn:acme/iam/agent/2222222222222222"
 		Expect(rendering.Render(ctx, revision(controlled, "1", "7", map[string]string{requiredTool: firstPin}, ""))).
 			To(Succeed())
 		Expect(rendering.Render(ctx, revision(controlled, "2", "7", map[string]string{requiredTool: "sha256:cc"}, ""))).
@@ -175,12 +175,12 @@ var _ = Describe("Renderer", func() {
 		Expect(agentFor(controlled).Spec.Tools.Pins).To(HaveKeyWithValue(requiredTool, "sha256:cc"))
 
 		for name, grn := range map[string]string{
-			"no identity":     "grn:acme:default:agent:3333333333333333",
-			"another agent's": "grn:acme:default:agent:3333333333333334",
+			"no identity":     "grn:acme/iam/agent/3333333333333333",
+			"another agent's": "grn:acme/iam/agent/3333333333333334",
 		} {
 			var identity *agentv1alpha1.AgentIdentity
 			if name == "another agent's" {
-				identity = &agentv1alpha1.AgentIdentity{GRN: "grn:acme:default:agent:0000000000000000"}
+				identity = &agentv1alpha1.AgentIdentity{GRN: "grn:acme/iam/agent/0000000000000000"}
 			}
 			agentNamed(grn, identity)
 			before := agentFor(grn)
@@ -193,7 +193,7 @@ var _ = Describe("Renderer", func() {
 
 	It("leaves a revision with a malformed key reference unrendered, beside a well-formed one", func() {
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
-		grn := "grn:acme:default:agent:5555555555555555"
+		grn := "grn:acme/iam/agent/5555555555555555"
 		Expect(rendering.Render(ctx, revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, "kept"))).
 			To(Succeed())
 		before := agentFor(grn)
@@ -211,7 +211,7 @@ var _ = Describe("Renderer", func() {
 
 	It("leaves a model with no embedding unrendered unless it is the mock, beside one carrying it", func() {
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
-		grn := "grn:acme:default:agent:5656565656565656"
+		grn := "grn:acme/iam/agent/5656565656565656"
 		Expect(rendering.Render(ctx, revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, "kept"))).
 			To(Succeed())
 		before := agentFor(grn)
@@ -231,7 +231,7 @@ var _ = Describe("Renderer", func() {
 		Expect(agentFor(grn).Spec).To(Equal(before.Spec))
 
 		By("the mock, which runs with no embeddings endpoint")
-		mock := "grn:acme:default:agent:5757575757575757"
+		mock := "grn:acme/iam/agent/5757575757575757"
 		offline := revision(mock, "1", "7", map[string]string{requiredTool: firstPin}, "")
 		offline.Configuration.Model.Provider, offline.Configuration.Model.Embedding = "mock", nil
 		Expect(rendering.Render(ctx, offline)).To(Succeed())
@@ -241,7 +241,7 @@ var _ = Describe("Renderer", func() {
 
 	It("refuses a later revision changing or dropping the embedding, beside one changing only its key", func() {
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
-		grn := "grn:acme:default:agent:5858585858585858"
+		grn := "grn:acme/iam/agent/5858585858585858"
 		Expect(rendering.Render(ctx, revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, ""))).
 			To(Succeed())
 
@@ -273,7 +273,7 @@ var _ = Describe("Renderer", func() {
 
 	It("renders the profile's workspace size, clears it where the profile names none, and leaves a malformed one unrendered", func() {
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
-		grn := "grn:acme:default:agent:8a8a8a8a8a8a8a8a"
+		grn := "grn:acme/iam/agent/8a8a8a8a8a8a8a8a"
 		sized := revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, "")
 		sized.Profile.WorkspaceStorageSize = ptr.To("5Gi")
 		Expect(rendering.Render(ctx, sized)).To(Succeed())
@@ -293,8 +293,8 @@ var _ = Describe("Renderer", func() {
 	})
 
 	It("takes the workspace size from the feed's profile, beside an agent whose profile names none", func() {
-		sized := "grn:acme:default:agent:8b8b8b8b8b8b8b8b"
-		plain := "grn:acme:default:agent:8c8c8c8c8c8c8c8c"
+		sized := "grn:acme/iam/agent/8b8b8b8b8b8b8b8b"
+		plain := "grn:acme/iam/agent/8c8c8c8c8c8c8c8c"
 		withSize := revision(sized, "1", "7", map[string]string{requiredTool: firstPin}, "")
 		withSize.Profile.WorkspaceStorageSize = ptr.To("3Gi")
 		runPuller(serveFeed(feedAnswer("1", withSize, revision(plain, "1", "7", map[string]string{requiredTool: firstPin}, ""))))
@@ -312,8 +312,8 @@ var _ = Describe("Renderer", func() {
 	})
 
 	It("leaves an agent the feed withholds as it was, deletes nothing, and renders the rest", func() {
-		withheld := "grn:acme:default:agent:6666666666666666"
-		kept := "grn:acme:default:agent:7777777777777777"
+		withheld := "grn:acme/iam/agent/6666666666666666"
+		kept := "grn:acme/iam/agent/7777777777777777"
 		feed := serveFeed(
 			feedAnswer("1", revision(withheld, "1", "7", map[string]string{requiredTool: firstPin}, "withheld"),
 				revision(kept, "1", "7", map[string]string{requiredTool: firstPin}, "kept")),
@@ -493,7 +493,7 @@ func ownersOf(agent *agentv1alpha1.Agent, path ...string) []string {
 
 var _ = Describe("Renderer and a suspended agent", func() {
 	It("leaves spec.suspended to the person who set it, while it renders every field it owns", func() {
-		grn := "grn:acme:default:agent:5555555555555555"
+		grn := "grn:acme/iam/agent/5555555555555555"
 		rendering := renderer.NewAgent(k8sClient, namespace, image)
 		Expect(rendering.Render(ctx, revision(grn, "1", "7", map[string]string{requiredTool: firstPin}, "first"))).
 			To(Succeed())

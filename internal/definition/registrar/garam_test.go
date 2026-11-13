@@ -18,7 +18,7 @@ import (
 	"github.com/garamsh/garam-agent-operator/internal/garammachine"
 )
 
-const controller = "grn:acme:default:operator:k8s"
+const controller = "grn:acme/iam/operator/k8s"
 
 // operationRef is the creation's reference every registration here sends.
 const operationRef = "ref-1"
@@ -32,7 +32,7 @@ const approvalID = "7f0c2a4e-1b3d-4c5e-8f60-718293a4b5c6"
 const (
 	approved = `{"approvalId":"` + approvalID + `","requestId":"n1","placement":"managed","assignee":"` +
 		controller + `","operationRef":"ref-1"}`
-	admitted = `{"grn":"grn:acme:default:agent:0a1b","placement":"managed","assignee":"` + controller +
+	admitted = `{"grn":"grn:acme/iam/agent/0a1b","placement":"managed","assignee":"` + controller +
 		`","epoch":"1","lineage":"0f1e2d3c-4b5a-4968-8776-655443322110","mode":"fenced","credentialDelivery":"mintAgentToken"}`
 )
 
@@ -129,7 +129,7 @@ const (
 	admitPath   = "/agent-enrollment-approvals/" + approvalID + "/admission"
 )
 
-var theAgent = definition.Registered{Agent: "grn:acme:default:agent:0a1b", Epoch: "1"}
+var theAgent = definition.Registered{Agent: "grn:acme/iam/agent/0a1b", Epoch: "1"}
 
 func TestGaram_PreparesThenAdmitsTheManagedAgent(t *testing.T) {
 	g := newGaram()
@@ -283,7 +283,7 @@ func TestGaram_AnswerWithoutAnApprovalOrAnAgentRefused(t *testing.T) {
 		"no approval": func(g *garam) { g.prepare = []answer{{http.StatusCreated, `{"approvalId":""}`}} },
 		"no agent":    func(g *garam) { g.admit = []answer{{http.StatusCreated, `{"grn":"","epoch":"1"}`}} },
 		"no epoch": func(g *garam) {
-			g.admit = []answer{{http.StatusCreated, `{"grn":"grn:acme:default:agent:0a1b","epoch":""}`}}
+			g.admit = []answer{{http.StatusCreated, `{"grn":"grn:acme/iam/agent/0a1b","epoch":""}`}}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

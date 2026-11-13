@@ -7,7 +7,7 @@ import (
 )
 
 // RecoveryBody is the request garam's credential recovery is sent for r, as the bytes it is sent
-// as: an administrator's agent:recover handoff is minted over exactly these, and garam compares
+// as: an administrator's iam:agent.recover handoff is minted over exactly these, and garam compares
 // its digest with the body it receives. Under execution-fence.v2 it carries no certificate
 // request (garam@afde8b8 api/machine.yaml recoverAgentCredential).
 func RecoveryBody(r RecoveryRequest) ([]byte, error) {
