@@ -39,6 +39,7 @@ Before a delta between this file and the template is called stale, read it again
 | `agent.md` | The `agent.garam.sh` API group, the `Agent` kind, and its controller |
 | `configuration.md` | How this operator's deployment is configured, and which repository owns each value |
 | `control.md` | The control service: definitions and revisions, templates, profiles, creation and configure requests, recoveries and stops, what each controller reports of itself, their store, the console API that changes and reads them, and the controller API that releases them |
+| `gaon-operator.md` | The operator that runs each managed agent as one MicroVM on a gaon cluster, imported from garam: its reconciler, wire clients, guest image, and what is not built |
 | `delivery.md` | The images this project publishes, the reference a deployment uses, and where its output lands in a cluster |
 | `structure.md` | What a unit of this code is, what may reference what, and when a new unit is earned |
 | `integration.md` | How a change reaches `dev` and then `main`, and which checks run at each step |
@@ -128,6 +129,7 @@ Before a delta between this file and the template is called stale, read it again
 | `adr/0079-run-only-on-our-own-system-and-keep-the-seams-that-allow-a-bring-your-own-operator.md` | Run only on our own system, and keep the seams that allow a bring-your-own operator | accepted |
 | `adr/0080-name-garams-resources-and-operations-as-garam-v0-7-0-does.md` | Name garam's resources and operations as garam `v0.7.0` does | accepted |
 | `adr/0081-release-as-0-1-0-dev-n-and-0-1-0-rc-n-until-launch-and-0-1-0-at-launch.md` | Release as `0.1.0-dev.N` and `0.1.0-rc.N` until launch, and `0.1.0` at launch | accepted |
+| `adr/0082-import-garams-gaon-operator-and-keep-it-in-this-repository.md` | Import garam's gaon operator and keep it in this repository | accepted |
 
 ### Templates
 

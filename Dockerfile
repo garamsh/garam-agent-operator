@@ -4,7 +4,8 @@
 # Two movers reach this line. Dependabot proposes a newer tag or a republished digest
 # under the same tag, rewriting tag and digest together (`.github/dependabot.yml`);
 # `kubebuilder alpha update` brings a newer scaffold's tag as a conflict here.
-FROM golang:1.26@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS builder
+# go.mod's go directive is 1.27.4 (the gaon operator needs it), so the builder is that release.
+FROM mirror.gcr.io/library/golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
