@@ -12,7 +12,7 @@
 
 ## Deployer impact
 
-<!-- List each gaon role verb, operator setting, or change to the MicroVMs, volumes or Secrets the gaon operator creates that this change adds, removes, or alters (`docs/architecture/gaon-operator.md` §Settings and §What the deployment must create), and the ADR or step that needs it. Write None when there is none. -->
+<!-- Per stack-kubebuilder.md §5. List each RBAC verb, manager flag, CRD field, or change to the Pods the manager builds that this change adds, removes, or alters, and the ADR or step that needs it. Write None when there is none. -->
 
 ## Conventions consulted
 
