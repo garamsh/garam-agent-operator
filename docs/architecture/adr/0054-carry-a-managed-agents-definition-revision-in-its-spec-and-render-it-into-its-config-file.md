@@ -1,6 +1,6 @@
 # ADR 0054: Carry a managed agent's definition revision in its spec, and render it into its config file
 
-> Status: superseded by ADR-0083
+> Status: accepted
 > Date: 2026-10-07
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

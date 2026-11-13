@@ -6,16 +6,24 @@ How this repository is partitioned: what a unit is, what may reference what, and
 
 ### The unit
 
-- **A domain is the unit.** One package per domain, named for its subject matter and never for a technical role. `internal/definition/` (the control service's desired state), `internal/console/` (the console's mutations of it, each under garam's operation authority), `internal/distribution/` (its release to the controllers agents are assigned to, and their reports) and `internal/execution/` (the agent's own routes) are domains.
+- **A domain is the unit.** One package per domain, named for its subject matter and never for a technical role. `internal/definition/` (the control service's desired state), `internal/console/` (the console's mutations of it, each under garam's operation authority), `internal/distribution/` (its release to the controllers agents are assigned to, and their reports) and `internal/garam/` (this operator's dealings with `garam`) are domains.
 - **A folder named for what it does to code rather than what it holds is not a domain** — `utils`, `helpers`, `common`, `shared`, `misc` and their kind. Where two pieces of code share a concept, the concept gets a name and that name is the folder.
 - **Every file belongs to exactly one domain.** A file that would belong in two means the split is wrong, and so does a cycle between domains.
+
+### What the framework places
+
+The kubebuilder scaffold writes the manager's code into paths it names, and the CLI rewrites them. Those paths stay where it puts them, even where their names are a technical role:
+
+- `api/<version>/` holds the API kinds. It sits **below every domain**: a domain may import it, and it imports no domain.
+- `internal/controller/` holds the reconcilers. It is the domain of the `Agent` workload — the Pod, its volumes and its status — under the name the scaffold gives it.
+- `test/utils/` is scaffolded test support. It is no domain, and it is not a precedent for a `utils` anywhere else.
 
 ### Surfaces and references
 
 - **A domain is reached only through what it declares public**: the exported identifiers of its root package, `internal/<domain>`. Its sub-packages (`internal/<domain>/<pkg>/`, the implementations of its dependency interfaces) are its inside. Reaching one from another domain is a defect, even where the compiler permits it.
 - **A domain may depend on a sibling, through that sibling's surface, in one direction only.** That is the side taken in ADR 0038. A reference two domains would make of each other means one of them is holding something that belongs to the other, or below both.
 - **A consumer depends on the producer's interface, not its concrete type.** A domain declares beside itself the behaviour it needs. The behaviour it offers is declared beside its producer. The compiler does not check this, so it is a review matter.
-- **Each binary has one composition site** — `cmd/control/main.go` for the control service. The gaon operator's three binaries are the exception, described in the next section. It is the one place that constructs concrete implementations, and it decides which implementation each declared abstraction receives. It is also the one place that reaches inside a domain.
+- **Each binary has one composition site** — `cmd/main.go` for the manager, `cmd/control/main.go` for the control service. The gaon operator's three binaries are the exception, described in the next section. It is the one place that constructs concrete implementations, and it decides which implementation each declared abstraction receives. It is also the one place that reaches inside a domain.
 - **Every other unit receives what it depends on and constructs none of it.**
 - **The composition site stays thin.** It constructs and passes; it decides nothing else.
 
@@ -26,15 +34,15 @@ The operator imported from garam ([ADR 0082](adr/0082-import-garams-gaon-operato
 - **Packages are named for a role, not a subject.** `cli`, `config`, `health`, `loop` and `token` are named for what they do, and the rule of §The unit is that a domain never is.
 - **There is no declared surface.** `internal/gaon` has no root package, and each sibling is imported directly, by `cmd/gaon-guest`, by `cmd/gaon-render` and by one another (`cli` imports all of them but `guest`, `loop` imports `agent` and `token` imports `keyfile`).
 - **The composition site is not the binary's `main`.** `cmd/gaon-operator/main.go` calls `internal/gaon/cli.Run`, which reads the settings and constructs every client, so `cli` is the operator's composition site. `cmd/gaon-guest/main.go` calls `guest.FromEnv` and `guest.Run`, and `cmd/gaon-render/main.go` (165 lines) holds its own logic, so neither is a thin composition site.
-- **`tests/gaon/` and `tests/pairrun/` are test support under `tests/`.** They are the stand-ins and the pair run of the operator, kept beside its code.
+- **`tests/gaon/` and `tests/pairrun/` are test support outside `test/`.** They are the stand-ins and the pair run of the operator, kept beside its code.
 
 Partitioning the operator by domain is a change of its own, which no pull request has made and no ADR has decided. Until one does, a change to `internal/gaon` is judged against its existing shape and not against §Surfaces and references.
 
 ### Shared code
 
 - **What two domains both need sits below them, never beside them.** It is extracted to a package named for what it is, which imports no domain, or it is owned by one domain and reached through that domain's surface. It never becomes a sibling folder that no domain owns.
-- **`internal/secretref` states and parses a Secret key reference, `<secret-name>/<key>`** (#248). The control service's `internal/definition` parses with it, so the rule is stated once, where the references it validates are stored. It imports no domain.
-- **`internal/machinetoken` obtains an operator's garam token under its own key and presents it** ([ADR 0072](adr/0072-authenticate-the-manager-and-the-control-service-to-garam-with-their-own-private-keys.md)). The control service's composition site hands it to `internal/garammachine`'s client. It imports no domain.
+- **`internal/secretref` states and parses a Secret key reference, `<secret-name>/<key>`, for both binaries** (#248). The control service's `internal/definition` and the manager's `internal/desired/renderer` both parse with it, and neither restates the rule. It imports no domain.
+- **`internal/machinetoken` obtains an operator's garam token under its own key and presents it, for both binaries** ([ADR 0072](adr/0072-authenticate-the-manager-and-the-control-service-to-garam-with-their-own-private-keys.md)). The manager's composition site hands it to `internal/garam`'s and `internal/desired`'s clients, and the control service's to `internal/garammachine`'s; `internal/garam` also reads its failure type to count it. It imports no domain.
 
 ### A new domain
 

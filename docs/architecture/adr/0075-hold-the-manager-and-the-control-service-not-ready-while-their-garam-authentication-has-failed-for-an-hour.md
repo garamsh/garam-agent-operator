@@ -1,6 +1,6 @@
 # ADR 0075: Hold the manager and the control service not ready while their garam authentication has failed for an hour
 
-> Status: accepted; the manager's half superseded by ADR-0083
+> Status: accepted
 > Date: 2026-10-19
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

@@ -17,12 +17,18 @@ command, environment and placement token (garam#1848), and the
 placement's registration and the agent's configuration and model key
 (garam#1853, garam ADR-0154).** `cmd/gaon-operator` exchanges its
 assertion with a key garam issued, reads the control service's feed as
-its registered controller identity and reconciles into gaon. `make operator-image`
+its registered manager and reconciles into gaon. `make operator-image`
 and `make guest-image` build the operator's image and the guest's
-without pushing either. `release.yml` publishes them as
-`garam-agent-operator/operator` and `garam-agent-operator/guest`
-(ADR 0084), and `deploy/charts/garam-agent-operator-gaon` renders its
-deployment (ADR 0085).
+without pushing either. Nothing here publishes them, and
+`deploy/charts/garam-agent-operator-gaon` renders its deployment
+(ADR 0085).
+
+**Discontinued and not released.** gaon is discontinued under
+garamsh/aurora#804 decision 1, and this operator stays in the tree as it
+was imported and built, marked and not removed
+([ADR 0086](adr/0086-restore-the-kubernetes-operator-and-keep-the-gaon-operator-unreleased.md)).
+`release.yml` publishes none of its images, and no feature is added to it.
+The Kubernetes operator is the one this project releases.
 
 ## What is built
 
@@ -163,7 +169,7 @@ Addresses and paths, in the environment; none holds a credential.
 | `GARAM_MACHINE_URL`, `GARAM_ROOT_FILE` | garam's machine listener and its root |
 | `GARAM_TOKEN_URL` | the token URL the key issuance answered, the assertion's `aud` |
 | `CONTROL_URL`, `CONTROL_ROOT_FILE`, `CONTROL_GRN` | the control service, its root, and its operator GRN |
-| `OPERATOR_KEY_FILE`, `OPERATOR_CLIENT_ID` | the operator's key, and the controller's operator GRN, which is also the `Controller-Grn` |
+| `OPERATOR_KEY_FILE`, `OPERATOR_CLIENT_ID` | the operator's key, and the manager's operator GRN, which is also the `Controller-Grn` |
 | `AGENT_IMAGE` | the composed guest image, as `<repository>@sha256:<64 hex digits>`, the only form gaon's Node Agent starts; the operator refuses to start on any other |
 | `AGENT_CPU`, `AGENT_MEMORY` | the MicroVM's requests and limits, each in gaon's quantity form (`1`, `500m`, `1Gi`); gaon's Node Agent refuses a MicroVM that names no cpu or no memory, so the operator refuses to start without either and publishes no figure |
 | `GUEST_MACHINE_URL`, `GUEST_CONTROL_URL` | optional: the addresses the adapter in the guest reaches garam and the control service at; each defaults to `GARAM_MACHINE_URL` and `CONTROL_URL` |
@@ -220,15 +226,11 @@ each is written once.
   digests are pinned nowhere else in this repository.
 - **Building it.** `make guest-image` builds `build/guest.Dockerfile`
   with the repository root as context, as
-  `garam-agent-operator/guest:<REVISION>`, and pushes nothing; the
-  operator's image is `garam-agent-operator/operator:<REVISION>` from
-  `make operator-image`. The three sources are in a private registry, so
-  the build needs a login that can pull them and `make ci` does not run
-  it. `release.yml` logs in to that registry with the role that pushes,
-  which reads the three, builds both images through `make build-images`
-  and pushes them under the release version beside the control
-  service's (`delivery.md`, ADR 0084). The operator's `AGENT_IMAGE` takes the guest image as
-  `<repository>@sha256:<digest>`, and the release prints that digest.
+  `garam-agent-operator/gaon-guest:<REVISION>`, and pushes nothing. The
+  three sources are in a private registry, so the build needs a login
+  that can pull them and `make ci` does not run it. No workflow of this
+  repository builds or publishes the guest image or the operator's
+  image yet (§What is not built).
 - **Running it.** `make guest-run` builds the image
   with `make guest-image` and starts it
   as one container with user `0:0` and `SYS_ADMIN` added.
@@ -363,6 +365,9 @@ is not gaon's.
 ## What is not built
 
 - The `NetworkPolicy`.
+- A workflow that publishes `garam-agent-operator/gaon-operator` or
+  `garam-agent-operator/gaon-guest`: the operator is discontinued and not
+  released (ADR 0086), so no repository name or tag is chosen for them.
 - Renewing an agent's token by restarting its MicroVM.
 - Replacing a MicroVM of another revision.
 - The agent's instructions file and message issuers.
@@ -403,15 +408,11 @@ agent, an Exec under the guest kernel, or gaon's MicroVM start.
 ## Rationale
 
 The operator lives here, in the repository that owns the control service
-and the controller identity it registers under, so one commit changes the feed and its
+and the manager it registers with, so one commit changes the feed and its
 reader together; ADR 0082 records the move and what was kept of garam's
 decisions. The reconciler declares its two outside dependencies; the wire clients
 fill those interfaces. It deletes nothing because nothing in the feed
 says an agent is gone for good.
-
-That the operator's image and the guest image are published, as
-`operator` and `guest` beside `control` and by the same workflow, is
-ADR 0084.
 
 ## Open questions
 

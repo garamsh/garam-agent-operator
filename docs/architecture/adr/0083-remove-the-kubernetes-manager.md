@@ -1,6 +1,6 @@
 # ADR 0083: Remove the Kubernetes manager and everything only it uses
 
-> Status: accepted
+> Status: superseded by ADR-0086
 > Date: 2026-11-13
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
