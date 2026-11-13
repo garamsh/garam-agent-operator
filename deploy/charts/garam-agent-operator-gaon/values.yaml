@@ -1,0 +1,121 @@
+# Values of the garam-agent-operator-gaon chart (ADR 0085). The chart
+# renders the gaon objects of the control service and the gaon operator, to
+# be applied with `helm template ... | gaon apply -f -`. It creates no
+# Secret and no ConfigMap: every `secret` and `configMap` below names one
+# the deployment creates, and no value of either is in this file.
+#
+# Every value below is required and empty. A missing one fails the render
+# with a message that opens with the value's name. None has a default
+# because each one is the deployer's: this repository holds no registry,
+# digest, address, account or figure of any deployment.
+
+# Every object is named `<namePrefix>-<word>`. gaon has no namespaces, so
+# this prefix is what keeps two deployments' objects apart. A lowercase
+# DNS label that starts with a letter.
+namePrefix: ""
+
+# The zone of a Service's name, `<service>.default.svc.<dnsZone>`. gaon
+# resolves no short name, so every address a process dials is this full
+# form. Lowercase labels joined by single dots.
+dnsZone: ""
+
+# The image of each program, as `<repository>@sha256:<64 hex digits>`.
+# gaon starts no other form, so a tag in the repository is refused.
+# `guest` is not run by this chart: it is the composed guest image the
+# operator starts for each agent, passed to it as AGENT_IMAGE.
+image:
+  control: ""
+  operator: ""
+  guest: ""
+
+# Each object's `resources`. The requests are required and have no
+# default: gaon's Node Agent fails a MicroVM that names no cpu or no
+# memory, and this repository publishes no figure for either program. The
+# limits are optional, and the Node Agent sizes a MicroVM from them, else
+# from the requests. A quantity is a number with an optional m, k, M, G,
+# T, Ki, Mi, Gi or Ti.
+resources:
+  control:
+    requests:
+      cpu: ""
+      memory: ""
+    limits:
+      cpu: ""
+      memory: ""
+  operator:
+    requests:
+      cpu: ""
+      memory: ""
+    limits:
+      cpu: ""
+      memory: ""
+
+# garam, as both programs reach it. `machineUrl` is the base URL of its
+# machine listener, and `tokenUrl` the token URL its key issuance answered,
+# which the operator's assertion names as its audience. Each is an absolute
+# https URL with a host and no user information, query or fragment. `root`
+# is the file holding the root the machine listener's certificate chains
+# to.
+garam:
+  machineUrl: ""
+  tokenUrl: ""
+  # Each file below names the Secret or the ConfigMap that holds it, and
+  # the key in it: exactly one of `secret` and `configMap`, and the `key`.
+  # A private key, and the database URL, name a Secret only.
+  root: &source
+    secret: ""
+    configMap: ""
+    key: ""
+
+# The control service's store. `url` names the Secret key whose value is
+# the PostgreSQL connection URL, which the service reads from
+# CONTROL_DATABASE_URL. It names a Secret only.
+database:
+  url:
+    secret: ""
+    key: ""
+
+control:
+  # The certificate chain and the private key the console's, controllers'
+  # and agents' routes are served under over TLS.
+  certificate: *source
+  key: *source
+  # The three files of garam's key issuance for the control service's
+  # operator: the private key, the client id (the service's operator GRN)
+  # and the token URL.
+  operatorKey: *source
+  operatorClientId: *source
+  operatorTokenUrl: *source
+  # The browser origins the console calls from, each `<scheme>://<host>`
+  # and any port, with no path. Optional: none set answers no CORS at all.
+  consoleOrigins: []
+
+operator:
+  # The controller's operator GRN, which is the operator's client id for
+  # the exchange and the `Controller-Grn` the control service is told.
+  grn: ""
+  # The control service's operator GRN, the audience of the tokens the
+  # operator presents to it.
+  controlGrn: ""
+  # The operator's private key, for the client-assertion exchange.
+  key: *source
+  # The file holding the root the control service's certificate chains to.
+  controlRoot: *source
+  # gaon's resource API, and the operator's client certificate for it.
+  # `url` is an absolute https URL.
+  gaon:
+    url: ""
+    ca: *source
+    certificate: *source
+    key: *source
+  # The size of each agent's MicroVM, in gaon's quantity form. The
+  # operator publishes no figure and refuses to start without either.
+  agent:
+    cpu: ""
+    memory: ""
+  # Optional: the addresses the adapter inside an agent's MicroVM reaches
+  # garam and the control service at. Each defaults, in the operator, to
+  # garam.machineUrl and the control service's address.
+  guest:
+    machineUrl: ""
+    controlUrl: ""

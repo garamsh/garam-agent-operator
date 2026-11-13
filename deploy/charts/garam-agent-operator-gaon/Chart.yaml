@@ -1,0 +1,8 @@
+apiVersion: v2
+name: garam-agent-operator-gaon
+description: The gaon objects of the control service and the gaon operator, rendered to be applied with gaon apply
+type: application
+# The chart's own version, moved by a change to the chart (ADR 0085). It is
+# not a release of this project: a consumer pins the chart by a git ref of
+# this repository and the images by digest through image.*.
+version: 0.1.0

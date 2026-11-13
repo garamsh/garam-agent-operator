@@ -1,0 +1,6 @@
+# A null deletes the minimal values' key, so the case names a ConfigMap alone.
+control:
+  key:
+    secret: null
+    configMap: control-tls
+    key: tls.key

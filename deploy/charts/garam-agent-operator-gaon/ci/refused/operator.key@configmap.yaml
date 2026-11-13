@@ -1,0 +1,6 @@
+# A null deletes the minimal values' key, so the case names a ConfigMap alone.
+operator:
+  key:
+    secret: null
+    configMap: operator-key
+    key: private-key.pem

@@ -1,0 +1,3 @@
+operator:
+  guest:
+    machineUrl: http://machine.guest.example

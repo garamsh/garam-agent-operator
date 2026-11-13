@@ -21,7 +21,8 @@ its registered controller identity and reconciles into gaon. `make operator-imag
 and `make guest-image` build the operator's image and the guest's
 without pushing either. `release.yml` publishes them as
 `garam-agent-operator/operator` and `garam-agent-operator/guest`
-(ADR 0084), and the deployment is not built (§What is not built).
+(ADR 0084), and `deploy/charts/garam-agent-operator-gaon` renders its
+deployment (ADR 0085).
 
 ## What is built
 
@@ -361,7 +362,7 @@ is not gaon's.
 
 ## What is not built
 
-- The deployment of the operator, and the `NetworkPolicy`.
+- The `NetworkPolicy`.
 - Renewing an agent's token by restarting its MicroVM.
 - Replacing a MicroVM of another revision.
 - The agent's instructions file and message issuers.
