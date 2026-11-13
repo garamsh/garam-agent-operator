@@ -101,7 +101,7 @@ lint: lint-coverage golangci-lint ## Run golangci-lint linter
 # `0 issues.` reading exactly as they do on a healthy run (#50). The second
 # `sed` stops the read at the disabled half of `linters`, which a lost blank
 # line would otherwise let answer for the enabled half. The count is of how many
-# linters run, not of which — dropping one of the other 19 leaves both numbers
+# linters run, not of which — dropping one of the other 17 leaves both numbers
 # right.
 .PHONY: lint-coverage
 lint-coverage: golangci-lint ## Report the linters make lint runs and the tracked Go files it reaches, and fail when either covers nothing.
@@ -412,11 +412,6 @@ GOLANGCI_LINT_VERSION ?= v2.15.0
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
-	@test -f .custom-gcl.yml && { \
-		echo "Building custom golangci-lint with plugins..." && \
-		$(GOLANGCI_LINT) custom --destination $(LOCALBIN) --name golangci-lint-custom && \
-		mv -f $(LOCALBIN)/golangci-lint-custom $(GOLANGCI_LINT); \
-	} || true
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
