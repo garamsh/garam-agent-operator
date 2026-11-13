@@ -9,7 +9,7 @@ require (
 	github.com/garamsh/garam/lib/grn v0.0.0-20261113015820-43d700d30910
 	github.com/garamsh/garam/lib/platform-sdk-go v0.0.0-20261113015820-43d700d30910
 	github.com/garamsh/mvmd/lib/runtimeapi v0.0.0-20261111091810-3b37892f303a
-	github.com/go-jose/go-jose/v4 v4.1.5
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-logr/logr v1.4.4
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/gowebpki/jcs v1.0.2
