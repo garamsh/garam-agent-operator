@@ -6,6 +6,7 @@ run:
   # reports `0 issues.` either way.
   build-tags:
     - e2e
+    - gaonharness
 linters:
   default: none
   enable:

@@ -304,7 +304,7 @@ above.
   Node Agent with `gaon-storage-local`, and the operator's client
   certificate bound to a role (§Settings, §What the deployment must
   create). The Node Agent runs against a minimal mvmd of
-  `tests/pairrun/testdata/gaonharness`, which keeps Machines and Disks in
+  `tests/pairrun/gaonharness`, which keeps Machines and Disks in
   memory and starts nothing. The run shows the MicroVM `Running` and
   `Ready` as that Node Agent reports it, and shows no guest program: the
   three programs of the composed guest image never ran.

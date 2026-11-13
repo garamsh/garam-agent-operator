@@ -39,7 +39,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -82,8 +82,8 @@ func fatal(msg string) {
 func run(dir, bin, out string) error {
 	var stops []func()
 	defer func() {
-		for i := len(stops) - 1; i >= 0; i-- {
-			stops[i]()
+		for _, stop := range slices.Backward(stops) {
+			stop()
 		}
 		_ = os.RemoveAll(dir)
 	}()
@@ -103,15 +103,12 @@ func run(dir, bin, out string) error {
 	if err != nil {
 		return err
 	}
-	for name, file := range map[string]string{"ca.crt": ca.certFile, "admin.crt": admin.certFile, "admin.key": admin.keyFile,
-		"operator.crt": operator.certFile, "operator.key": operator.keyFile} {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(out, name), data, 0o600); err != nil {
-			return err
-		}
+	err = writeFiles(out, map[string]string{
+		"ca.crt": ca.certFile, "admin.crt": admin.certFile, "admin.key": admin.keyFile,
+		"operator.crt": operator.certFile, "operator.key": operator.keyFile,
+	})
+	if err != nil {
+		return err
 	}
 
 	etcdURL, stopEtcd, err := startEtcd(dir)
@@ -164,7 +161,9 @@ func run(dir, bin, out string) error {
 		return []string{"-tls-ca", ca.certFile, "-tls-cert", id.certFile, "-tls-key", id.keyFile}
 	}
 	if _, err := start("controllers", "gaon-controllers",
-		append([]string{"-api", computeRoot, "-signing-cert", ca.certFile, "-signing-key", ca.keyFile}, tlsFlags(controllers)...)...); err != nil {
+		append([]string{
+			"-api", computeRoot, "-signing-cert", ca.certFile, "-signing-key", ca.keyFile,
+		}, tlsFlags(controllers)...)...); err != nil {
 		return err
 	}
 	if _, err := start("scheduler", "gaon-scheduler",
@@ -209,16 +208,7 @@ func run(dir, bin, out string) error {
 		return err
 	}
 	if err := eventually("the Node is Admitted and Ready", 90*time.Second, func() bool {
-		n, err := compute.GetNode(ctx, node)
-		if err != nil || n.Status.State != api.NodeStateAdmitted {
-			return false
-		}
-		for _, c := range n.Status.Conditions {
-			if c.Type == api.NodeReady && c.Status == api.ConditionTrue {
-				return true
-			}
-		}
-		return false
+		return nodeReady(ctx, compute)
 	}); err != nil {
 		return err
 	}
@@ -234,15 +224,48 @@ func run(dir, bin, out string) error {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	<-sig
-	// The services' logs are copied out before the directory goes, for the
-	// run to read for a refusal.
+	// The services' logs are copied out before the directory goes.
+	copyLogs(dir, logs)
+	return nil
+}
+
+// writeFiles copies each file of from to the name it is given in out.
+func writeFiles(out string, from map[string]string) error {
+	for name, file := range from {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(out, name), data, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// nodeReady reports whether the Node is Admitted and has its Ready condition.
+func nodeReady(ctx context.Context, compute *api.Client) bool {
+	n, err := compute.GetNode(ctx, node)
+	if err != nil || n.Status.State != api.NodeStateAdmitted {
+		return false
+	}
+	for _, c := range n.Status.Conditions {
+		if c.Type == api.NodeReady && c.Status == api.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+// copyLogs copies the services' logs out of dir, for the run to read for a
+// refusal.
+func copyLogs(dir, logs string) {
 	matches, _ := filepath.Glob(filepath.Join(dir, tag+"-*.log"))
 	for _, f := range matches {
 		if data, err := os.ReadFile(f); err == nil {
 			_ = os.WriteFile(filepath.Join(logs, filepath.Base(f)), data, 0o600)
 		}
 	}
-	return nil
 }
 
 func eventually(what string, limit time.Duration, f func() bool) error {
@@ -302,8 +325,12 @@ func newAuthority(dir string) (*authority, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &authority{dir: dir, cert: cert, key: key, certFile: filepath.Join(dir, "ca.crt"), keyFile: filepath.Join(dir, "ca.key")}
-	if err := os.WriteFile(a.certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+	a := &authority{
+		dir: dir, cert: cert, key: key,
+		certFile: filepath.Join(dir, "ca.crt"), keyFile: filepath.Join(dir, "ca.key"),
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err := os.WriteFile(a.certFile, certPEM, 0o600); err != nil {
 		return nil, err
 	}
 	return a, writeKey(a.keyFile, key)
@@ -332,7 +359,8 @@ func (a *authority) issue(cn string, orgs []string, usage x509.ExtKeyUsage) (ide
 		return identity{}, err
 	}
 	id := identity{certFile: filepath.Join(a.dir, cn+".crt"), keyFile: filepath.Join(a.dir, cn+".key")}
-	if err := os.WriteFile(id.certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err := os.WriteFile(id.certFile, certPEM, 0o600); err != nil {
 		return identity{}, err
 	}
 	return id, writeKey(id.keyFile, key)
@@ -382,7 +410,7 @@ func (s *service) address() (string, error) {
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		data, _ := os.ReadFile(s.log)
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			if strings.Contains(line, "serving the resource API") {
 				if m := servingAddress.FindStringSubmatch(line); m != nil {
 					return m[1], nil
@@ -452,8 +480,10 @@ type mvmd struct {
 
 func startMvmd(dir string) (*mvmd, func(), error) {
 	m := &mvmd{
-		socket:   filepath.Join(dir, tag+"-mvmd.sock"),
-		capacity: &v1alpha2.NodeCapacity{Cpus: 8, MemoryBytes: 16 << 30, StateTotalBytes: 100 << 30, StateAvailableBytes: 90 << 30},
+		socket: filepath.Join(dir, tag+"-mvmd.sock"),
+		capacity: &v1alpha2.NodeCapacity{
+			Cpus: 8, MemoryBytes: 16 << 30, StateTotalBytes: 100 << 30, StateAvailableBytes: 90 << 30,
+		},
 		machines: map[string]*v1alpha2.Machine{},
 		disks:    map[string]*v1alpha2.Disk{},
 	}
@@ -470,7 +500,9 @@ func startMvmd(dir string) (*mvmd, func(), error) {
 	return m, g.Stop, nil
 }
 
-func (m *mvmd) GetRuntimeInfo(context.Context, *v1alpha2.GetRuntimeInfoRequest) (*v1alpha2.GetRuntimeInfoResponse, error) {
+func (m *mvmd) GetRuntimeInfo(
+	context.Context, *v1alpha2.GetRuntimeInfoRequest,
+) (*v1alpha2.GetRuntimeInfoResponse, error) {
 	return &v1alpha2.GetRuntimeInfoResponse{ApiVersions: []string{"mvmd.runtime.v1alpha2"}, Capacity: m.capacity}, nil
 }
 
@@ -478,7 +510,9 @@ func (m *mvmd) PullImage(context.Context, *v1alpha2.PullImageRequest) (*v1alpha2
 	return &v1alpha2.PullImageResponse{}, nil
 }
 
-func (m *mvmd) CreateMachine(_ context.Context, r *v1alpha2.CreateMachineRequest) (*v1alpha2.CreateMachineResponse, error) {
+func (m *mvmd) CreateMachine(
+	_ context.Context, r *v1alpha2.CreateMachineRequest,
+) (*v1alpha2.CreateMachineResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.machines[r.GetMachineId()]; ok {
@@ -495,7 +529,9 @@ func (m *mvmd) CreateMachine(_ context.Context, r *v1alpha2.CreateMachineRequest
 	return &v1alpha2.CreateMachineResponse{Machine: proto.Clone(created).(*v1alpha2.Machine)}, nil
 }
 
-func (m *mvmd) StartMachine(_ context.Context, r *v1alpha2.StartMachineRequest) (*v1alpha2.StartMachineResponse, error) {
+func (m *mvmd) StartMachine(
+	_ context.Context, r *v1alpha2.StartMachineRequest,
+) (*v1alpha2.StartMachineResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	held, ok := m.machines[r.GetMachineId()]
@@ -517,14 +553,18 @@ func (m *mvmd) StopMachine(_ context.Context, r *v1alpha2.StopMachineRequest) (*
 	return &v1alpha2.StopMachineResponse{Machine: proto.Clone(held).(*v1alpha2.Machine)}, nil
 }
 
-func (m *mvmd) DeleteMachine(_ context.Context, r *v1alpha2.DeleteMachineRequest) (*v1alpha2.DeleteMachineResponse, error) {
+func (m *mvmd) DeleteMachine(
+	_ context.Context, r *v1alpha2.DeleteMachineRequest,
+) (*v1alpha2.DeleteMachineResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.machines, r.GetMachineId())
 	return &v1alpha2.DeleteMachineResponse{}, nil
 }
 
-func (m *mvmd) InspectMachine(_ context.Context, r *v1alpha2.InspectMachineRequest) (*v1alpha2.InspectMachineResponse, error) {
+func (m *mvmd) InspectMachine(
+	_ context.Context, r *v1alpha2.InspectMachineRequest,
+) (*v1alpha2.InspectMachineResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	held, ok := m.machines[r.GetMachineId()]
@@ -551,11 +591,15 @@ func (m *mvmd) WatchEvents(_ *v1alpha2.WatchEventsRequest, stream v1alpha2.Runti
 }
 
 func (m *mvmd) RenewDeadline(context.Context, *v1alpha2.RenewDeadlineRequest) (*v1alpha2.RenewDeadlineResponse, error) {
-	return &v1alpha2.RenewDeadlineResponse{Status: &v1alpha2.DeadlineStatus{Phase: v1alpha2.DeadlinePhase_DEADLINE_PHASE_NOT_ARMED}}, nil
+	status := &v1alpha2.DeadlineStatus{Phase: v1alpha2.DeadlinePhase_DEADLINE_PHASE_NOT_ARMED}
+	return &v1alpha2.RenewDeadlineResponse{Status: status}, nil
 }
 
-func (m *mvmd) InspectDeadline(context.Context, *v1alpha2.InspectDeadlineRequest) (*v1alpha2.InspectDeadlineResponse, error) {
-	return &v1alpha2.InspectDeadlineResponse{Status: &v1alpha2.DeadlineStatus{Phase: v1alpha2.DeadlinePhase_DEADLINE_PHASE_NOT_ARMED}}, nil
+func (m *mvmd) InspectDeadline(
+	context.Context, *v1alpha2.InspectDeadlineRequest,
+) (*v1alpha2.InspectDeadlineResponse, error) {
+	status := &v1alpha2.DeadlineStatus{Phase: v1alpha2.DeadlinePhase_DEADLINE_PHASE_NOT_ARMED}
+	return &v1alpha2.InspectDeadlineResponse{Status: status}, nil
 }
 
 // The disks gaon-storage-local makes for a Volume. gaon's extension
@@ -591,7 +635,7 @@ func (m *mvmd) ListDisks(context.Context, *v1alpha2.ListDisksRequest) (*v1alpha2
 		}
 		out.Disks = append(out.Disks, held)
 	}
-	sort.Slice(out.Disks, func(i, j int) bool { return out.Disks[i].Id < out.Disks[j].Id })
+	slices.SortFunc(out.Disks, func(a, b *v1alpha2.Disk) int { return strings.Compare(a.Id, b.Id) })
 	return out, nil
 }
 

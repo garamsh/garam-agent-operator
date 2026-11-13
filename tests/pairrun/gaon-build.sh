@@ -29,5 +29,5 @@ for service in gaon-apiserver:./apiserver/cmd/gaon-apiserver gaon-scheduler:./sc
 	CGO_ENABLED=0 go build -o "$bindir/${service%%:*}" "${service#*:}"
 done
 mkdir -p tooling/e2e/gaonharness1862
-cp "$here/testdata/gaonharness/main.go" tooling/e2e/gaonharness1862/main.go
+cp "$here/gaonharness/main.go" tooling/e2e/gaonharness1862/main.go
 (cd tooling/e2e && go build -tags gaonharness -o "$bindir/gaonharness1862" ./gaonharness1862)

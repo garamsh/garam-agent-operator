@@ -23,9 +23,20 @@ The kubebuilder scaffold writes the manager's code into paths it names, and the 
 - **A domain is reached only through what it declares public**: the exported identifiers of its root package, `internal/<domain>`. Its sub-packages (`internal/<domain>/<pkg>/`, the implementations of its dependency interfaces) are its inside. Reaching one from another domain is a defect, even where the compiler permits it.
 - **A domain may depend on a sibling, through that sibling's surface, in one direction only.** That is the side taken in ADR 0038. A reference two domains would make of each other means one of them is holding something that belongs to the other, or below both.
 - **A consumer depends on the producer's interface, not its concrete type.** A domain declares beside itself the behaviour it needs. The behaviour it offers is declared beside its producer. The compiler does not check this, so it is a review matter.
-- **Each binary has one composition site** — `cmd/main.go` for the manager, `cmd/control/main.go` for the control service. It is the one place that constructs concrete implementations, and it decides which implementation each declared abstraction receives. It is also the one place that reaches inside a domain.
+- **Each binary has one composition site** — `cmd/main.go` for the manager, `cmd/control/main.go` for the control service. The gaon operator's three binaries are the exception, described in the next section. It is the one place that constructs concrete implementations, and it decides which implementation each declared abstraction receives. It is also the one place that reaches inside a domain.
 - **Every other unit receives what it depends on and constructs none of it.**
 - **The composition site stays thin.** It constructs and passes; it decides nothing else.
+
+### The gaon operator
+
+The operator imported from garam ([ADR 0082](adr/0082-import-garams-gaon-operator-and-keep-it-in-this-repository.md), described in `gaon-operator.md`) was not partitioned by domain, and it was kept as it was written. `internal/gaon/` is not a domain. It is a folder of eight sibling packages (`agent`, `cli`, `config`, `guest`, `health`, `keyfile`, `loop`, `token`) with no root package of its own. It breaks these rules above:
+
+- **Packages are named for a role, not a subject.** `cli`, `config`, `health`, `loop` and `token` are named for what they do, and the rule of §The unit is that a domain never is.
+- **There is no declared surface.** `internal/gaon` has no root package, and each sibling is imported directly, by `cmd/gaon-guest`, by `cmd/gaon-render` and by one another (`cli` imports all of them but `guest`, `loop` imports `agent` and `token` imports `keyfile`).
+- **The composition site is not the binary's `main`.** `cmd/gaon-operator/main.go` calls `internal/gaon/cli.Run`, which reads the settings and constructs every client, so `cli` is the operator's composition site. `cmd/gaon-guest/main.go` calls `guest.FromEnv` and `guest.Run`, and `cmd/gaon-render/main.go` (165 lines) holds its own logic, so neither is a thin composition site.
+- **`tests/gaon/` and `tests/pairrun/` are test support outside `test/`.** They are the stand-ins and the pair run of the operator, kept beside its code.
+
+Partitioning the operator by domain is a change of its own, which no pull request has made and no ADR has decided. Until one does, a change to `internal/gaon` is judged against its existing shape and not against §Surfaces and references.
 
 ### Shared code
 

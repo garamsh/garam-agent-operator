@@ -30,7 +30,7 @@
 # - standin (the default): tests/gaonstandin, as above;
 # - gaon (`make pair-run-gaon`): gaon's own built services from the
 #   commit GAON_COMMIT of the checkout GAON_REPO, with authorization on
-#   (tests/pairrun/gaon-build.sh, tests/pairrun/testdata/gaonharness): an
+#   (tests/pairrun/gaon-build.sh, tests/pairrun/gaonharness): an
 #   embedded etcd, gaon-apiserver with --authorization-mode=RBAC,
 #   gaon-controllers, gaon-scheduler and one gaon-node-agent over a
 #   minimal mvmd that runs nothing. The harness issues the operator a
