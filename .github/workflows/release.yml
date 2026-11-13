@@ -1,9 +1,9 @@
 name: release
 
-# Publishes a release: the gaon operator, the composed guest and the control service
-# to garam-agent-operator/operator, /guest and /control, each tagged with the version
+# Publishes a release: the manager's image to garam-agent-operator/manager and the
+# control service's to garam-agent-operator/control, each tagged with the version
 # its git tag names without the v, from a v0.1.0-dev.N, v0.1.0-rc.N or v0.1.0 tag on
-# main (ADR 0051, ADR 0081, ADR 0084, delivery.md). Modelled on sherlock's release
+# main (ADR 0051, ADR 0081, delivery.md). Modelled on sherlock's release
 # workflow (garamsh/sherlock@b3c05c2:.github/workflows/release.yml), which garam's
 # shares (garamsh/garam@9a3f8a6:.github/workflows/release.yml, its ADR-0039).
 #
@@ -19,7 +19,7 @@ name: release
 # `repo:garamsh@307152666/garam-agent-operator@1335647420:ref:refs/tags/v*`
 # (garamsh/infra#292, #293), so a run on any other ref gets no credential. What
 # `v*` admits and the scheme does not is refused by the version step, before any
-# AWS call: the repository is IMMUTABLE and a wrong name is permanent.
+# AWS call: both repositories are IMMUTABLE and a wrong name is permanent.
 #
 # Nothing here creates a tag. A person tags main's tip after a promotion and pushes
 # the tag; this workflow reads it.
@@ -82,14 +82,14 @@ jobs:
             exit 1
           fi
 
-      # The credential is obtained before the build, because the guest image's three
-      # source images (sherlock/agent, sherlock/workspace and garam/server) are in this
-      # registry and the build pulls them. The push role reads them (garamsh/aurora#790),
-      # so no other credential and no secret value is involved: the login below writes
-      # the short-lived token the role yields into the runner's Docker configuration,
-      # and the build reads it from there. Every step up to here is reversible, and the
-      # push below stays the one that is not, so a build that fails still fails before
-      # anything is pushed.
+      # Both images are built before either is pushed, through the one entry point
+      # a person also uses (ci.md §One entry point per task); the Makefile owns the
+      # commands and pushes nothing. Each is one linux/amd64 manifest, labelled
+      # with the commit the tag names.
+      - run: make build-images REVISION="$GITHUB_SHA"
+
+      # Every step above is reversible, so the credential is obtained after them: a
+      # build that fails, on either image, fails before anything can be pushed.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: arn:aws:iam::486152169996:role/github-actions-garam-agent-operator-push
@@ -98,36 +98,21 @@ jobs:
       - id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
-      # The three images are built before any is pushed, through the one entry point a
-      # person also uses (ci.md §One entry point per task); the Makefile owns the
-      # commands and pushes nothing. Each is one linux/amd64 manifest, labelled with
-      # the commit the tag names.
-      - run: make build-images REVISION="$GITHUB_SHA"
-
-      # Each reference passes the rule every push here passes (#325) and each image is
-      # renamed before the first upload begins, so a reference that cannot be formed or
-      # is refused, or a local name that build-images no longer writes, fails with
-      # nothing pushed.
+      # The only irreversible step. Both references pass the rule every push here
+      # passes (#325) and both images are renamed first, so a reference that cannot
+      # be formed or is refused fails before any upload begins. The local names are
+      # the ones build-images writes; a rename there leaves `docker tag` with no
+      # such image, which fails here rather than pushing something else.
       - env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          for image in operator guest control; do
+          for image in manager control; do
             make verify-image-ref IMAGE_REF="$REGISTRY/garam-agent-operator/$image:$VERSION"
             docker tag "garam-agent-operator/$image:$GITHUB_SHA" "$REGISTRY/garam-agent-operator/$image:$VERSION"
           done
-
-      # The only irreversible step. Each repository is immutable, so no name is pushed
-      # twice: the loop pushes each reference once and a failure stops it. A run that
-      # fails after the first push leaves the version half-published, which only the
-      # next version repairs (ADR 0051, ADR 0084).
-      - env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          for image in operator guest control; do
+          for image in manager control; do
             docker push "$REGISTRY/garam-agent-operator/$image:$VERSION"
           done
 
@@ -148,7 +133,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          for image in operator guest control; do
+          for image in manager control; do
             ref="$REGISTRY/garam-agent-operator/$image:$VERSION"
             fields=$(aws ecr batch-get-image \
               --repository-name "garam-agent-operator/$image" \

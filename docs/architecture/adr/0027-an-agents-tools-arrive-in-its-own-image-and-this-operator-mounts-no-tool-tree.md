@@ -1,6 +1,6 @@
 # ADR 0027: An agent's tools arrive in its own image, and this operator mounts no tool tree
 
-> Status: superseded by ADR-0083
+> Status: accepted
 > Date: 2026-09-27
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

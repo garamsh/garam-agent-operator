@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/garamsh/garam-agent-operator/internal/gaon/agent/controlapi"
+	"github.com/garamsh/garam-agent-operator/internal/desired"
 	"github.com/garamsh/garam-agent-operator/internal/machinetoken"
 )
 
@@ -47,7 +47,7 @@ func (g garam) mint(t *testing.T, requestID string, body []byte) string {
 // service.
 func (g garam) controllerClient() *http.Client { return g.stack.feedClient() }
 
-// feedClient presents, as the gaon operator does, a token the controller exchanged under the key garam
+// feedClient presents, as the manager does, a token the controller exchanged under the key garam
 // issued it, minted for the hosted operator, and the controller's GRN beside it. It trusts the
 // binary's serving root.
 func (s *garamStack) feedClient() *http.Client {
@@ -59,7 +59,7 @@ func (s *garamStack) feedTransport() http.RoundTripper {
 	return &machinetoken.Transport{
 		Source:         s.controllerToken,
 		Base:           &http.Transport{TLSClientConfig: apiClient.Transport.(*http.Transport).TLSClientConfig},
-		ClientIDHeader: controlapi.ControllerHeader,
+		ClientIDHeader: desired.ControllerHeader,
 	}
 }
 
@@ -312,32 +312,9 @@ func TestDesired_ReleasesAConfiguredAgentToItsController(t *testing.T) {
 		"the agent's configured revision is not in its controller's feed")
 }
 
-// controllerTokens is the controller's token source as the gaon operator's control client takes
-// it: it holds the token it last handed out, so Invalidate can name it to the source.
-type controllerTokens struct {
-	source *machinetoken.Source
-	mu     sync.Mutex
-	last   string
-}
-
-func (c *controllerTokens) Token(ctx context.Context) (string, error) {
-	token, err := c.source.Token(ctx)
-	c.mu.Lock()
-	c.last = token
-	c.mu.Unlock()
-	return token, err
-}
-
-func (c *controllerTokens) Invalidate() {
-	c.mu.Lock()
-	token := c.last
-	c.mu.Unlock()
-	c.source.Invalidate(token)
-}
-
-// The revision a configure stores reaches the gaon operator through the client it reads the feed
-// with, as the canonical decimal string it renders into the agent's config file (#291).
-func TestDesired_TheOperatorsClientReadsTheRevisionAConfigureStored(t *testing.T) {
+// The revision a configure stores reaches the manager through the client it reads the feed with,
+// as the canonical decimal string it renders into the Agent and the agent's config file (#291).
+func TestDesired_TheManagersClientReadsTheRevisionAConfigureStored(t *testing.T) {
 	g := requireGaram(t)
 	profile := seedRevision(t, g)
 	requestID := name(t, "request")
@@ -346,23 +323,16 @@ func TestDesired_TheOperatorsClientReadsTheRevisionAConfigureStored(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)
 
-	tlsConfig := apiClient.Transport.(*http.Transport).TLSClientConfig
-	feed, err := controlapi.New(controlapi.Options{
-		URL:        attachedURL,
-		HTTP:       &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}},
-		Tokens:     &controllerTokens{source: g.stack.controllerToken},
-		Controller: g.stack.controllerGRN,
-	})
-	require.NoError(t, err)
-	agents, err := feed.Desired(context.Background())
+	feed := desired.NewClient(strings.TrimPrefix(attachedURL, "https://"), g.stack.feedTransport())
+	answer, err := feed.Desired(context.Background(), "", 0)
 	require.NoError(t, err)
 	var revisions []string
-	for _, agent := range agents {
-		if agent.GRN.String() == g.agent() {
+	for _, agent := range answer.Agents {
+		if agent.GRN == g.agent() {
 			revisions = append(revisions, agent.Revision)
 		}
 	}
-	assert.Equal(t, []string{"2"}, revisions, "the operator's client did not read the configured revision")
+	assert.Equal(t, []string{"2"}, revisions, "the manager's client did not read the configured revision")
 }
 
 // releasedRevisions is every revision of g's agent its controller's feed releases, in the order released.

@@ -4,7 +4,6 @@ package control_test
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,28 +11,23 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/garamsh/garam-agent-operator/internal/desired"
 )
 
-// TestOperators_TheControllersReportIsReadThroughGaram reports the controller's images under the
-// token the controller exchanged, proved by garam, and reads them back with the controller's last contact
+// TestOperators_TheManagersReportIsReadThroughGaram reports the controller's images through the
+// manager's own client, proved by garam, and reads them back with the controller's last contact
 // under a real iam:operator.read authority. Another organization's operator in the same store is not
 // listed.
-func TestOperators_TheControllersReportIsReadThroughGaram(t *testing.T) {
+func TestOperators_TheManagersReportIsReadThroughGaram(t *testing.T) {
 	before := time.Now().Add(-time.Second)
 	pinned := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	report := fmt.Sprintf(`{"images":[{"name":"agent","ref":"registry.example/sherlock:1.2.0@%[1]s","digest":"%[1]s"},`+
-		`{"name":"copy","ref":"busybox:stable-musl"}]}`, pinned)
-	put, err := http.NewRequestWithContext(context.Background(), http.MethodPut,
-		attachedURL+"/v1/operators/self/images", strings.NewReader(report))
-	require.NoError(t, err)
-	put.Header.Set("Content-Type", "application/json")
-	resp, err := real.feedClient().Do(put)
-	require.NoError(t, err)
-	_ = resp.Body.Close()
-	require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	client := desired.NewClient(strings.TrimPrefix(attachedURL, "https://"), real.feedTransport())
+	require.NoError(t, client.ReportImages(context.Background(),
+		desired.ConfiguredImages("registry.example/sherlock:1.2.0@"+pinned, "", "busybox:stable-musl", "")))
 
 	foreign := name(t, "foreign-operator")
-	_, err = pool.Exec(context.Background(),
+	_, err := pool.Exec(context.Background(),
 		`INSERT INTO operators (grn, org_grn, last_contact_at) VALUES ($1, 'grn:root/iam/org/elsewhere', now())`,
 		foreign)
 	require.NoError(t, err)

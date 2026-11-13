@@ -1,6 +1,5 @@
 // Command imageref refuses an image reference ADR 0078's tag rule forbids a push of (#401). Under
-// garam-agent-operator/ only the three repositories ADR 0084 names (operator, guest, control) take a
-// push, and in them the tag decides: a release version (0.1.0-dev.N, 0.1.0-rc.N or 0.1.0, ADR 0081)
+// garam-agent-operator/ the tag decides: a release version (0.1.0-dev.N, 0.1.0-rc.N or 0.1.0, ADR 0081)
 // only in .github/workflows/release.yml's run for the git tag of that version, or the 12-hex commit
 // hash alone. Every Makefile target that pushes, and release.yml before
 // its push, runs it on the reference.
@@ -18,7 +17,6 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/distribution/reference"
@@ -27,19 +25,13 @@ import (
 )
 
 const (
-	// publishingRepository is the prefix of every repository this project publishes to, whose images
-	// are release and development alike (ADR 0078).
+	// publishingRepository holds both images, release and development alike (ADR 0078).
 	publishingRepository = "garam-agent-operator/"
 	// releaseWorkflow is GITHUB_WORKFLOW_REF's value in a release run, up to the tag's version.
 	releaseWorkflow = "garamsh/garam-agent-operator/.github/workflows/release.yml@refs/tags/v"
 )
 
 var (
-	// publishedImages are the repositories under publishingRepository that exist (ADR 0084). Any other
-	// name under the prefix is refused here, before an upload that the registry would refuse after it,
-	// so a name this project renamed away from, gaon-operator among them, cannot be pushed by mistake.
-	publishedImages = []string{"operator", "guest", "control"}
-
 	// commitHash is the 12-hex abbreviated hash a development image is tagged with (ADR 0067).
 	commitHash = regexp.MustCompile(`^[0-9a-f]{12}$`)
 )
@@ -74,10 +66,6 @@ func check(ref, workflowRef string) (string, error) {
 	path := reference.Path(named)
 	if !strings.HasPrefix(path, publishingRepository) {
 		return "not under " + publishingRepository + ", so no rule applies", nil
-	}
-	if image := strings.TrimPrefix(path, publishingRepository); !slices.Contains(publishedImages, image) {
-		return "", fmt.Errorf("%q is not a repository this project publishes: under %s they are %s (ADR 0084)",
-			image, publishingRepository, strings.Join(publishedImages, ", "))
 	}
 	tag := ""
 	if tagged, ok := named.(reference.Tagged); ok {

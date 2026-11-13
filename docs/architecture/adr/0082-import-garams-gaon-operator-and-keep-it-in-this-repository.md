@@ -1,6 +1,6 @@
 # ADR 0082: Import garam's gaon operator and keep it in this repository
 
-> Status: accepted; the root `Dockerfile` it raised the builder of superseded by ADR-0083
+> Status: accepted; the gaon operator discontinued and not released by ADR-0086
 > Date: 2026-11-13
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.
