@@ -1,6 +1,6 @@
 # ADR 0078: Publish each image to one repository, and tell release from development by tag
 
-> Status: accepted
+> Status: accepted; the release version form superseded by ADR-0081
 > Date: 2026-10-30
 
 Append-only: once merged, the body below is not rewritten. A fact later found wrong is corrected in an appended note, not edited out; a revised decision is a new ADR that supersedes this one.

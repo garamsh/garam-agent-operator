@@ -1,6 +1,7 @@
 // Command imageref refuses an image reference ADR 0078's tag rule forbids a push of (#401). Under
-// garam-agent-operator/ the tag decides: X.Y.Z only in .github/workflows/release.yml's run for that
-// version, or the 12-hex commit hash alone. Every Makefile target that pushes, and release.yml before
+// garam-agent-operator/ the tag decides: a release version (0.1.0-dev.N, 0.1.0-rc.N or 0.1.0, ADR 0081)
+// only in .github/workflows/release.yml's run for the git tag of that version, or the 12-hex commit
+// hash alone. Every Makefile target that pushes, and release.yml before
 // its push, runs it on the reference.
 //
 // It stops mistakes, not a determined pusher: GITHUB_WORKFLOW_REF is set by the Actions runner, and a
@@ -19,6 +20,8 @@ import (
 	"strings"
 
 	"github.com/distribution/reference"
+
+	"github.com/garamsh/garam-agent-operator/hack/releaseversion"
 )
 
 const (
@@ -29,8 +32,6 @@ const (
 )
 
 var (
-	// releaseVersion is the X.Y.Z a release image is tagged with, as release.yml's own check spells it.
-	releaseVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 	// commitHash is the 12-hex abbreviated hash a development image is tagged with (ADR 0067).
 	commitHash = regexp.MustCompile(`^[0-9a-f]{12}$`)
 )
@@ -71,17 +72,19 @@ func check(ref, workflowRef string) (string, error) {
 		tag = tagged.Tag()
 	}
 	switch {
-	case releaseVersion.MatchString(tag):
+	case releaseversion.Valid(tag):
 		if workflowRef == releaseWorkflow+tag {
 			return "a release, pushed by the release workflow", nil
 		}
-		return "", fmt.Errorf("an X.Y.Z tag is pushed only by .github/workflows/release.yml in its run for "+
-			"vX.Y.Z (ADR 0078); push a development image as %s:<12-hex commit hash> instead", path)
+		return "", fmt.Errorf("a release version tag is pushed only by .github/workflows/release.yml in its run "+
+			"for the git tag v%s (ADR 0078, ADR 0081); push a development image as %s:<12-hex commit hash> instead",
+			tag, path)
 	case commitHash.MatchString(tag):
 		return "a development image", nil
 	default:
-		return "", fmt.Errorf("a tag under %s is a release's X.Y.Z or a development image's 12-hex commit "+
-			"hash alone, with no dev- prefix (ADR 0078), not %q; push %s:<12-hex commit hash> instead",
+		return "", fmt.Errorf("a tag under %s is a release version (0.1.0-dev.N, 0.1.0-rc.N or 0.1.0) or a "+
+			"development image's 12-hex commit hash alone, with no dev- prefix (ADR 0078, ADR 0081), "+
+			"not %q; push %s:<12-hex commit hash> instead",
 			publishingRepository, tag, path)
 	}
 }
